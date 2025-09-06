@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import ApplicationServices
 import AppKit
+import ScreenCaptureKit
 
 class PermissionManager: ObservableObject {
     @Published var hasAccessibilityPermission = false
@@ -31,25 +32,37 @@ class PermissionManager: ObservableObject {
     }
     
     func checkScreenRecordingPermission() {
-        // For macOS 10.15+, try to capture a small area to test permission
-        if #available(macOS 10.15, *) {
-            let displayID = CGMainDisplayID()
-            if let _ = CGDisplayCreateImage(displayID) {
-                hasScreenRecordingPermission = true
-            } else {
-                hasScreenRecordingPermission = false
+        // Use ScreenCaptureKit for macOS 12.3+
+        if #available(macOS 12.3, *) {
+            Task {
+                do {
+                    let content = try await SCShareableContent.current
+                    let hasPermission = !content.displays.isEmpty
+                    await MainActor.run {
+                        hasScreenRecordingPermission = hasPermission
+                    }
+                } catch {
+                    await MainActor.run {
+                        hasScreenRecordingPermission = false
+                    }
+                }
             }
         } else {
-            // For older macOS versions, assume permission is granted
+            // For older versions, assume permission is granted (fallback)
             hasScreenRecordingPermission = true
         }
     }
     
     func requestScreenRecordingPermission() {
-        // On macOS 10.15+, attempting to capture will trigger permission dialog
-        if #available(macOS 10.15, *) {
-            let displayID = CGMainDisplayID()
-            _ = CGDisplayCreateImage(displayID)
+        // Use ScreenCaptureKit for macOS 12.3+ to trigger permission dialog
+        if #available(macOS 12.3, *) {
+            Task {
+                do {
+                    _ = try await SCShareableContent.current
+                } catch {
+                    // Error will occur if no permission, which is expected
+                }
+            }
         }
     }
     

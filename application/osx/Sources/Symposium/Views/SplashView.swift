@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SplashView: View {
+    @EnvironmentObject var appState: AppState
     @EnvironmentObject var permissionManager: PermissionManager
     @EnvironmentObject var settingsManager: SettingsManager
     @EnvironmentObject var agentManager: AgentManager
@@ -82,21 +83,17 @@ struct SplashView: View {
     // MARK: - Phase 20: Project lifecycle management
     
     private func setActiveProject(_ projectManager: ProjectManager) {
-        Logger.shared.log("SplashView: Setting active project manager")
+        Logger.shared.log("SplashView: Setting active project via AppState")
         
-        // Notify AppDelegate about the active project for dock panel integration
-        appDelegate.setCurrentProjectManager(projectManager, closeCallback: closeActiveProject)
-        
-        // Phase 22: Implement XOR invariant - hide splash window when project is active
-        // Delay splash window dismissal to ensure any open dialog dismisses first
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.hideSplashWindow()
+        guard let project = projectManager.currentProject else {
+            Logger.shared.log("SplashView: ERROR - ProjectManager has no current project")
+            return
         }
         
-        // Phase 22: Show dock panel immediately when project opens
-        showDockPanelImmediately(with: projectManager)
-        
-        Logger.shared.log("SplashView: Active project set, splash hidden, dock panel shown")
+        // Use AppState to open the project - this will automatically show project window and hide splash
+        Logger.shared.log("SplashView: Opening project in AppState: \(project.name)")
+        appState.openProject(project)
+        Logger.shared.log("SplashView: Active project set via AppState")
     }
     
     private func closeActiveProject() {

@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct SymposiumApp: App {
+    @StateObject private var appState = AppState()
     @StateObject private var agentManager = AgentManager()
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var permissionManager = PermissionManager()
@@ -14,36 +15,67 @@ struct SymposiumApp: App {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        // Splash/Setup window - only shows when needed
+        // Splash/Setup window - shows when no projects are open
         WindowGroup(id: "splash") {
-            SplashView()
-                .environmentObject(agentManager)
-                .environmentObject(settingsManager)
-                .environmentObject(permissionManager)
-                .environmentObject(appDelegate)
-                .onAppear {
-                    Logger.shared.log("Splash window started")
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .openSplashWindow)) { _ in
-                    Logger.shared.log("App: Received openSplashWindow notification")
-                    showSplashWindow()
-                }
+            if appState.shouldShowSplash {
+                SplashView()
+                    .environmentObject(appState)
+                    .environmentObject(agentManager)
+                    .environmentObject(settingsManager)
+                    .environmentObject(permissionManager)
+                    .environmentObject(appDelegate)
+                    .onAppear {
+                        Logger.shared.log("Splash window appeared - no projects open")
+                    }
+            } else {
+                // When we have projects, this window should not show content
+                EmptyView()
+                    .onAppear {
+                        Logger.shared.log("Splash window hidden - projects are open")
+                    }
+            }
         }
         .windowResizability(.contentSize)
         .defaultAppStorage(.standard)
-
+        
+        // Project window - shows when we have an active project
+        WindowGroup(id: "project") {
+            if let firstProject = appState.openProjects.first {
+                ProjectWindowView(project: firstProject)
+                    .environmentObject(appState)
+                    .environmentObject(agentManager)
+                    .environmentObject(settingsManager)
+                    .environmentObject(permissionManager)
+                    .onAppear {
+                        Logger.shared.log("Project window appeared: \(firstProject.name)")
+                    }
+                    .onDisappear {
+                        Logger.shared.log("Project window disappeared: \(firstProject.name)")
+                    }
+            } else {
+                EmptyView()
+                    .onAppear {
+                        Logger.shared.log("Project window hidden - no projects open")
+                    }
+            }
+        }
+        .windowResizability(.contentSize)
+        .windowLevel(.floating) // Make project window float like the old NSPanel
+        
         .commands {
             // File menu items
             CommandGroup(replacing: .newItem) {
                 Button("New Project...") {
-                    // Show splash window for project selection
-                    showSplashWindow()
+                    // Close all projects to show splash for project selection
+                    Logger.shared.log("Menu: New Project - closing all projects to show splash")
+                    appState.closeAllProjects()
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 
                 Button("Open Project...") {
-                    // Show splash window for project selection
-                    showSplashWindow()
+                    // Close all projects to show splash for project selection
+                    Logger.shared.log("Menu: Open Project - closing all projects to show splash")
+                    appState.closeAllProjects()
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
@@ -76,11 +108,6 @@ struct SymposiumApp: App {
         }
     }
 
-    private func showSplashWindow() {
-        Logger.shared.log("App: Opening splash window via menu command")
-        openWindow(id: "splash")
-        Logger.shared.log("App: Splash window opened via SwiftUI environment")
-    }
 
     private func copyLogsToClipboard() {
         let allLogs = Logger.shared.logs.joined(separator: "\n")
