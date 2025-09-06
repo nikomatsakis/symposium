@@ -392,34 +392,77 @@ private var taskspaceGridView: some View {
 - **Smart dismissal**: Panel stays open for management, dismisses for VSCode engagement
 - **Partial visibility**: Shows partial bottom row when content exceeds screen height
 
-### 🔄 Current Issues: Window State Management
+### ✅ Implemented: SwiftUI State-Driven Window Management (January 2025)
 
-The implementation is functionally complete but has **timing coordination issues** between panel and splash window visibility:
+**Major Architectural Change**: Replaced imperative NSPanel approach with declarative SwiftUI windows driven by reactive state.
 
-**Problem**: Window state transitions use hardcoded delays (100ms, 200ms) instead of proper async coordination:
+#### What Changed
+- **Eliminated timing delays**: No more `DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)`
+- **Single source of truth**: `AppState` class with `@Published var openProjects: [Project]`
+- **Declarative windows**: SwiftUI `WindowGroup`s that automatically show/hide based on state
+- **Upgraded to macOS 15.0**: For `.windowLevel(.floating)` and modern ScreenCaptureKit APIs
+
+#### New Architecture
 ```swift
-// Hacky timing approach currently used
-DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-    self.hideSplashWindow()
+// AppState.swift - Single source of truth
+@MainActor class AppState: ObservableObject {
+    @Published var openProjects: [Project] = []
+    
+    func openProject(_ project: Project) { /* Add to array */ }
+    func closeProject(_ project: Project) { /* Remove from array */ }
+}
+
+// App.swift - Declarative window management  
+WindowGroup(id: "splash") {
+    if appState.shouldShowSplash {  // When openProjects.isEmpty
+        SplashView()
+    } else {
+        EmptyView()
+    }
+}
+
+WindowGroup(id: "project") {
+    if let firstProject = appState.openProjects.first {
+        ProjectWindowView(project: firstProject)  
+    } else {
+        EmptyView()
+    }
 }
 ```
 
-**Symptoms**:
-- ❌ **BUG**: "Close Project" button does not dismiss the project panel (panel stays visible on top of splash)
-- Splash window dismissal conflicts with dialog dismissals  
-- Window state management feels fragile and unpredictable
+#### Key Files Modified
+- **`Models/AppState.swift`**: New reactive state manager
+- **`App.swift`**: Declarative window structure with state-driven visibility
+- **`Views/ProjectWindowView.swift`**: Bridge between AppState and existing ProjectView
+- **`Views/SplashView.swift`**: Uses `appState.openProject()` instead of imperative calls
+- **`Package.swift`**: Updated to require macOS 15.0
+- **`Models/PermissionManager.swift`**: Modernized with ScreenCaptureKit
 
-**Architectural Consideration**: 
-- Current approach uses imperative NSPanel show/hide calls
-- Considering migration to **SwiftUI state-driven approach** where window visibility is declarative
-- Would eliminate timing hacks in favor of reactive state management
+### 🔄 Current Status: Testing & Debugging Needed
+
+**Implementation Status**: ✅ **Code complete and builds successfully**
+
+**Testing Status**: ⚠️ **Untested - requires validation**
+
+#### Expected Behavior
+1. **App Launch**: Splash window appears (empty `openProjects`)
+2. **Open Project**: Call `appState.openProject()` → Project window appears, splash disappears automatically
+3. **Close Project**: Call `appState.closeProject()` → Project window disappears, splash appears automatically
+
+#### Known Questions
+- ❓ **Window transitions**: Do SwiftUI windows transition cleanly without timing issues?
+- ❓ **Close project bug**: Is the original "Close Project" button bug resolved?
+- ❓ **Focus behavior**: Do floating windows behave properly for panel-like interactions?
+- ❓ **Multiple projects**: Current implementation shows only first project - needs extension for multi-project support
+- ❓ **Click-outside dismissal**: SwiftUI windows don't auto-dismiss - may need additional handling
 
 ### 🎯 Next Steps
 
-1. **Experiment with pure SwiftUI windows** instead of NSPanel for simpler state coordination
-2. **Implement proper async callbacks** if staying with NSPanel approach
-3. **Consider state machine pattern** for explicit window transition states
-4. **Final polish and edge case testing**
+1. **Test basic functionality**: Launch app, open/close projects, verify window transitions
+2. **Debug any issues**: State not updating, windows not showing/hiding, etc.
+3. **Add focus/dismissal behavior**: Implement click-outside and app focus management
+4. **Extend for multiple projects**: Support concurrent project windows
+5. **Final polish**: Performance, edge cases, error handling
 
 ## Rollback Plan
 
