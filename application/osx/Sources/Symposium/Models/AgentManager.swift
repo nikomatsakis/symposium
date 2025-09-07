@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-enum AgentType: String, CaseIterable, Identifiable {
+enum AgentType: String, CaseIterable, Identifiable, Codable {
     case qcli = "qcli"
     case claude = "claude"
 
@@ -19,10 +19,23 @@ class AgentManager: ObservableObject {
     @Published var availableAgents: [AgentInfo] = []
     @Published var scanningCompleted = false
     @Published var scanningInProgress = false
+    
+    private let settingsManager: SettingsManager
 
-    init() {
+    init(settingsManager: SettingsManager) {
+        self.settingsManager = settingsManager
         Logger.shared.log("AgentManager: Created")
-        scanForAgents(force: false)
+        
+        // Try to load cached agents first
+        let cachedAgents = settingsManager.cachedAgents
+        if !cachedAgents.isEmpty {
+            Logger.shared.log("AgentManager: Loading \(cachedAgents.count) cached agents")
+            self.availableAgents = cachedAgents
+            self.scanningCompleted = true
+        } else {
+            Logger.shared.log("AgentManager: No cached agents, starting scan")
+            scanForAgents(force: false)
+        }
     }
 
     func scanForAgents(force: Bool) {
@@ -60,6 +73,10 @@ class AgentManager: ObservableObject {
                 self.availableAgents = agents
                 self.scanningCompleted = true  // Always set to true when scanning completes
                 self.scanningInProgress = false
+                
+                // Cache the results
+                self.settingsManager.cachedAgents = agents
+                
                 Logger.shared.log("AgentManager: Scan complete. Found \(agents.count) agents.")
             }
         }
@@ -300,7 +317,7 @@ class AgentManager: ObservableObject {
     }
 }
 
-struct AgentInfo: Identifiable {
+struct AgentInfo: Identifiable, Codable {
     let type: AgentType
     let name: String
     let description: String

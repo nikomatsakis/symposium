@@ -14,11 +14,13 @@ struct ProjectWindowView: View {
     init(project: Project) {
         self.project = project
         // Create ProjectManager for this project
+        // Note: These will be overridden by environmentObjects
+        let tempSettings = SettingsManager()
         self._projectManager = StateObject(wrappedValue: ProjectManager(
-            agentManager: AgentManager(), // Will be overridden by environmentObject
-            settingsManager: SettingsManager(), // Will be overridden by environmentObject  
+            agentManager: AgentManager(settingsManager: tempSettings),
+            settingsManager: tempSettings,
             selectedAgent: .claude, // TODO: Get from settings
-            permissionManager: PermissionManager() // Will be overridden by environmentObject
+            permissionManager: PermissionManager()
         ))
     }
     

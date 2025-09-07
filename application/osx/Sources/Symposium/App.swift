@@ -4,9 +4,17 @@ import SwiftUI
 @main
 struct SymposiumApp: App {
     // === State Machine Components ===
-    @StateObject private var agentManager = AgentManager()
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var permissionManager = PermissionManager()
+    @StateObject private var agentManager: AgentManager
+    
+    init() {
+        // AgentManager needs SettingsManager for caching
+        let settings = SettingsManager()
+        self._settingsManager = StateObject(wrappedValue: settings)
+        self._agentManager = StateObject(wrappedValue: AgentManager(settingsManager: settings))
+        self._permissionManager = StateObject(wrappedValue: PermissionManager())
+    }
     
     // Simple state tracking (no reactive complexity)
     @State private var currentProject: Project? = nil
@@ -138,10 +146,22 @@ struct SymposiumApp: App {
             return
         }
         
-        // Check if agent scanning is complete and we have a chosen agent
+        // Check if agent scanning is complete
         if !agentManager.scanningCompleted {
-            Logger.shared.log("Agent scanning not complete → Opening Splash window (will show scanning)")
-            openWindow(id: "splash")
+            Logger.shared.log("Agent scanning not complete → Opening Settings window (will show scanning)")
+            openWindow(id: "settings")
+            return
+        }
+        
+        // Check if we have a valid selected agent
+        let selectedAgent = settingsManager.selectedAgent
+        let hasValidAgent = agentManager.availableAgents.contains { agent in
+            agent.type == selectedAgent && agent.isInstalled && agent.isMCPConfigured
+        }
+        
+        if !hasValidAgent {
+            Logger.shared.log("No valid selected agent (selected: \(selectedAgent), available: \(agentManager.availableAgents.map { $0.type })) → Opening Settings window")
+            openWindow(id: "settings") 
             return
         }
         
