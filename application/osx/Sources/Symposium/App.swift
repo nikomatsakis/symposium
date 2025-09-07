@@ -1,22 +1,47 @@
 import AppKit
 import SwiftUI
 
+enum AppWindowType {
+    case splash
+    case settings  
+    case createOrLoadProject
+    case project
+}
+
+enum AppWindowState {
+    case splash
+    case settings  
+    case createOrLoadProject
+    case project(Project)
+}
+
 @main
 struct SymposiumApp: App {
     // === State Machine Components ===
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var permissionManager = PermissionManager()
     @StateObject private var agentManager: AgentManager
+    @StateObject private var startupManager: StartupManager
     
     init() {
-        // AgentManager needs SettingsManager for caching
+        // Create managers with proper dependencies
         let settings = SettingsManager()
+        let permissions = PermissionManager()
+        let agents = AgentManager(settingsManager: settings)
+        let startup = StartupManager(
+            permissionManager: permissions, 
+            agentManager: agents, 
+            settingsManager: settings
+        )
+        
         self._settingsManager = StateObject(wrappedValue: settings)
-        self._agentManager = StateObject(wrappedValue: AgentManager(settingsManager: settings))
-        self._permissionManager = StateObject(wrappedValue: PermissionManager())
+        self._permissionManager = StateObject(wrappedValue: permissions)
+        self._agentManager = StateObject(wrappedValue: agents)
+        self._startupManager = StateObject(wrappedValue: startup)
     }
     
-    // Simple state tracking (no reactive complexity)
+    // Window state management
+    @State private var windowState: AppWindowState = .splash
     @State private var currentProject: Project? = nil
     
     // App delegate for dock click handling
@@ -27,21 +52,15 @@ struct SymposiumApp: App {
     @Environment(\.dismissWindow) private var dismissWindow
     
     var body: some Scene {
-        // === Three-Window State Machine ===
-        // At any time, exactly ONE of these windows is open:
-        // 1. Settings - missing permissions OR agent preference
-        // 2. Project - have permissions + agent + current project  
-        // 3. Splash - decision point / create-open project dialog
-        
-        // Splash/Setup window - project selection and creation
+        // Splash window - pure startup progress display
         WindowGroup(id: "splash") {
-            SplashView(app: self)
-                .environmentObject(agentManager)
-                .environmentObject(settingsManager)
-                .environmentObject(permissionManager)
-                .environmentObject(appDelegate)
+            SplashView()
+                .environmentObject(startupManager)
                 .onAppear {
                     Logger.shared.log("Splash window appeared")
+                }
+                .onDisappear {
+                    handleWindowClosed(.splash)
                 }
         }
         .windowResizability(.contentSize)
@@ -56,6 +75,26 @@ struct SymposiumApp: App {
                 .onAppear {
                     Logger.shared.log("Settings window appeared")
                 }
+                .onDisappear {
+                    handleWindowClosed(.settings)
+                }
+        }
+        .windowResizability(.contentSize)
+        
+        // Create/Load Project window - project selection and creation
+        WindowGroup(id: "createOrLoadProject") {
+            CreateOrLoadProjectView(
+                onProjectCreated: handleProjectCreated,
+                onProjectLoaded: handleProjectLoaded
+            )
+            .environmentObject(agentManager)
+            .environmentObject(settingsManager)
+            .onAppear {
+                Logger.shared.log("CreateOrLoadProject window appeared")
+            }
+            .onDisappear {
+                handleWindowClosed(.createOrLoadProject)
+            }
         }
         .windowResizability(.contentSize)
         
@@ -70,7 +109,7 @@ struct SymposiumApp: App {
                         Logger.shared.log("Project window appeared: \(project.name)")
                     }
                     .onDisappear {
-                        Logger.shared.log("Project window disappeared: \(project.name)")
+                        handleWindowClosed(.project)
                     }
             } else {
                 EmptyView()
@@ -125,64 +164,59 @@ struct SymposiumApp: App {
         }
     }
     
-    // === Window State Machine ===
-    // At startup and after any window closes, evaluate which window should be open
+    // === Centralized Window Management ===
     
-    /// Evaluates current state and opens the appropriate window
-    /// Called at startup and whenever any window closes
-    func evaluateWindowState() {
-        Logger.shared.log("=== evaluateWindowState() ===")
-        Logger.shared.log("Current state - hasAccessibility: \(permissionManager.hasAccessibilityPermission)")
-        Logger.shared.log("Current state - hasScreenRecording: \(permissionManager.hasScreenRecordingPermission)")
-        Logger.shared.log("Current state - agentScanCompleted: \(agentManager.scanningCompleted)")
-        Logger.shared.log("Current state - currentProject: \(currentProject?.name ?? "nil")")
+    /// Centralized window transition with state cleanup
+    func transitionTo(_ newState: AppWindowState) {
+        Logger.shared.log("App: Transitioning to window state: \(newState)")
+        windowState = newState
         
-        dismissAllWindows() // Ensure clean state
+        // Close all windows first
+        dismissWindow(id: "splash")
+        dismissWindow(id: "settings") 
+        dismissWindow(id: "createOrLoadProject")
+        dismissWindow(id: "project")
         
-        // Check permissions first
-        if !permissionManager.hasAccessibilityPermission || !permissionManager.hasScreenRecordingPermission {
-            Logger.shared.log("Missing permissions → Opening Settings window")
+        // Open the appropriate window
+        switch newState {
+        case .splash: 
+            openWindow(id: "splash")
+        case .settings: 
             openWindow(id: "settings")
-            return
-        }
-        
-        // Check if agent scanning is complete
-        if !agentManager.scanningCompleted {
-            Logger.shared.log("Agent scanning not complete → Opening Settings window (will show scanning)")
-            openWindow(id: "settings")
-            return
-        }
-        
-        // Check if we have a valid selected agent
-        let selectedAgent = settingsManager.selectedAgent
-        let hasValidAgent = agentManager.availableAgents.contains { agent in
-            agent.type == selectedAgent && agent.isInstalled && agent.isMCPConfigured
-        }
-        
-        if !hasValidAgent {
-            Logger.shared.log("No valid selected agent (selected: \(selectedAgent), available: \(agentManager.availableAgents.map { $0.type })) → Opening Settings window")
-            openWindow(id: "settings") 
-            return
-        }
-        
-        // If we have a current project, show project window
-        if let project = currentProject {
-            Logger.shared.log("Have current project: \(project.name) → Opening Project window")
+        case .createOrLoadProject: 
+            openWindow(id: "createOrLoadProject")
+        case .project(let project):
+            currentProject = project
             openWindow(id: "project")
-            return
         }
+    }
+    
+    /// Handle window closures and decide what to do next
+    func handleWindowClosed(_ closedWindow: AppWindowType) {
+        Logger.shared.log("App: Window closed: \(closedWindow)")
         
-        // Try to load saved project
-        if let savedProject = loadSavedProject() {
-            Logger.shared.log("Restored saved project: \(savedProject.name) → Setting as current and opening Project window")
-            currentProject = savedProject
-            openWindow(id: "project")
-            return
+        // Update startup manager based on current state and decide next action
+        Task { @MainActor in
+            // Wait a brief moment for state to settle
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            
+            if startupManager.startupComplete {
+                // Startup is done, make decisions based on configuration state
+                if startupManager.shouldShowSettings {
+                    transitionTo(.settings)
+                } else if startupManager.hasActiveProject {
+                    // TODO: Load the actual project
+                    let dummyProject = Project(name: "Restored Project", gitURL: "", directoryPath: "/tmp")
+                    transitionTo(.project(dummyProject))
+                } else {
+                    transitionTo(.createOrLoadProject)
+                }
+            } else {
+                // Startup not complete, show splash
+                startupManager.splashVisible = true
+                transitionTo(.splash)
+            }
         }
-        
-        // Default: show splash for project selection
-        Logger.shared.log("No current project → Opening Splash window (create/open project)")
-        openWindow(id: "splash")
     }
     
     /// Load the saved project from settings if available and valid
@@ -209,64 +243,56 @@ struct SymposiumApp: App {
         dismissWindow(id: "project")
     }
     
-    // === Callbacks from Windows ===
+    // === Project Management ===
     
-    /// Called when splash window wants to create/open/restore a project
-    func onSplashAction(_ action: SplashAction) {
-        Logger.shared.log("Splash action: \(action)")
+    /// Handle project creation from CreateOrLoadProjectView
+    func handleProjectCreated(_ project: Project) {
+        Logger.shared.log("App: Project created: \(project.name)")
+        currentProject = project
+        settingsManager.activeProjectPath = project.directoryPath
         
-        switch action {
-        case .createProject(let project):
-            currentProject = project
-            settingsManager.activeProjectPath = project.directoryPath
-            Logger.shared.log("Created project: \(project.name)")
-            
-        case .openProject(let project):
-            currentProject = project
-            settingsManager.activeProjectPath = project.directoryPath
-            Logger.shared.log("Opened project: \(project.name)")
-            
-        case .restoreProject(let project):
-            currentProject = project
-            Logger.shared.log("Restored project: \(project.name)")
-        }
-        
-        evaluateWindowState() // Re-evaluate after action
+        // Hide splash and transition to project
+        startupManager.splashVisible = false
+        transitionTo(.project(project))
     }
     
-    /// Called when settings window is closed
-    func onSettingsClosed() {
-        Logger.shared.log("Settings window closed")
-        evaluateWindowState() // Re-evaluate permissions/agent state
+    /// Handle project loading from CreateOrLoadProjectView
+    func handleProjectLoaded(_ project: Project) {
+        Logger.shared.log("App: Project loaded: \(project.name)")
+        currentProject = project
+        settingsManager.activeProjectPath = project.directoryPath
+        
+        // Hide splash and transition to project
+        startupManager.splashVisible = false
+        transitionTo(.project(project))
     }
     
-    /// Called when project window is closed
-    func onProjectClosed() {
-        Logger.shared.log("Project window closed")
+    /// Called when user closes current project
+    func closeCurrentProject() {
+        Logger.shared.log("App: Closing current project")
         currentProject = nil
         settingsManager.activeProjectPath = ""
-        evaluateWindowState() // Back to splash
+        
+        // This will trigger onDisappear -> handleWindowClosed -> transition logic
+        dismissWindow(id: "project")
     }
     
     /// Called when user selects New Project from menu
     private func onNewProjectMenuSelected() {
-        currentProject = nil
-        settingsManager.activeProjectPath = ""
-        evaluateWindowState() // Should show splash for project creation
+        Logger.shared.log("Menu: New Project selected")
+        closeCurrentProject() // This will trigger transition to createOrLoadProject
     }
     
     /// Called when user selects Open Project from menu  
     private func onOpenProjectMenuSelected() {
-        currentProject = nil
-        settingsManager.activeProjectPath = ""
-        evaluateWindowState() // Should show splash for project selection
+        Logger.shared.log("Menu: Open Project selected")
+        closeCurrentProject() // This will trigger transition to createOrLoadProject
     }
     
     /// Called when user selects Preferences from menu
     private func onPreferencesMenuSelected() {
-        // Force open settings regardless of current state
-        dismissAllWindows()
-        openWindow(id: "settings")
+        Logger.shared.log("Menu: Preferences selected")
+        transitionTo(.settings)
     }
 
     // === Debug and Utility Functions ===
@@ -331,11 +357,3 @@ struct SymposiumApp: App {
     }
 }
 
-// === Action Types for Window Communication ===
-
-/// Actions that the splash window can trigger
-enum SplashAction {
-    case createProject(Project)
-    case openProject(Project) 
-    case restoreProject(Project)
-}

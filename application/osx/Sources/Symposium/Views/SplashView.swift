@@ -1,155 +1,53 @@
 import SwiftUI
 
 struct SplashView: View {
-    // Reference to the main app for callbacks
-    let app: SymposiumApp
+    @EnvironmentObject var startupManager: StartupManager
     
-    @EnvironmentObject var permissionManager: PermissionManager
-    @EnvironmentObject var settingsManager: SettingsManager
-    @EnvironmentObject var agentManager: AgentManager
-    @EnvironmentObject var appDelegate: AppDelegate
-    @State private var showingSettings = false
-
+    // Callback to app for when startup completes
+    var onStartupComplete: ((Bool, Bool) -> Void)?
+    
     var body: some View {
-        VStack {
-            // Simple header bar - Settings button only
-            HStack {
-                Spacer()
-
-                Button("Settings") {
-                    showingSettings = true
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+        VStack(spacing: 32) {
+            // Header
+            VStack(spacing: 8) {
+                Text("Symposium")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                
+                Text("Starting up...")
+                    .font(.title3)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            // Main content
-            VStack {
-                if !permissionManager.hasAccessibilityPermission
-                    || !permissionManager.hasScreenRecordingPermission
-                {
-                    // Show settings if required permissions are missing
-                    SettingsView()
-                        .onAppear {
-                            Logger.shared.log(
-                                "SplashView: Showing SettingsView - missing permissions")
-                        }
-                } else if !agentManager.scanningCompleted && agentManager.scanningInProgress {
-                    // Show loading while scanning agents
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-
-                        Text("Scanning for agents...")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onAppear {
-                        Logger.shared.log(
-                            "SplashView: Showing agent scanning - scanningInProgress: \(agentManager.scanningInProgress)"
-                        )
-                    }
-                } else {
-                    // Show project selection when no active project
-                    ProjectSelectionView(
-                        onProjectCreated: { projectManager in
-                            Logger.shared.log("SplashView: Project created via callback")
-                            handleProjectCreated(projectManager)
-                        }
-                    )
-                    .onAppear {
-                        Logger.shared.log(
-                            "SplashView: Showing ProjectSelectionView - permissions OK, scanning done"
-                        )
-                    }
-                }
+            
+            // Startup checks
+            VStack(alignment: .leading, spacing: 16) {
+                StartupCheckItemView(checkState: startupManager.permissionsCheck)
+                StartupCheckItemView(checkState: startupManager.agentsCheck)
+                StartupCheckItemView(checkState: startupManager.projectCheck)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
-        }
-        .onChange(of: agentManager.scanningCompleted) { completed in
-            if completed {
-                Logger.shared.log("SplashView: Agent scanning completed, checking for last project")
-                checkForLastProject()
+            .frame(maxWidth: 400, alignment: .leading)
+            
+            // Overall progress
+            if !startupManager.startupComplete {
+                ProgressView()
+                    .scaleEffect(0.8)
             }
+            
+            Spacer()
         }
+        .frame(
+            minWidth: 500, idealWidth: 600, maxWidth: 700,
+            minHeight: 400, idealHeight: 500, maxHeight: 600
+        )
+        .padding(32)
+        .opacity(startupManager.splashVisible ? 1.0 : 0.0)
+        .animation(.easeInOut(duration: 0.3), value: startupManager.splashVisible)
         .onAppear {
-            // On splash window appearing, trigger app state evaluation
-            // This ensures the right window opens based on current state
-            Logger.shared.log("SplashView: onAppear - evaluating window state")
-            app.evaluateWindowState()
+            Logger.shared.log("SplashView: onAppear - startup sequence beginning")
+            startupManager.performStartupSequence()
         }
-    }
-    
-    // === Project Management ===
-    
-    private func handleProjectCreated(_ projectManager: ProjectManager) {
-        Logger.shared.log("SplashView: Handling project creation")
-        
-        guard let project = projectManager.currentProject else {
-            Logger.shared.log("SplashView: ERROR - ProjectManager has no current project")
-            return
-        }
-        
-        // Notify the main app via callback
-        Logger.shared.log("SplashView: Notifying app of created project: \(project.name)")
-        app.onSplashAction(.createProject(project))
-    }
-    
-    private func checkForLastProject() {
-        Logger.shared.log(
-            "SplashView: checkForLastProject - activeProjectPath: '\(settingsManager.activeProjectPath)'"
-        )
-        Logger.shared.log(
-            "SplashView: checkForLastProject - hasAccessibility: \(permissionManager.hasAccessibilityPermission)"
-        )
-        Logger.shared.log(
-            "SplashView: checkForLastProject - hasScreenRecording: \(permissionManager.hasScreenRecordingPermission)"
-        )
-        Logger.shared.log(
-            "SplashView: checkForLastProject - agentsAvailable: \(agentManager.scanningCompleted)")
-
-        // If we have a valid active project and permissions are OK, restore it
-        if !settingsManager.activeProjectPath.isEmpty,
-            permissionManager.hasAccessibilityPermission,
-            permissionManager.hasScreenRecordingPermission,
-            agentManager.scanningCompleted
-        {
-
-            Logger.shared.log(
-                "SplashView: Found active project, restoring: \(settingsManager.activeProjectPath)"
-            )
-            
-            // Attempt to restore the active project
-            let restoredProjectManager = ProjectManager(
-                agentManager: agentManager,
-                settingsManager: settingsManager, 
-                selectedAgent: settingsManager.selectedAgent,
-                permissionManager: permissionManager
-            )
-            
-            do {
-                try restoredProjectManager.openProject(at: settingsManager.activeProjectPath)
-                
-                guard let project = restoredProjectManager.currentProject else {
-                    Logger.shared.log("SplashView: ERROR - Restored project manager has no current project")
-                    return
-                }
-                
-                Logger.shared.log("SplashView: Successfully restored project, notifying app")
-                app.onSplashAction(.restoreProject(project))
-            } catch {
-                Logger.shared.log("SplashView: Failed to restore active project: \(error)")
-                // Clear invalid active project path
-                settingsManager.activeProjectPath = ""
-            }
-        } else {
-            Logger.shared.log("SplashView: No active project to restore - showing project selection")
+        .onDisappear {
+            Logger.shared.log("SplashView: onDisappear")
         }
     }
 }
