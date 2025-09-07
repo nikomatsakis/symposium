@@ -24,10 +24,14 @@ graph TB
 ## Core Components
 
 ### Symposium App (Swift/macOS)
+- **Three-Window State Machine**: Explicit state machine ensuring exactly one window is open at any time:
+  - Settings Window (missing permissions/agent)
+  - Project Window (active project with panel interface)
+  - Splash Window (project selection/creation)
 - **Window Management**: Uses Accessibility APIs to position, resize, and focus windows across applications
 - **Screenshot Capture**: Uses ScreenCaptureKit to create window thumbnails for the panel interface
 - **IPC Communication**: Listens on Unix socket for MCP server commands
-- **Main UI**: Panel interface showing agentspace overviews with tiling controls
+- **State Coordination**: Evaluates permissions + agent + project to determine which window to show
 
 ### Daemon (Node.js/TypeScript)
 - **Communication Hub**: Central IPC coordinator between Symposium app and MCP servers
@@ -48,6 +52,49 @@ graph TB
 - **MCP Server Loading**: Loads and connects the MCP server to the daemon
 - **Agent Interface**: Provides the actual AI agent interaction interface
 - **Tool Invocation**: Uses MCP server tools to coordinate with Symposium
+
+## Window State Machine
+
+### App Startup State Evaluation
+
+```mermaid
+flowchart TD
+    A[App Launch] --> B{Has Accessibility<br/>Permission?}
+    B -->|No| C[Open Settings Window]
+    B -->|Yes| D{Has Chosen<br/>Agent?}
+    D -->|No| C
+    D -->|Yes| E{Has Current<br/>Project?}
+    E -->|Yes| F[Open Project Window]
+    E -->|No| G[Open Splash Window<br/>(Create/Open Project)]
+    
+    C --> H[User Grants Permission<br/>or Chooses Agent]
+    H --> I[evaluateWindowState()]
+    I --> D
+    
+    G --> J[User Creates/Opens Project]
+    J --> K[Set currentProject]
+    K --> L[evaluateWindowState()]
+    L --> F
+    
+    F --> M[User Closes Project]
+    M --> N[Clear currentProject]
+    N --> O[evaluateWindowState()]
+    O --> G
+    
+    style A fill:#e1f5fe
+    style C fill:#ffebee
+    style F fill:#e8f5e8
+    style G fill:#fff3e0
+```
+
+### State Machine Transitions
+
+**Core Principle**: Exactly one window is open at any time. Every window close triggers `evaluateWindowState()` to determine the next window.
+
+- **Settings → Project/Splash**: When permissions granted and agent chosen
+- **Splash → Project**: When project created/opened  
+- **Project → Splash**: When project closed
+- **Any State → Settings**: When Preferences menu selected
 
 ## Key Workflows
 

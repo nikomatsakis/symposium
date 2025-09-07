@@ -438,31 +438,166 @@ WindowGroup(id: "project") {
 - **`Package.swift`**: Updated to require macOS 15.0
 - **`Models/PermissionManager.swift`**: Modernized with ScreenCaptureKit
 
-### 🔄 Current Status: Testing & Debugging Needed
+### ❌ Current Status: Reactive Approach Failed
 
 **Implementation Status**: ✅ **Code complete and builds successfully**
 
-**Testing Status**: ⚠️ **Untested - requires validation**
+**Testing Status**: ❌ **Failed - project window does not appear despite state changes**
 
 #### Expected Behavior
 1. **App Launch**: Splash window appears (empty `openProjects`)
 2. **Open Project**: Call `appState.openProject()` → Project window appears, splash disappears automatically
 3. **Close Project**: Call `appState.closeProject()` → Project window disappears, splash appears automatically
 
-#### Known Questions
-- ❓ **Window transitions**: Do SwiftUI windows transition cleanly without timing issues?
-- ❓ **Close project bug**: Is the original "Close Project" button bug resolved?
-- ❓ **Focus behavior**: Do floating windows behave properly for panel-like interactions?
-- ❓ **Multiple projects**: Current implementation shows only first project - needs extension for multi-project support
-- ❓ **Click-outside dismissal**: SwiftUI windows don't auto-dismiss - may need additional handling
+#### Root Cause Analysis
+The reactive approach fails because **SwiftUI WindowGroups don't automatically open windows when content changes from EmptyView to a real view**. The logs show:
+
+```
+[07:17:05.912] AppState: Project added to openProjects. Count: 1
+[07:17:05.912] SplashView: Active project set via AppState  
+[07:17:05.912] SplashView: Successfully restored active project
+[07:17:05.914] SplashView: Showing ProjectSelectionView - permissions OK, scanning done
+```
+
+The project was added to state, but the project window never appeared because no code explicitly called `openWindow(id: "project")`.
+
+#### Problems with Reactive Approach
+- ❌ **Implicit window management**: No explicit control over when windows open/close
+- ❌ **Complex state synchronization**: Multiple `@Published` properties that can get out of sync
+- ❌ **Hard to debug**: Window visibility depends on complex reactive chains
+- ❌ **Race conditions**: Timing issues between state changes and UI updates
+
+## ✅ New Approach: Explicit State Machine (January 2025)
+
+**Replacing reactive approach with explicit window management based on clear state machine.**
+
+### Three-Window State Machine
+
+**Core Principle**: At any moment, exactly ONE window is open:
+
+1. **Settings Window** - when missing permissions OR agent preference
+2. **Project Window** - when we have permissions + agent + current project  
+3. **Splash Window** - the decision point / create-open project dialog
+
+### App.swift Architecture
+
+```swift
+@main  
+struct SymposiumApp: App {
+    // === State Machine Components ===
+    @StateObject private var permissionManager = PermissionManager()
+    @StateObject private var agentManager = AgentManager() 
+    @StateObject private var settingsManager = SettingsManager()
+    private var currentProject: Project? = nil
+    
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+    
+    var body: some Scene {
+        // Define all possible windows (but don't show them automatically)
+        WindowGroup(id: "splash") { SplashView(app: self) }
+        WindowGroup(id: "settings") { SettingsView(app: self) }  
+        WindowGroup(id: "project") { 
+            if let project = currentProject {
+                ProjectView(project: project, app: self)
+            }
+        }
+    }
+    
+    // === Window State Machine ===
+    // At startup and after any window closes, evaluate which window should be open
+    
+    func evaluateWindowState() {
+        dismissAllWindows() // Ensure clean state
+        
+        if !permissionManager.hasAllRequiredPermissions {
+            openWindow(id: "settings")
+        } else if !agentManager.hasChosenAgent {
+            openWindow(id: "settings") 
+        } else if let project = loadCurrentProject() {
+            currentProject = project
+            openWindow(id: "project")
+        } else {
+            openWindow(id: "splash") // Shows create/open project dialog
+        }
+    }
+    
+    // === Explicit Window Management ===
+    private func dismissAllWindows() {
+        dismissWindow(id: "splash")
+        dismissWindow(id: "settings") 
+        dismissWindow(id: "project")
+    }
+    
+    // === Callbacks from Windows ===
+    func onSplashAction(_ action: SplashAction) {
+        switch action {
+        case .createProject(let project):
+            currentProject = project
+            settingsManager.activeProjectPath = project.path
+        case .openProject(let project):
+            currentProject = project
+            settingsManager.activeProjectPath = project.path
+        case .restoreProject(let project):
+            currentProject = project
+        }
+        evaluateWindowState() // Re-evaluate after action
+    }
+    
+    func onSettingsClosed() {
+        evaluateWindowState() // Re-evaluate permissions/agent state
+    }
+    
+    func onProjectClosed() {
+        currentProject = nil
+        settingsManager.activeProjectPath = ""
+        evaluateWindowState() // Back to splash
+    }
+    
+    func onPreferencesMenuSelected() {
+        // Force open settings regardless of current state
+        dismissAllWindows()
+        openWindow(id: "settings")
+    }
+}
+```
+
+### State Transitions
+
+```
+[App Launch] → evaluateWindowState() → [Settings/Project/Splash]
+
+[Settings Closed] → evaluateWindowState() → [Project/Splash] 
+[Project Closed] → evaluateWindowState() → [Splash]
+[Preferences Menu] → force openWindow(id: "settings")
+
+[Splash: Create Project] → onSplashAction() → evaluateWindowState() → [Project]
+[Splash: Open Project] → onSplashAction() → evaluateWindowState() → [Project]
+```
+
+### Key Benefits
+
+- ✅ **Explicit control**: Every window open/close is intentional and logged
+- ✅ **Single source of truth**: App.swift tracks all state in simple variables
+- ✅ **Clear transitions**: Every window action triggers re-evaluation
+- ✅ **Debuggable**: Easy to log state changes and window transitions
+- ✅ **No timing hacks**: No reactive coordination or delays needed
+- ✅ **Predictable**: State machine logic is linear and easy to follow
+
+### Implementation Steps
+
+1. **Update App.swift**: Implement explicit state machine with evaluateWindowState()
+2. **Update window views**: Add app callbacks for close/action events
+3. **Remove reactive code**: Delete AppState class and reactive bindings
+4. **Test state transitions**: Verify all window flows work correctly
+5. **Update documentation**: Document the final state machine
 
 ### 🎯 Next Steps
 
-1. **Test basic functionality**: Launch app, open/close projects, verify window transitions
-2. **Debug any issues**: State not updating, windows not showing/hiding, etc.
-3. **Add focus/dismissal behavior**: Implement click-outside and app focus management
-4. **Extend for multiple projects**: Support concurrent project windows
-5. **Final polish**: Performance, edge cases, error handling
+1. **Implement explicit state machine**: Replace reactive approach in App.swift
+2. **Update window callback system**: Connect views to App.swift state machine
+3. **Test window transitions**: Verify clean state transitions work
+4. **Remove reactive dependencies**: Clean up AppState and reactive code
 
 ## Rollback Plan
 
