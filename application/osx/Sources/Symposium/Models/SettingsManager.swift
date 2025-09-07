@@ -18,6 +18,9 @@ class SettingsManager: ObservableObject {
     }
     
     // Cached agents persistence
+    // Note: We store as Data because @AppStorage only supports primitive types directly.
+    // Each access re-decodes from JSON (no memoization), but this is acceptable since we
+    // only read once at startup and write once after each agent scan.
     var cachedAgents: [AgentInfo] {
         get {
             guard !cachedAgentsData.isEmpty else { return [] }
