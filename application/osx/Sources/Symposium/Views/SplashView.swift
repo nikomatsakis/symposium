@@ -79,7 +79,9 @@ struct SplashView: View {
             }
         }
         .onAppear {
-            Logger.shared.log("SplashView: onAppear - triggering evaluateWindowState")
+            // On splash window appearing, trigger app state evaluation
+            // This ensures the right window opens based on current state
+            Logger.shared.log("SplashView: onAppear - evaluating window state")
             app.evaluateWindowState()
         }
     }
