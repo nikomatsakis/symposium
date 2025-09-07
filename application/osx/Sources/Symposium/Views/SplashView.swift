@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct SplashView: View {
-    @EnvironmentObject var appState: AppState
+    // Reference to the main app for callbacks
+    let app: SymposiumApp
+    
     @EnvironmentObject var permissionManager: PermissionManager
     @EnvironmentObject var settingsManager: SettingsManager
     @EnvironmentObject var agentManager: AgentManager
     @EnvironmentObject var appDelegate: AppDelegate
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
     @State private var showingSettings = false
 
     var body: some View {
@@ -56,8 +56,8 @@ struct SplashView: View {
                     // Show project selection when no active project
                     ProjectSelectionView(
                         onProjectCreated: { projectManager in
-                            Logger.shared.log("SplashView: Project created, setting as active")
-                            setActiveProject(projectManager)
+                            Logger.shared.log("SplashView: Project created via callback")
+                            handleProjectCreated(projectManager)
                         }
                     )
                     .onAppear {
@@ -78,69 +78,27 @@ struct SplashView: View {
                 checkForLastProject()
             }
         }
+        .onAppear {
+            Logger.shared.log("SplashView: onAppear - triggering evaluateWindowState")
+            app.evaluateWindowState()
+        }
     }
     
-    // MARK: - Phase 20: Project lifecycle management
+    // === Project Management ===
     
-    private func setActiveProject(_ projectManager: ProjectManager) {
-        Logger.shared.log("SplashView: Setting active project via AppState")
+    private func handleProjectCreated(_ projectManager: ProjectManager) {
+        Logger.shared.log("SplashView: Handling project creation")
         
         guard let project = projectManager.currentProject else {
             Logger.shared.log("SplashView: ERROR - ProjectManager has no current project")
             return
         }
         
-        // Use AppState to open the project - this will automatically show project window and hide splash
-        Logger.shared.log("SplashView: Opening project in AppState: \(project.name)")
-        appState.openProject(project)
-        Logger.shared.log("SplashView: Active project set via AppState")
+        // Notify the main app via callback
+        Logger.shared.log("SplashView: Notifying app of created project: \(project.name)")
+        app.onSplashAction(.createProject(project))
     }
     
-    private func closeActiveProject() {
-        Logger.shared.log("SplashView: Closing active project")
-        
-        // Clear the active project
-        settingsManager.activeProjectPath = ""
-        
-        // Hide dock panel before showing splash
-        AppDelegate.shared?.hideDockPanel()
-        
-        // Notify AppDelegate
-        AppDelegate.shared?.setCurrentProjectManager(nil)
-        
-        // Phase 22: Implement XOR invariant - show splash window when no active project
-        // Delay splash window to ensure panel hide animation completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.showSplashWindow()
-        }
-        
-        // TODO Phase 40: Close any VSCode windows associated with the project
-        
-        Logger.shared.log("SplashView: Active project closed, splash window shown")
-    }
-    
-    // MARK: - Phase 22: XOR Invariant Helper Functions
-    
-    private func hideSplashWindow() {
-        Logger.shared.log("SplashView: Dismissing splash window for XOR invariant")
-        dismiss()
-        Logger.shared.log("SplashView: Splash window dismissed")
-    }
-    
-    private func showSplashWindow() {
-        Logger.shared.log("SplashView: Opening splash window for XOR invariant")
-        openWindow(id: "splash")
-        Logger.shared.log("SplashView: Splash window opened")
-    }
-    
-    private func showDockPanelImmediately(with projectManager: ProjectManager) {
-        Logger.shared.log("SplashView: Showing dock panel immediately on project open")
-        
-        // Use AppDelegate to show the dock panel immediately
-        appDelegate.showDockPanel(with: projectManager)
-        Logger.shared.log("SplashView: Dock panel shown immediately")
-    }
-
     private func checkForLastProject() {
         Logger.shared.log(
             "SplashView: checkForLastProject - activeProjectPath: '\(settingsManager.activeProjectPath)'"
@@ -165,7 +123,7 @@ struct SplashView: View {
                 "SplashView: Found active project, restoring: \(settingsManager.activeProjectPath)"
             )
             
-            // Phase 20: Restore the active project instead of opening a new window
+            // Attempt to restore the active project
             let restoredProjectManager = ProjectManager(
                 agentManager: agentManager,
                 settingsManager: settingsManager, 
@@ -175,8 +133,14 @@ struct SplashView: View {
             
             do {
                 try restoredProjectManager.openProject(at: settingsManager.activeProjectPath)
-                setActiveProject(restoredProjectManager)
-                Logger.shared.log("SplashView: Successfully restored active project")
+                
+                guard let project = restoredProjectManager.currentProject else {
+                    Logger.shared.log("SplashView: ERROR - Restored project manager has no current project")
+                    return
+                }
+                
+                Logger.shared.log("SplashView: Successfully restored project, notifying app")
+                app.onSplashAction(.restoreProject(project))
             } catch {
                 Logger.shared.log("SplashView: Failed to restore active project: \(error)")
                 // Clear invalid active project path
