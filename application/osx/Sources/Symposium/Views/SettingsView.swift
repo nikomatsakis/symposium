@@ -81,9 +81,17 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
 
-                Text("Choose which AI agent to use for taskspaces:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Choose which AI agent to use for taskspaces:")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    if let lastScanDate = settingsManager.lastAgentScanDate {
+                        Text("Last updated: \(lastScanDate, format: .dateTime.month().day().hour().minute())")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
 
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(agentManager.availableAgents) { agent in
