@@ -11,13 +11,12 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
 
     private let ipcManager = IpcManager()
     private let agentManager: AgentManager
-    private let settingsManager: SettingsManager
     private let selectedAgent: AgentType
     private let permissionManager: PermissionManager
 
     // Window associations for current project
     @Published private var taskspaceWindows: [UUID: CGWindowID] = [:]
-    
+
     // Window close detection timer
     private var windowCloseTimer: Timer?
 
@@ -37,17 +36,16 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
     }()
 
     init(
-        agentManager: AgentManager, settingsManager: SettingsManager, selectedAgent: AgentType,
+        agentManager: AgentManager, selectedAgent: AgentType,
         permissionManager: PermissionManager
     ) {
         self.agentManager = agentManager
-        self.settingsManager = settingsManager
         self.selectedAgent = selectedAgent
         self.permissionManager = permissionManager
 
         // ScreenshotManager initialization is deferred via lazy var
     }
-    
+
     deinit {
         stopWindowCloseDetection()
     }
@@ -107,26 +105,24 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
     private func setCurrentProject(_ project: Project) {
         // Stop window detection for previous project
         stopWindowCloseDetection()
-        
+
         // Clear previous project state
         taskspaceWindows.removeAll()
-        
+
         self.currentProject = project
         self.errorMessage = nil
-
-        // Save project path for next app launch
-        self.settingsManager.activeProjectPath = project.directoryPath
 
         // Register as IPC delegate for this project
         self.ipcManager.addDelegate(self)
         Logger.shared.log("ProjectManager: Registered as IPC delegate for project: \(project.name)")
 
         // Phase 30: Do NOT auto-launch VSCode - taskspaces start dormant until user activates them
-        Logger.shared.log("ProjectManager: Project opened with \(project.taskspaces.count) dormant taskspaces")
+        Logger.shared.log(
+            "ProjectManager: Project opened with \(project.taskspaces.count) dormant taskspaces")
 
         // Load existing screenshots from disk for visual persistence
         self.loadExistingScreenshots()
-        
+
         // Start automatic window close detection
         self.startWindowCloseDetection()
 
@@ -139,11 +135,11 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
             Logger.shared.log("ProjectManager: Cannot launch VSCode - no current project")
             return
         }
-        
+
         launchVSCode(for: taskspace, in: project.directoryPath)
         Logger.shared.log("ProjectManager: User-activated VSCode for taskspace: \(taskspace.name)")
     }
-    
+
     // MARK: - Legacy method (no longer auto-launches on project open)
     // /// Launch VSCode for all active taskspaces (both hatchling and resume states)
     // private func launchVSCodeForActiveTaskspaces(in project: Project) {
@@ -316,7 +312,8 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
         try taskspace.save(in: project.directoryPath)
 
         // Phase 30: Do NOT auto-launch VSCode - new taskspaces start dormant until user clicks
-        Logger.shared.log("ProjectManager: Created new taskspace '\(taskspace.name)' (dormant until activated)")
+        Logger.shared.log(
+            "ProjectManager: Created new taskspace '\(taskspace.name)' (dormant until activated)")
 
         // Add to current project
         DispatchQueue.main.async {
@@ -397,66 +394,77 @@ extension ProjectManager {
     func getWindow(for taskspaceUuid: UUID) -> CGWindowID? {
         return taskspaceWindows[taskspaceUuid]
     }
-    
+
     /// Focus an active taskspace's VSCode window
     func focusTaskspaceWindow(for taskspace: Taskspace) -> Bool {
         guard let windowID = taskspaceWindows[taskspace.id] else {
-            Logger.shared.log("ProjectManager: Cannot focus taskspace \(taskspace.name) - no registered window")
+            Logger.shared.log(
+                "ProjectManager: Cannot focus taskspace \(taskspace.name) - no registered window")
             return false
         }
-        
+
         // Verify window still exists before trying to focus it
         guard isWindowStillOpen(windowID: windowID) else {
-            Logger.shared.log("ProjectManager: Cannot focus taskspace \(taskspace.name) - window no longer exists")
+            Logger.shared.log(
+                "ProjectManager: Cannot focus taskspace \(taskspace.name) - window no longer exists"
+            )
             // Clean up stale window reference
             taskspaceWindows.removeValue(forKey: taskspace.id)
             return false
         }
-        
-        Logger.shared.log("ProjectManager: Focusing window \(windowID) for taskspace: \(taskspace.name)")
-        
+
+        Logger.shared.log(
+            "ProjectManager: Focusing window \(windowID) for taskspace: \(taskspace.name)")
+
         // Use Core Graphics to focus the window
         let result = focusWindow(windowID: windowID)
-        
+
         if result {
-            Logger.shared.log("ProjectManager: Successfully focused window for taskspace: \(taskspace.name)")
+            Logger.shared.log(
+                "ProjectManager: Successfully focused window for taskspace: \(taskspace.name)")
         } else {
-            Logger.shared.log("ProjectManager: Failed to focus window for taskspace: \(taskspace.name)")
+            Logger.shared.log(
+                "ProjectManager: Failed to focus window for taskspace: \(taskspace.name)")
         }
-        
+
         return result
     }
-    
+
     /// Focus a window by its CGWindowID using Core Graphics APIs
     private func focusWindow(windowID: CGWindowID) -> Bool {
         // Get window info to find the owning process
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        guard
+            let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+                as? [[String: Any]]
+        else {
             return false
         }
-        
-        guard let windowInfo = windowList.first(where: { window in
-            if let id = window[kCGWindowNumber as String] as? CGWindowID {
-                return id == windowID
-            }
-            return false
-        }) else {
+
+        guard
+            let windowInfo = windowList.first(where: { window in
+                if let id = window[kCGWindowNumber as String] as? CGWindowID {
+                    return id == windowID
+                }
+                return false
+            })
+        else {
             return false
         }
-        
+
         // Get the process ID that owns this window
         guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else {
             return false
         }
-        
+
         // Get the running application for this process
         guard let app = NSRunningApplication(processIdentifier: ownerPID) else {
             return false
         }
-        
+
         // Activate the application (brings it to front)
         let success = app.activate()
-        
+
         if success {
             // Small delay to let the app activation complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -464,22 +472,24 @@ extension ProjectManager {
                 self.focusWindowViaAccessibility(windowID: windowID, processID: ownerPID)
             }
         }
-        
+
         return success
     }
-    
+
     /// Use Accessibility APIs to focus a specific window within an application
     private func focusWindowViaAccessibility(windowID: CGWindowID, processID: pid_t) {
         let app = AXUIElementCreateApplication(processID)
-        
+
         var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
-        
+        let result = AXUIElementCopyAttributeValue(
+            app, kAXWindowsAttribute as CFString, &windowsRef)
+
         guard result == .success,
-              let windows = windowsRef as? [AXUIElement] else {
+            let windows = windowsRef as? [AXUIElement]
+        else {
             return
         }
-        
+
         // Find the window with matching CGWindowID
         for window in windows {
             if let axWindowID = getWindowID(from: window), axWindowID == windowID {
@@ -494,51 +504,59 @@ extension ProjectManager {
     @MainActor
     private func captureAndCacheScreenshot(windowId: CGWindowID, for taskspaceId: UUID) async {
         let startTime = Date()
-        Logger.shared.log("ProjectManager: Starting screenshot capture for taskspace \(taskspaceId)")
-        
+        Logger.shared.log(
+            "ProjectManager: Starting screenshot capture for taskspace \(taskspaceId)")
+
         // Use the screenshot manager to capture the screenshot directly
         if let screenshot = await screenshotManager.captureWindowScreenshot(windowId: windowId) {
             let captureTime = Date().timeIntervalSince(startTime)
-            Logger.shared.log("ProjectManager: Screenshot captured in \(String(format: "%.3f", captureTime))s")
-            
+            Logger.shared.log(
+                "ProjectManager: Screenshot captured in \(String(format: "%.3f", captureTime))s")
+
             // Cache in memory for immediate UI updates
             taskspaceScreenshots[taskspaceId] = screenshot
-            
+
             // Save to disk for persistence across app restarts
             await saveScreenshotToDisk(screenshot: screenshot, taskspaceId: taskspaceId)
-            
+
             let totalTime = Date().timeIntervalSince(startTime)
-            Logger.shared.log("ProjectManager: Screenshot cached for taskspace \(taskspaceId) (total: \(String(format: "%.3f", totalTime))s)")
+            Logger.shared.log(
+                "ProjectManager: Screenshot cached for taskspace \(taskspaceId) (total: \(String(format: "%.3f", totalTime))s)"
+            )
         } else {
             let failTime = Date().timeIntervalSince(startTime)
-            Logger.shared.log("ProjectManager: Failed to capture screenshot for taskspace \(taskspaceId) after \(String(format: "%.3f", failTime))s")
+            Logger.shared.log(
+                "ProjectManager: Failed to capture screenshot for taskspace \(taskspaceId) after \(String(format: "%.3f", failTime))s"
+            )
         }
     }
-    
+
     /// Save screenshot to disk for persistence across app restarts
     private func saveScreenshotToDisk(screenshot: NSImage, taskspaceId: UUID) async {
         guard let currentProject = currentProject else {
             Logger.shared.log("ProjectManager: Cannot save screenshot - no current project")
             return
         }
-        
+
         // Find the taskspace to get its directory path
         guard let taskspace = currentProject.findTaskspace(uuid: taskspaceId.uuidString) else {
-            Logger.shared.log("ProjectManager: Cannot find taskspace for screenshot save: \(taskspaceId)")
+            Logger.shared.log(
+                "ProjectManager: Cannot find taskspace for screenshot save: \(taskspaceId)")
             return
         }
-        
+
         let taskspaceDir = taskspace.directoryPath(in: currentProject.directoryPath)
         let screenshotPath = "\(taskspaceDir)/screenshot.png"
-        
+
         // Convert NSImage to PNG data
         guard let tiffData = screenshot.tiffRepresentation,
-              let bitmapImage = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmapImage.representation(using: .png, properties: [:]) else {
+            let bitmapImage = NSBitmapImageRep(data: tiffData),
+            let pngData = bitmapImage.representation(using: .png, properties: [:])
+        else {
             Logger.shared.log("ProjectManager: Failed to convert screenshot to PNG data")
             return
         }
-        
+
         do {
             try pngData.write(to: URL(fileURLWithPath: screenshotPath))
             Logger.shared.log("ProjectManager: Screenshot saved to disk: \(screenshotPath)")
@@ -546,55 +564,60 @@ extension ProjectManager {
             Logger.shared.log("ProjectManager: Failed to save screenshot to disk: \(error)")
         }
     }
-    
+
     /// Load existing screenshots from disk on project open for visual persistence
     private func loadExistingScreenshots() {
         guard let currentProject = currentProject else {
             Logger.shared.log("ProjectManager: Cannot load screenshots - no current project")
             return
         }
-        
+
         var loadedCount = 0
-        
+
         for taskspace in currentProject.taskspaces {
             let taskspaceDir = taskspace.directoryPath(in: currentProject.directoryPath)
             let screenshotPath = "\(taskspaceDir)/screenshot.png"
-            
+
             if FileManager.default.fileExists(atPath: screenshotPath) {
                 if let screenshot = NSImage(contentsOfFile: screenshotPath) {
                     taskspaceScreenshots[taskspace.id] = screenshot
                     loadedCount += 1
-                    Logger.shared.log("ProjectManager: Loaded screenshot from disk for taskspace: \(taskspace.name)")
+                    Logger.shared.log(
+                        "ProjectManager: Loaded screenshot from disk for taskspace: \(taskspace.name)"
+                    )
                 } else {
-                    Logger.shared.log("ProjectManager: Failed to load screenshot file: \(screenshotPath)")
+                    Logger.shared.log(
+                        "ProjectManager: Failed to load screenshot file: \(screenshotPath)")
                 }
             }
         }
-        
+
         Logger.shared.log("ProjectManager: Loaded \(loadedCount) existing screenshots from disk")
     }
-    
+
     // MARK: - Window Close Detection
-    
+
     /// Start polling for closed windows to automatically transition taskspaces to Dormant state
     private func startWindowCloseDetection() {
         // Stop any existing timer
         stopWindowCloseDetection()
-        
-        Logger.shared.log("ProjectManager: Starting window close detection (polling every 3 seconds)")
-        
+
+        Logger.shared.log(
+            "ProjectManager: Starting window close detection (polling every 3 seconds)")
+
         // Ensure timer is created on the main thread
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            self.windowCloseTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+
+            self.windowCloseTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) {
+                [weak self] _ in
                 self?.checkForClosedWindows()
             }
-            
+
             Logger.shared.log("ProjectManager: Window close detection timer created successfully")
         }
     }
-    
+
     /// Stop window close detection timer
     private func stopWindowCloseDetection() {
         DispatchQueue.main.async { [weak self] in
@@ -603,35 +626,39 @@ extension ProjectManager {
             Logger.shared.log("ProjectManager: Stopped window close detection")
         }
     }
-    
+
     /// Check if any registered windows have been closed and update taskspace states
     private func checkForClosedWindows() {
         let windowsToCheck = taskspaceWindows
         var closedWindows: [UUID] = []
-        
+
         for (taskspaceId, windowId) in windowsToCheck {
             if !isWindowStillOpen(windowID: windowId) {
                 closedWindows.append(taskspaceId)
             }
         }
-        
+
         // Update state for closed windows
         for taskspaceId in closedWindows {
-            if let taskspaceName = currentProject?.taskspaces.first(where: { $0.id == taskspaceId })?.name {
+            if let taskspaceName = currentProject?.taskspaces.first(where: { $0.id == taskspaceId }
+            )?.name {
                 Logger.shared.log("ProjectManager: Window closed for taskspace: \(taskspaceName)")
                 taskspaceWindows.removeValue(forKey: taskspaceId)
                 // Note: UI automatically updates via @Published taskspaceWindows and hasRegisteredWindow computed property
             }
         }
     }
-    
+
     /// Check if a CGWindowID still exists in the system
     private func isWindowStillOpen(windowID: CGWindowID) -> Bool {
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        guard
+            let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+                as? [[String: Any]]
+        else {
             return false
         }
-        
+
         return windowList.contains { window in
             if let id = window[kCGWindowNumber as String] as? CGWindowID {
                 return id == windowID

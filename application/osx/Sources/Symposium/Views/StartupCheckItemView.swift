@@ -1,37 +1,26 @@
 import SwiftUI
 
 struct StartupCheckItemView: View {
-    let checkState: StartupCheckState
-    
+    @ObservedObject var check: StartupCheck
+
+    init(check: StartupCheck) {
+        self.check = check
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // Icon
             Group {
-                switch checkState {
-                case .pending:
-                    Image(systemName: checkState.icon)
-                        .foregroundColor(.secondary)
-                case .inProgress:
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .frame(width: 16, height: 16)
-                case .completed:
-                    Image(systemName: checkState.icon)
-                        .foregroundColor(.green)
-                case .failed:
-                    Image(systemName: checkState.icon)
-                        .foregroundColor(.red)
-                }
+                Image(systemName: check.completed ? "checkmark.square.fill" : "square")
+                    .foregroundColor(check.completed ? .green : .secondary)
             }
             .frame(width: 16, height: 16)
-            
+
             // Text
-            Text(checkState.displayText)
+            Text(check.description)
                 .font(.subheadline)
-                .foregroundColor(checkState.succeeded ? .primary : .secondary)
+                .foregroundColor(check.completed ? .primary : .secondary)
         }
         .padding(.vertical, 4)
     }
 }
-
-// Preview removed for compatibility

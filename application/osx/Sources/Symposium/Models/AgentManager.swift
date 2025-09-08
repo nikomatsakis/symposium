@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 enum AgentType: String, CaseIterable, Identifiable, Codable {
     case qcli = "qcli"
@@ -16,82 +17,134 @@ enum AgentType: String, CaseIterable, Identifiable, Codable {
 }
 
 class AgentManager: ObservableObject {
-    @Published var availableAgents: [AgentInfo] = []
-    @Published var scanningCompleted = false
-    @Published var scanningInProgress = false
-    
-    private let settingsManager: SettingsManager
+    @AppStorage("selectedAgent") var selectedAgentRaw: String = ""
 
-    init(settingsManager: SettingsManager) {
-        self.settingsManager = settingsManager
+    // Note: We store `cachedAgents` as Data because @AppStorage only supports primitive types directly.
+    // Each access re-decodes from JSON (no memoization), but this is acceptable since we
+    // only read once at startup and write once after each agent scan.
+    @AppStorage("cachedAgents") private var cachedAgentsData: Data = Data()
+
+    // Date of last scan
+    //
+    // Stored as time internal since 1970 so that it can be optional
+    @AppStorage("lastScanDate") var lastScanInterval: Double = 0
+
+    @Published var scanningInProgress = false
+
+    init() {
         Logger.shared.log("AgentManager: Created")
-        
-        // Try to load cached agents first
-        let cachedAgents = settingsManager.cachedAgents
-        if !cachedAgents.isEmpty {
-            Logger.shared.log("AgentManager: Loading \(cachedAgents.count) cached agents")
-            self.availableAgents = cachedAgents
-            self.scanningCompleted = true
-        } else {
-            Logger.shared.log("AgentManager: No cached agents, starting scan")
-            scanForAgents(force: false)
+    }
+
+    var selectedAgent: AgentType? {
+        get { if selectedAgentRaw.isEmpty { nil } else { AgentType(rawValue: selectedAgentRaw) } }
+        set { selectedAgentRaw = newValue?.rawValue ?? "" }
+    }
+
+    var cachedAgents: [AgentInfo] {
+        get {
+            guard !cachedAgentsData.isEmpty else { return [] }
+            do {
+                return try JSONDecoder().decode([AgentInfo].self, from: cachedAgentsData)
+            } catch {
+                Logger.shared.log("SettingsManager: Failed to decode cached agents: \(error)")
+                return []
+            }
+        }
+        set {
+            do {
+                cachedAgentsData = try JSONEncoder().encode(newValue)
+                lastScanDate = Date()
+                Logger.shared.log("SettingsManager: Cached \(newValue.count) agents")
+            } catch {
+                Logger.shared.log("SettingsManager: Failed to encode agents for caching: \(error)")
+            }
         }
     }
 
-    func scanForAgents(force: Bool) {
-        if !force {
-            if self.scanningInProgress || self.scanningCompleted {
-                return
+    var lastScanDate: Date? {
+        get { lastScanInterval == 0 ? nil : Date(timeIntervalSince1970: lastScanInterval) }
+        set { lastScanInterval = newValue?.timeIntervalSince1970 ?? 0 }
+    }
+
+    /// Check if we have a selected agent, returns true if we do
+    func checkSelectedAgent() -> Bool {
+        Logger.shared.log("AgentManager: checkSelectedAgent")
+        if let a = selectedAgent {
+            Logger.shared.log("AgentManager: found selected agent \(a)")
+            return true
+        }
+        return false
+    }
+
+    /// Async agent scan that you can await
+    @MainActor
+    func scanForAgents() async -> [AgentInfo] {
+        if scanningInProgress {
+            Logger.shared.log("AgentManager: Agent scan already in progress")
+            // Wait for the current scan to complete
+            while scanningInProgress {
+                try? await Task.sleep(nanoseconds: 100_000_000)  // 0.1 seconds
             }
+            return cachedAgents
         }
 
-        Logger.shared.log("AgentManager: Starting agent scan...")
-        self.scanningInProgress = true
+        Logger.shared.log("AgentManager: Starting agent scan")
+        scanningInProgress = true
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            var agents: [AgentInfo] = []
+        let agents = await withTaskGroup(of: AgentInfo?.self) { group in
+            var results: [AgentInfo] = []
 
             // Check for Q CLI
-            Logger.shared.log("AgentManager: Checking for Q CLI...")
-            if let qcliInfo = self.detectQCLI() {
-                agents.append(qcliInfo)
-                Logger.shared.log("AgentManager: Q CLI detected: \(qcliInfo.statusText)")
-            } else {
-                Logger.shared.log("AgentManager: Q CLI not found")
+            group.addTask {
+                Logger.shared.log("AgentManager: Checking for Q CLI...")
+                let qcliInfo = await self.detectQCLI()
+                if let qcliInfo = qcliInfo {
+                    Logger.shared.log("AgentManager: Q CLI detected: \(qcliInfo.statusText)")
+                } else {
+                    Logger.shared.log("AgentManager: Q CLI not found")
+                }
+                return qcliInfo
             }
 
             // Check for Claude Code
-            Logger.shared.log("AgentManager: Checking for Claude Code...")
-            if let claudeInfo = self.detectClaudeCode() {
-                agents.append(claudeInfo)
-                Logger.shared.log("AgentManager: Claude Code detected: \(claudeInfo.statusText)")
-            } else {
-                Logger.shared.log("AgentManager: Claude Code not found")
+            group.addTask {
+                Logger.shared.log("AgentManager: Checking for Claude Code...")
+                let claudeInfo = await self.detectClaudeCode()
+                if let claudeInfo = claudeInfo {
+                    Logger.shared.log(
+                        "AgentManager: Claude Code detected: \(claudeInfo.statusText)")
+                } else {
+                    Logger.shared.log("AgentManager: Claude Code not found")
+                }
+                return claudeInfo
             }
 
-            DispatchQueue.main.async {
-                self.availableAgents = agents
-                self.scanningCompleted = true  // Always set to true when scanning completes
-                self.scanningInProgress = false
-                
-                // Cache the results
-                self.settingsManager.cachedAgents = agents
-                
-                Logger.shared.log("AgentManager: Scan complete. Found \(agents.count) agents.")
+            for await agent in group {
+                if let agent = agent {
+                    results.append(agent)
+                }
             }
+
+            return results
         }
+
+        cachedAgents = agents
+        scanningInProgress = false
+
+        Logger.shared.log("AgentManager: Scan complete. Found \(agents.count) agents.")
+        return agents
     }
 
-    private func detectQCLI() -> AgentInfo? {
+    private func detectQCLI() async -> AgentInfo? {
         // Check if q command exists in PATH
-        let qPath = findExecutable(name: "q")
+        let qPath = await findExecutable(name: "q")
         guard let path = qPath else { return nil }
 
         // Verify it's actually Q CLI by checking version
-        let version = getQCLIVersion(path: path)
+        let version = await getQCLIVersion(path: path)
 
         // Check if MCP is configured and get the path
-        let (mcpConfigured, mcpPath) = checkQCLIMCPConfiguration(qPath: path)
+        let (mcpConfigured, mcpPath) = await checkQCLIMCPConfiguration(qPath: path)
 
         return AgentInfo(
             type: .qcli,
@@ -105,15 +158,15 @@ class AgentManager: ObservableObject {
         )
     }
 
-    private func detectClaudeCode() -> AgentInfo? {
+    private func detectClaudeCode() async -> AgentInfo? {
         Logger.shared.log("AgentManager: Looking for Claude Code executable...")
 
         // First try to find claude in PATH
-        if let path = findExecutable(name: "claude") {
+        if let path = await findExecutable(name: "claude") {
             Logger.shared.log("AgentManager: Found claude at: \(path)")
-            let version = getClaudeCodeVersion(path: path)
+            let version = await getClaudeCodeVersion(path: path)
             Logger.shared.log("AgentManager: Claude version: \(version ?? "unknown")")
-            let (mcpConfigured, mcpPath) = checkClaudeCodeMCPConfiguration(claudePath: path)
+            let (mcpConfigured, mcpPath) = await checkClaudeCodeMCPConfiguration(claudePath: path)
 
             return AgentInfo(
                 type: .claude,
@@ -141,8 +194,9 @@ class AgentManager: ObservableObject {
             Logger.shared.log("AgentManager: Checking: \(path)")
             if FileManager.default.isExecutableFile(atPath: path) {
                 Logger.shared.log("AgentManager: Found executable at: \(path)")
-                let version = getClaudeCodeVersion(path: path)
-                let (mcpConfigured, mcpPath) = checkClaudeCodeMCPConfiguration(claudePath: path)
+                let version = await getClaudeCodeVersion(path: path)
+                let (mcpConfigured, mcpPath) = await checkClaudeCodeMCPConfiguration(
+                    claudePath: path)
 
                 return AgentInfo(
                     type: .claude,
@@ -172,78 +226,87 @@ class AgentManager: ObservableObject {
         )
     }
 
-    private func findExecutable(name: String) -> String? {
-        let process = Process()
-        process.launchPath = "/usr/bin/which"
-        process.arguments = [name]
+    private func findExecutable(name: String) async -> String? {
+        return await withCheckedContinuation { continuation in
+            let process = Process()
+            process.launchPath = "/usr/bin/which"
+            process.arguments = [name]
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
 
-        do {
-            try process.run()
-            process.waitUntilExit()
+            process.terminationHandler = { process in
+                if process.terminationStatus == 0 {
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8)?.trimmingCharacters(
+                        in: .whitespacesAndNewlines)
+                    continuation.resume(returning: output?.isEmpty == false ? output : nil)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
 
-            if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8)?.trimmingCharacters(
+            do {
+                try process.run()
+            } catch {
+                print("Error finding executable \(name): \(error)")
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    private func getQCLIVersion(path: String) async -> String? {
+        return await runCommand(path: path, arguments: ["--version"])
+    }
+
+    private func getClaudeCodeVersion(path: String) async -> String? {
+        return await runCommand(path: path, arguments: ["--version"])
+    }
+
+    private func runCommand(path: String, arguments: [String]) async -> String? {
+        return await withCheckedContinuation { continuation in
+            let process = Process()
+            process.launchPath = path
+            process.arguments = arguments
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            process.terminationHandler = { process in
+                // Try stdout first
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stdoutOutput = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(
                     in: .whitespacesAndNewlines)
-                return output?.isEmpty == false ? output : nil
-            }
-        } catch {
-            print("Error finding executable \(name): \(error)")
-        }
 
-        return nil
-    }
+                if let stdout = stdoutOutput, !stdout.isEmpty {
+                    continuation.resume(returning: stdout)
+                    return
+                }
 
-    private func getQCLIVersion(path: String) -> String? {
-        return runCommand(path: path, arguments: ["--version"])
-    }
+                // If stdout is empty, try stderr (Q CLI outputs to stderr)
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(
+                    in: .whitespacesAndNewlines)
 
-    private func getClaudeCodeVersion(path: String) -> String? {
-        return runCommand(path: path, arguments: ["--version"])
-    }
-
-    private func runCommand(path: String, arguments: [String]) -> String? {
-        let process = Process()
-        process.launchPath = path
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            // Try stdout first
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdoutOutput = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(
-                in: .whitespacesAndNewlines)
-
-            if let stdout = stdoutOutput, !stdout.isEmpty {
-                return stdout
+                continuation.resume(returning: stderrOutput?.isEmpty == false ? stderrOutput : nil)
             }
 
-            // If stdout is empty, try stderr (Q CLI outputs to stderr)
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(
-                in: .whitespacesAndNewlines)
-
-            return stderrOutput?.isEmpty == false ? stderrOutput : nil
-        } catch {
-            print("Error running command \(path): \(error)")
-            return nil
+            do {
+                try process.run()
+            } catch {
+                print("Error running command \(path): \(error)")
+                continuation.resume(returning: nil)
+            }
         }
     }
 
-    private func checkQCLIMCPConfiguration(qPath: String) -> (Bool, String?) {
+    private func checkQCLIMCPConfiguration(qPath: String) async -> (Bool, String?) {
         // Use Q CLI's built-in MCP status command to check for symposium-mcp
-        let output = runCommand(path: qPath, arguments: ["mcp", "status", "--name", "symposium"])
+        let output = await runCommand(
+            path: qPath, arguments: ["mcp", "status", "--name", "symposium"])
 
         guard let output = output, !output.isEmpty else {
             return (false, nil)
@@ -266,9 +329,9 @@ class AgentManager: ObservableObject {
         return (true, nil)
     }
 
-    private func checkClaudeCodeMCPConfiguration(claudePath: String) -> (Bool, String?) {
+    private func checkClaudeCodeMCPConfiguration(claudePath: String) async -> (Bool, String?) {
         // Use Claude Code's built-in MCP list command to check for symposium-mcp
-        let output = runCommand(path: claudePath, arguments: ["mcp", "list"])
+        let output = await runCommand(path: claudePath, arguments: ["mcp", "list"])
 
         Logger.shared.log("AgentManager: Claude MCP command: \(claudePath) mcp list")
         Logger.shared.log("AgentManager: Claude MCP output: \(output ?? "nil")")
@@ -392,7 +455,7 @@ extension AgentManager {
 
     /// Get agent command for a taskspace based on its state and selected agent
     func getAgentCommand(for taskspace: Taskspace, selectedAgent: AgentType) -> [String]? {
-        guard let agentInfo = availableAgents.first(where: { $0.type == selectedAgent }) else {
+        guard let agentInfo = cachedAgents.first(where: { $0.type == selectedAgent }) else {
             return nil
         }
 

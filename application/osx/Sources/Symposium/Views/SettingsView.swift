@@ -4,7 +4,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var permissionManager: PermissionManager
     @EnvironmentObject var agentManager: AgentManager
-    @EnvironmentObject var settingsManager: SettingsManager
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -75,7 +74,7 @@ struct SettingsView: View {
                     Spacer()
 
                     Button("Refresh") {
-                        agentManager.scanForAgents(force: true)
+                        agentManager.startAgentScan()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -85,28 +84,30 @@ struct SettingsView: View {
                     Text("Choose which AI agent to use for taskspaces:")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    
-                    if let lastScanDate = settingsManager.lastAgentScanDate {
-                        Text("Last updated: \(lastScanDate, format: .dateTime.month().day().hour().minute())")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+
+                    if let lastScanDate = agentManager.lastScanDate {
+                        Text(
+                            "Last updated: \(lastScanDate, format: .dateTime.month().day().hour().minute())"
+                        )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(agentManager.availableAgents) { agent in
+                    ForEach(agentManager.cachedAgents) { agent in
                         AgentRadioButton(
                             agent: agent,
-                            isSelected: settingsManager.selectedAgent == agent.type,
+                            isSelected: agentManager.selectedAgent == agent.type,
                             action: {
                                 if agent.isInstalled && agent.isMCPConfigured {
-                                    settingsManager.selectedAgent = agent.type
+                                    agentManager.selectedAgent = agent.type
                                 }
                             }
                         )
                     }
 
-                    if agentManager.availableAgents.isEmpty && !agentManager.scanningInProgress {
+                    if agentManager.cachedAgents.isEmpty && !agentManager.scanningInProgress {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
@@ -148,7 +149,7 @@ struct SettingsView: View {
             minHeight: 600, idealHeight: 700, maxHeight: 900
         )
         .onAppear {
-            permissionManager.checkAllPermissions()
+            let _ = permissionManager.checkAllPermissions()
         }
     }
 
@@ -159,8 +160,8 @@ struct SettingsView: View {
 
     private var hasValidAgentSelected: Bool {
         guard
-            let selectedAgentInfo = agentManager.availableAgents.first(where: {
-                $0.type == settingsManager.selectedAgent
+            let selectedAgentInfo = agentManager.cachedAgents.first(where: {
+                $0.type == agentManager.selectedAgent
             })
         else {
             return false

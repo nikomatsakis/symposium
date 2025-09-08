@@ -3,84 +3,69 @@ import SwiftUI
 
 enum AppWindowType {
     case splash
-    case settings  
+    case settings
     case createOrLoadProject
     case project
 }
 
 enum AppWindowState {
+    case none
     case splash
-    case settings  
+    case settings
     case createOrLoadProject
     case project(Project)
 }
 
 @main
 struct SymposiumApp: App {
-    // === State Machine Components ===
-    @StateObject private var settingsManager = SettingsManager()
-    @StateObject private var permissionManager = PermissionManager()
-    @StateObject private var agentManager: AgentManager
-    @StateObject private var startupManager: StartupManager
-    
-    init() {
-        // Create managers with proper dependencies
-        let settings = SettingsManager()
-        let permissions = PermissionManager()
-        let agents = AgentManager(settingsManager: settings)
-        let startup = StartupManager(
-            permissionManager: permissions, 
-            agentManager: agents, 
-            settingsManager: settings
-        )
-        
-        self._settingsManager = StateObject(wrappedValue: settings)
-        self._permissionManager = StateObject(wrappedValue: permissions)
-        self._agentManager = StateObject(wrappedValue: agents)
-        self._startupManager = StateObject(wrappedValue: startup)
-    }
-    
-    // Window state management
-    @State private var windowState: AppWindowState = .splash
-    @State private var currentProject: Project? = nil
-    
-    // App delegate for dock click handling
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
     // SwiftUI environment for explicit window management
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
-    
+
+    // === State Machine Components ===
+    @StateObject private var permissionManager = PermissionManager()
+    @StateObject private var agentManager: AgentManager = AgentManager()
+    @StateObject private var startupManager: StartupManager = StartupManager()
+
+    // Path to the current project
+    @AppStorage("activeProjectPath") var activeProjectPath: String? = nil
+
+    // App delegate for dock click handling
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    init() {
+        Logger.shared.log("App started")
+    }
+
     var body: some Scene {
-        // Splash window - pure startup progress display
+        // Startup window - pure startup progress display
         WindowGroup(id: "splash") {
             SplashView()
                 .environmentObject(startupManager)
                 .onAppear {
                     Logger.shared.log("Splash window appeared")
-                }
-                .onDisappear {
-                    handleWindowClosed(.splash)
+                    startupSequence()
                 }
         }
         .windowResizability(.contentSize)
         .defaultAppStorage(.standard)
-        
+
         // Settings window - permissions and agent selection
         WindowGroup(id: "settings") {
             SettingsView()
                 .environmentObject(agentManager)
-                .environmentObject(settingsManager)
                 .environmentObject(permissionManager)
                 .onAppear {
                     Logger.shared.log("Settings window appeared")
                 }
                 .onDisappear {
-                    handleWindowClosed(.settings)
+                    // When the settings window is closed, we jump back to the splash screen.
+                    Logger.shared.log("App: Settings window disappeared ~~> splash screen")
+                    openWindow(id: "splash")
                 }
         }
         .windowResizability(.contentSize)
-        
+
         // Create/Load Project window - project selection and creation
         WindowGroup(id: "createOrLoadProject") {
             CreateOrLoadProjectView(
@@ -88,22 +73,17 @@ struct SymposiumApp: App {
                 onProjectLoaded: handleProjectLoaded
             )
             .environmentObject(agentManager)
-            .environmentObject(settingsManager)
             .onAppear {
                 Logger.shared.log("CreateOrLoadProject window appeared")
             }
-            .onDisappear {
-                handleWindowClosed(.createOrLoadProject)
-            }
         }
         .windowResizability(.contentSize)
-        
+
         // Project window - active project with panel interface
         WindowGroup(id: "project") {
             if let project = currentProject {
                 ProjectWindowView(project: project)
                     .environmentObject(agentManager)
-                    .environmentObject(settingsManager)
                     .environmentObject(permissionManager)
                     .onAppear {
                         Logger.shared.log("Project window appeared: \(project.name)")
@@ -111,16 +91,11 @@ struct SymposiumApp: App {
                     .onDisappear {
                         handleWindowClosed(.project)
                     }
-            } else {
-                EmptyView()
-                    .onAppear {
-                        Logger.shared.log("Project window showed EmptyView - no current project")
-                    }
-            }
+            } 
         }
         .windowResizability(.contentSize)
-        .windowLevel(.floating) // Make project window float like the old NSPanel
-        
+        .windowLevel(.floating)  // Make project window float like the old NSPanel
+
         .commands {
             // File menu items
             CommandGroup(replacing: .newItem) {
@@ -129,14 +104,14 @@ struct SymposiumApp: App {
                     onNewProjectMenuSelected()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                
+
                 Button("Open Project...") {
                     Logger.shared.log("Menu: Open Project selected")
                     onOpenProjectMenuSelected()
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
-            
+
             CommandGroup(after: .help) {
                 Button("Copy Debug Logs") {
                     copyLogsToClipboard()
@@ -147,14 +122,14 @@ struct SymposiumApp: App {
                     listAllWindows()
                 }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
-                
+
                 Divider()
-                
+
                 Button("Toggle Dock Panel") {
                     appDelegate.toggleDockPanel()
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
-                
+
                 Button("Preferences...") {
                     Logger.shared.log("Menu: Preferences selected")
                     onPreferencesMenuSelected()
@@ -163,140 +138,172 @@ struct SymposiumApp: App {
             }
         }
     }
-    
-    // === Centralized Window Management ===
-    
-    /// Centralized window transition with state cleanup
-    func transitionTo(_ newState: AppWindowState) {
-        Logger.shared.log("App: Transitioning to window state: \(newState)")
-        windowState = newState
-        
-        // Close all windows first
-        dismissWindow(id: "splash")
-        dismissWindow(id: "settings") 
-        dismissWindow(id: "createOrLoadProject")
-        dismissWindow(id: "project")
-        
-        // Open the appropriate window
-        switch newState {
-        case .splash: 
-            openWindow(id: "splash")
-        case .settings: 
-            openWindow(id: "settings")
-        case .createOrLoadProject: 
-            openWindow(id: "createOrLoadProject")
-        case .project(let project):
-            currentProject = project
-            openWindow(id: "project")
-        }
-    }
-    
-    /// Handle window closures and decide what to do next
-    func handleWindowClosed(_ closedWindow: AppWindowType) {
-        Logger.shared.log("App: Window closed: \(closedWindow)")
-        
-        // Update startup manager based on current state and decide next action
-        Task { @MainActor in
-            // Wait a brief moment for state to settle
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            
-            if startupManager.startupComplete {
-                // Startup is done, make decisions based on configuration state
-                if startupManager.shouldShowSettings {
-                    transitionTo(.settings)
-                } else if startupManager.hasActiveProject {
-                    // TODO: Load the actual project
-                    let dummyProject = Project(name: "Restored Project", gitURL: "", directoryPath: "/tmp")
-                    transitionTo(.project(dummyProject))
-                } else {
-                    transitionTo(.createOrLoadProject)
+
+    // === Startup sequence ===
+
+    private func startupSequence() {
+        Task {
+            startupManager.reset()
+
+            // First, check we have the required permissions
+            if !permissionManager.checkAllPermissions() {
+                await MainActor.run {
+                    transitionToWindowState(.settings)
                 }
-            } else {
-                // Startup not complete, show splash
-                startupManager.splashVisible = true
-                transitionTo(.splash)
+                return
+            }
+            startupManager.permissionsCheck.completed = true
+
+            // Check if we have a selected agent, scan if needed
+            if !agentManager.checkSelectedAgent() {
+                Logger.shared.log("App: No selected agent, scanning for available agents...")
+                let agents = await agentManager.scanForAgents()
+                Logger.shared.log("App: Agent scan completed, found \(agents.count) agents")
+
+                await MainActor.run {
+                    if agents.isEmpty || !agentManager.checkSelectedAgent() {
+                        // Still no selected agent, go to settings
+                        transitionToWindowState(.settings)
+                        return
+                    }
+                }
+            }
+            startupManager.agentsCheck.completed = true
+
+            // Check for saved project
+            await MainActor.run {
+                if let savedProject = loadSavedProject() {
+                    transitionToWindowState(.project(savedProject))
+                } else {
+                    transitionToWindowState(.createOrLoadProject)
+                }
+                startupManager.projectCheck.completed = true
+                startupManager.startupComplete = true
             }
         }
     }
-    
+
+    // === Centralized Window Management ===
+
+    /// If we are not already in this window state, then transition, closing the current window
+    func transitionToWindowState(_ newState: AppWindowState) {
+        Logger.shared.log("App: Transitioning to window state: \(newState) from \(windowState)")
+        if alreadyInWindowState(newState) {
+            Logger.shared.log("App: Window already in state: \(newState)")
+            return
+        }
+
+        dismissCurrentWindow()
+        windowState = newState
+
+        if let windowId = windowIdForState() {
+            Logger.shared.log("App: opening window \(windowId)")
+            openWindow(id: windowId)
+        }
+    }
+
+    /// Handle window closures and decide what to do next
+    func handleWindowClosed(_ closedWindow: AppWindowType) {
+        Logger.shared.log("App: Window closed: \(closedWindow)")
+        transitionToWindowState(.none)
+        evaluateWindowState()
+    }
+
     /// Load the saved project from settings if available and valid
     private func loadSavedProject() -> Project? {
-        let savedPath = settingsManager.activeProjectPath
+        let savedPath = agentManager.activeProjectPath
         Logger.shared.log("Checking saved project path: '\(savedPath)'")
-        
+
         if savedPath.isEmpty {
             Logger.shared.log("No saved project path")
             return nil
         }
-        
+
         // TODO: Actually load and validate the project
         // For now, return nil to force project selection
         Logger.shared.log("Project loading not implemented yet, returning nil")
         return nil
     }
-    
+
+    /// Evaluate what window state we should be in based on current conditions
+    private func evaluateWindowState() {
+        // Check permissions
+        if !permissionManager.checkAllPermissions() {
+            transitionToWindowState(.settings)
+            return
+        }
+
+        // Check selected agent
+        if !agentManager.checkSelectedAgent() {
+            transitionToWindowState(.settings)
+            return
+        }
+
+        // Check for current project
+        if let project = currentProject {
+            transitionToWindowState(.project(project))
+        } else if let savedProject = loadSavedProject() {
+            currentProject = savedProject
+            transitionToWindowState(.project(savedProject))
+        } else {
+            transitionToWindowState(.createOrLoadProject)
+        }
+    }
+
     // === Explicit Window Management ===
     private func dismissAllWindows() {
         Logger.shared.log("Dismissing all windows for clean state")
         dismissWindow(id: "splash")
-        dismissWindow(id: "settings") 
+        dismissWindow(id: "settings")
         dismissWindow(id: "project")
     }
-    
+
     // === Project Management ===
-    
+
     /// Handle project creation from CreateOrLoadProjectView
     func handleProjectCreated(_ project: Project) {
         Logger.shared.log("App: Project created: \(project.name)")
         currentProject = project
-        settingsManager.activeProjectPath = project.directoryPath
-        
-        // Hide splash and transition to project
-        startupManager.splashVisible = false
-        transitionTo(.project(project))
+        agentManager.activeProjectPath = project.directoryPath
+        evaluateWindowState()
     }
-    
+
     /// Handle project loading from CreateOrLoadProjectView
     func handleProjectLoaded(_ project: Project) {
         Logger.shared.log("App: Project loaded: \(project.name)")
         currentProject = project
-        settingsManager.activeProjectPath = project.directoryPath
-        
-        // Hide splash and transition to project
-        startupManager.splashVisible = false
-        transitionTo(.project(project))
+        agentManager.activeProjectPath = project.directoryPath
+        evaluateWindowState()
     }
-    
+
     /// Called when user closes current project
     func closeCurrentProject() {
         Logger.shared.log("App: Closing current project")
         currentProject = nil
-        settingsManager.activeProjectPath = ""
-        
-        // This will trigger onDisappear -> handleWindowClosed -> transition logic
-        dismissWindow(id: "project")
+        agentManager.activeProjectPath = ""
+        evaluateWindowState()
     }
-    
+
     /// Called when user selects New Project from menu
     private func onNewProjectMenuSelected() {
         Logger.shared.log("Menu: New Project selected")
-        closeCurrentProject() // This will trigger transition to createOrLoadProject
+        closeCurrentProject()  // This will trigger transition to createOrLoadProject
     }
-    
-    /// Called when user selects Open Project from menu  
+
+    /// Called when user selects Open Project from menu
     private func onOpenProjectMenuSelected() {
         Logger.shared.log("Menu: Open Project selected")
-        closeCurrentProject() // This will trigger transition to createOrLoadProject
+        closeCurrentProject()  // This will trigger transition to createOrLoadProject
     }
-    
+
     /// Called when user selects Preferences from menu
     private func onPreferencesMenuSelected() {
         Logger.shared.log("Menu: Preferences selected")
-        transitionTo(.settings)
+        transitionToWindowState(.settings)
     }
 
     // === Debug and Utility Functions ===
-    
+
     private func copyLogsToClipboard() {
         let allLogs = Logger.shared.logs.joined(separator: "\n")
         let pasteboard = NSPasteboard.general
@@ -356,4 +363,3 @@ struct SymposiumApp: App {
         Logger.shared.log("Window list copied to clipboard")
     }
 }
-
