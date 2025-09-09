@@ -14,8 +14,10 @@ mod walkthrough_parser;
 mod server;
 pub mod types;
 pub mod synthetic_pr;
+mod agent_manager;
 
 pub use daemon::{run_daemon_with_idle_timeout, run_client};
 pub use pid_discovery::find_vscode_pid_from_mcp;
 pub use reference_store::ReferenceStore;
 pub use server::DialecticServer;
+pub use agent_manager::AgentManager;
