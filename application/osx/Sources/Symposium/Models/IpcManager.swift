@@ -5,6 +5,7 @@ import CoreGraphics
 // MARK: - IPC Message Types
 
 /// Sender information for message routing
+// ANCHOR: message_sender
 struct MessageSender: Codable {
     let workingDirectory: String
     let taskspaceUuid: String?
@@ -16,8 +17,10 @@ struct MessageSender: Codable {
         case shellPid = "shellPid"
     }
 }
+// ANCHOR_END: message_sender
 
 /// Base IPC message structure for communication with VSCode extension via daemon
+// ANCHOR: ipc_message
 struct IPCMessage: Codable {
     let type: String
     let payload: JsonBlob
@@ -28,6 +31,7 @@ struct IPCMessage: Codable {
         case type, payload, id, sender
     }
 }
+// ANCHOR_END: ipc_message
 
 /// Request from VSCode extension to determine if agent should launch for a taskspace
 struct GetTaskspaceStatePayload: Codable {
