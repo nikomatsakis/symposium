@@ -25,6 +25,10 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
 
     // Window stacking state
     private var stackTracker: WindowStackTracker?
+    
+    // Window tiling state
+    private var tileManager: WindowTileManager?
+    private var visibleTaskspaceManager = VisibleTaskspaceManager()
 
     // Public access to settings manager for UI
     var settings: SettingsManager {
@@ -75,8 +79,30 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
             Logger.shared.log("ProjectManager[\(instanceId)]: Stopped stack tracking")
         }
         
+        // Initialize tiling when entering tile mode
+        if newMode == .tile && previousMode != .tile {
+            initializeTileMode()
+        }
+        
         // TODO: Add tile mode cleanup when leaving tile mode (Phase 3)
         // TODO: Add immediate window repositioning for mode transitions (Phase 5)
+    }
+    
+    /// Initialize tile mode with current taskspaces
+    private func initializeTileMode() {
+        Logger.shared.log("ProjectManager[\(instanceId)]: Initializing tile mode")
+        
+        // Create tile manager if needed
+        if tileManager == nil {
+            tileManager = WindowTileManager()
+        }
+        
+        // Initialize visible taskspace manager with current taskspaces
+        guard let project = currentProject else { return }
+        let taskspaceIds = project.taskspaces.map { $0.id }
+        visibleTaskspaceManager.initialize(with: taskspaceIds)
+        
+        Logger.shared.log("ProjectManager[\(instanceId)]: Tile mode initialized with \(visibleTaskspaceManager.totalCount) taskspaces (\(visibleTaskspaceManager.visible.count) visible)")
     }
 
     // Window close detection timer
