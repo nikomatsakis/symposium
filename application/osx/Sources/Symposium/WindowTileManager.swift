@@ -55,6 +55,7 @@ class WindowTileManager {
     }
     
     /// Calculate available area for taskspaces (screen minus panel width)
+    /// panelWidth should be calculated using ProjectView.calculateTaskspaceWidth()
     func calculateTaskspaceArea(screenBounds: CGRect, panelWidth: CGFloat) -> CGRect {
         return CGRect(
             x: screenBounds.origin.x + panelWidth,
