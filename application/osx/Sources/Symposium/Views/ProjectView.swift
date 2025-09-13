@@ -20,8 +20,8 @@ struct ProjectView: View {
         }
     }
     
-    // Stacked windows state
-    @State private var stackedWindowsEnabled = false
+    // Window management mode state
+    @State private var windowManagementMode: WindowManagementMode = .free
 
     // Step 7: Smart dismissal helper
     private func dismissPanel() {
@@ -55,17 +55,21 @@ struct ProjectView: View {
                                     .foregroundColor(.red)
                             }
                             
-                            // Stacked Windows Toggle
-                            Toggle("Stack Windows", isOn: $stackedWindowsEnabled)
-                                .font(.caption)
-                                .help("When enabled, clicking a taskspace positions all windows at the same location")
-                                .onChange(of: stackedWindowsEnabled) { _, newValue in
-                                    if let projectManager = appDelegate.currentProjectManager {
-                                        let mode: WindowManagementMode = newValue ? .stack : .free
-                                        projectManager.setWindowManagementMode(mode)
-                                        Logger.shared.log("ProjectView: Window management mode set to \(mode.rawValue)")
-                                    }
+                            // Window Management Mode Picker
+                            Picker("Window Mode", selection: $windowManagementMode) {
+                                Text("Free").tag(WindowManagementMode.free)
+                                Text("Stack").tag(WindowManagementMode.stack)
+                                Text("Tile").tag(WindowManagementMode.tile)
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                            .font(.caption)
+                            .help("Choose how taskspace windows are arranged: Free (normal), Stack (overlapped), or Tile (grid layout)")
+                            .onChange(of: windowManagementMode) { _, newMode in
+                                if let projectManager = appDelegate.currentProjectManager {
+                                    projectManager.setWindowManagementMode(newMode)
+                                    Logger.shared.log("ProjectView: Window management mode set to \(newMode.rawValue)")
                                 }
+                            }
 
                             Button(action: {
                                 Logger.shared.log("ProjectView: + button clicked, showing dialog")
@@ -160,10 +164,10 @@ struct ProjectView: View {
         }
         .frame(minHeight: 400)
         .onAppear {
-            // Initialize stacked windows state from project
+            // Initialize window management mode from project
             if let projectManager = appDelegate.currentProjectManager,
                let project = projectManager.currentProject {
-                stackedWindowsEnabled = (project.windowManagementMode == .stack)
+                windowManagementMode = project.windowManagementMode
                 Logger.shared.log("ProjectView: Initialized window management mode: \(project.windowManagementMode.rawValue) for project \(project.name)")
             }
         }
