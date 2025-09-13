@@ -40,6 +40,7 @@
 
 # Work in Progress
 
+- [Tiled Windows](./work-in-progress/tiled-windows.md)
 - [Startup Window Management Implementation](./work-in-progress/startup-window-management.md)
 - [Triple-Tickification: XML to Markdown Code Blocks](./work-in-progress/triple-tickification.md)
 - [Big picture plans](./work-in-progress/big-picture.md)

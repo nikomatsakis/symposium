@@ -1,5 +1,12 @@
 import Foundation
 
+/// Window management modes for taskspace organization
+enum WindowManagementMode: String, Codable, CaseIterable {
+    case free = "free"
+    case stack = "stack"
+    case tile = "tile"
+}
+
 /// Version 0 project structure for backward compatibility
 private struct ProjectV0: Codable {
     let id: UUID
@@ -8,6 +15,20 @@ private struct ProjectV0: Codable {
     let directoryPath: String
     var taskspaces: [Taskspace]
     let createdAt: Date
+}
+
+/// Version 2 project structure for migration from stackedWindowsEnabled to windowManagementMode
+private struct ProjectV2: Codable {
+    let version: Int
+    let id: UUID
+    let name: String
+    let gitURL: String
+    let directoryPath: String
+    let agent: String?
+    let defaultBranch: String?
+    var taskspaces: [Taskspace]
+    let createdAt: Date
+    var stackedWindowsEnabled: Bool
 }
 
 /// Represents a Symposium project containing multiple taskspaces
@@ -21,10 +42,10 @@ struct Project: Codable, Identifiable {
     let defaultBranch: String?
     var taskspaces: [Taskspace] = []
     let createdAt: Date
-    var stackedWindowsEnabled: Bool = false
+    var windowManagementMode: WindowManagementMode = .free
     
     init(name: String, gitURL: String, directoryPath: String, agent: String? = nil, defaultBranch: String? = nil) {
-        self.version = 2
+        self.version = 3
         self.id = UUID()
         self.name = name
         self.gitURL = gitURL
@@ -32,11 +53,11 @@ struct Project: Codable, Identifiable {
         self.agent = agent
         self.defaultBranch = defaultBranch
         self.createdAt = Date()
-        self.stackedWindowsEnabled = false
+        self.windowManagementMode = .free
     }
     
     // Internal initializer for migration
-    private init(version: Int, id: UUID, name: String, gitURL: String, directoryPath: String, agent: String?, defaultBranch: String?, taskspaces: [Taskspace], createdAt: Date, stackedWindowsEnabled: Bool = false) {
+    private init(version: Int, id: UUID, name: String, gitURL: String, directoryPath: String, agent: String?, defaultBranch: String?, taskspaces: [Taskspace], createdAt: Date, windowManagementMode: WindowManagementMode = .free) {
         self.version = version
         self.id = id
         self.name = name
@@ -46,7 +67,7 @@ struct Project: Codable, Identifiable {
         self.defaultBranch = defaultBranch
         self.taskspaces = taskspaces
         self.createdAt = createdAt
-        self.stackedWindowsEnabled = stackedWindowsEnabled
+        self.windowManagementMode = windowManagementMode
     }
     
     /// Path to project.json file
@@ -73,50 +94,54 @@ struct Project: Codable, Identifiable {
         decoder.dateDecodingStrategy = .iso8601
         
         do {
-            // Try to decode with current schema
-            var project = try decoder.decode(Project.self, from: data)
+            // Try to decode with current schema (version 3)
+            let project = try decoder.decode(Project.self, from: data)
             
-            // Handle version migration
-            if project.version == 1 {
-                // Migrate from version 1 to version 2
-                project = Project(
-                    version: 2,
-                    id: project.id,
-                    name: project.name,
-                    gitURL: project.gitURL,
-                    directoryPath: project.directoryPath,
-                    agent: project.agent,
-                    defaultBranch: project.defaultBranch,
-                    taskspaces: project.taskspaces,
-                    createdAt: project.createdAt,
-                    stackedWindowsEnabled: false
+            // No migration needed for version 3
+            return project
+        } catch {
+            // Try version 2 migration
+            do {
+                let v2Project = try decoder.decode(ProjectV2.self, from: data)
+                let windowMode: WindowManagementMode = v2Project.stackedWindowsEnabled ? .stack : .free
+                
+                let migratedProject = Project(
+                    version: 3,
+                    id: v2Project.id,
+                    name: v2Project.name,
+                    gitURL: v2Project.gitURL,
+                    directoryPath: v2Project.directoryPath,
+                    agent: v2Project.agent,
+                    defaultBranch: v2Project.defaultBranch,
+                    taskspaces: v2Project.taskspaces,
+                    createdAt: v2Project.createdAt,
+                    windowManagementMode: windowMode
                 )
                 
                 // Save migrated project back to disk
-                try project.save()
+                try migratedProject.save()
+                return migratedProject
+            } catch {
+                // Fall back to legacy schema (version 0) and migrate
+                let legacyProject = try decoder.decode(ProjectV0.self, from: data)
+                let migratedProject = Project(
+                    version: 3,
+                    id: legacyProject.id,
+                    name: legacyProject.name,
+                    gitURL: legacyProject.gitURL,
+                    directoryPath: legacyProject.directoryPath,
+                    agent: nil,
+                    defaultBranch: nil,
+                    taskspaces: legacyProject.taskspaces,
+                    createdAt: legacyProject.createdAt,
+                    windowManagementMode: .free
+                )
+                
+                // Save migrated project back to disk
+                try migratedProject.save()
+                
+                return migratedProject
             }
-            
-            return project
-        } catch {
-            // Fall back to legacy schema (version 0) and migrate
-            let legacyProject = try decoder.decode(ProjectV0.self, from: data)
-            let migratedProject = Project(
-                version: 2,
-                id: legacyProject.id,
-                name: legacyProject.name,
-                gitURL: legacyProject.gitURL,
-                directoryPath: legacyProject.directoryPath,
-                agent: nil,
-                defaultBranch: nil,
-                taskspaces: legacyProject.taskspaces,
-                createdAt: legacyProject.createdAt,
-                stackedWindowsEnabled: false
-            )
-            
-            // Save migrated project back to disk
-            try migratedProject.save()
-            
-            return migratedProject
         }
     }
     

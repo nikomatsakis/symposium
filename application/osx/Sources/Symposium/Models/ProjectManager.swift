@@ -31,14 +31,14 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
         return settingsManager
     }
 
-    /// Update stacked windows setting for current project
-    func setStackedWindowsEnabled(_ enabled: Bool) {
+    /// Update window management mode for current project
+    func setWindowManagementMode(_ mode: WindowManagementMode) {
         guard var project = currentProject else { return }
-        project.stackedWindowsEnabled = enabled
+        project.windowManagementMode = mode
         currentProject = project
 
-        // Stop tracking if disabling stacked windows
-        if !enabled {
+        // Stop tracking if switching away from stacked windows
+        if mode != .stack {
             stackTracker?.stopTracking()
         }
 
@@ -46,11 +46,11 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
         do {
             try project.save()
             Logger.shared.log(
-                "ProjectManager[\(instanceId)]: Updated stacked windows setting to \(enabled) for project \(project.name)"
+                "ProjectManager[\(instanceId)]: Updated window management mode to \(mode.rawValue) for project \(project.name)"
             )
         } catch {
             Logger.shared.log(
-                "ProjectManager[\(instanceId)]: Failed to save stacked windows setting: \(error)")
+                "ProjectManager[\(instanceId)]: Failed to save window management mode: \(error)")
         }
     }
 
@@ -809,7 +809,7 @@ extension ProjectManager {
             "ProjectManager[\(instanceId)]: Associated window \(windowID) with taskspace \(uuid)")
 
         // If stacked windows is enabled, position the new window to match existing stack
-        if let project = currentProject, project.stackedWindowsEnabled {
+        if let project = currentProject, project.windowManagementMode == .stack {
             positionNewWindowInStack(windowID: windowID, taskspaceId: uuid)
         }
 
@@ -854,7 +854,7 @@ extension ProjectManager {
         )
 
         // Check if stacked windows mode is enabled for this project
-        if let project = currentProject, project.stackedWindowsEnabled {
+        if let project = currentProject, project.windowManagementMode == .stack {
             Logger.shared.log(
                 "ProjectManager[\(instanceId)]: Stacked windows mode enabled - positioning all taskspace windows"
             )
