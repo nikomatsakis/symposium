@@ -34,24 +34,49 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
     /// Update window management mode for current project
     func setWindowManagementMode(_ mode: WindowManagementMode) {
         guard var project = currentProject else { return }
+        let previousMode = project.windowManagementMode
         project.windowManagementMode = mode
         currentProject = project
 
-        // Stop tracking if switching away from stacked windows
-        if mode != .stack {
-            stackTracker?.stopTracking()
-        }
+        // Handle mode transitions
+        handleModeTransition(from: previousMode, to: mode)
 
         // Save the updated project
         do {
             try project.save()
             Logger.shared.log(
-                "ProjectManager[\(instanceId)]: Updated window management mode to \(mode.rawValue) for project \(project.name)"
+                "ProjectManager[\(instanceId)]: Updated window management mode from \(previousMode.rawValue) to \(mode.rawValue) for project \(project.name)"
             )
         } catch {
             Logger.shared.log(
                 "ProjectManager[\(instanceId)]: Failed to save window management mode: \(error)")
         }
+    }
+    
+    /// Get current window management mode
+    var currentWindowManagementMode: WindowManagementMode {
+        return currentProject?.windowManagementMode ?? .free
+    }
+    
+    /// Check if a specific window management mode is active
+    func isMode(_ mode: WindowManagementMode) -> Bool {
+        return currentWindowManagementMode == mode
+    }
+    
+    /// Handle transitions between window management modes
+    private func handleModeTransition(from previousMode: WindowManagementMode, to newMode: WindowManagementMode) {
+        Logger.shared.log(
+            "ProjectManager[\(instanceId)]: Transitioning from \(previousMode.rawValue) to \(newMode.rawValue) mode"
+        )
+        
+        // Stop any active tracking when leaving stack mode
+        if previousMode == .stack && newMode != .stack {
+            stackTracker?.stopTracking()
+            Logger.shared.log("ProjectManager[\(instanceId)]: Stopped stack tracking")
+        }
+        
+        // TODO: Add tile mode cleanup when leaving tile mode (Phase 3)
+        // TODO: Add immediate window repositioning for mode transitions (Phase 5)
     }
 
     // Window close detection timer
