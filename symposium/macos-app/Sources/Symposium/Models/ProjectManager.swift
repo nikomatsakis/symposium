@@ -863,6 +863,15 @@ extension ProjectManager {
         if let project = currentProject, project.windowManagementMode == .stack {
             positionNewWindowInStack(windowID: windowID, taskspaceId: uuid)
         }
+        
+        // If tile mode is enabled, add to visible taskspaces and reposition grid
+        if let project = currentProject, project.windowManagementMode == .tile {
+            visibleTaskspaceManager.addTaskspace(uuid)
+            positionWindowsInGrid()
+            Logger.shared.log(
+                "ProjectManager[\(instanceId)]: Added new window to tile grid for taskspace \(uuid)"
+            )
+        }
 
         // Capture screenshot when window is first registered
         Logger.shared.log(
