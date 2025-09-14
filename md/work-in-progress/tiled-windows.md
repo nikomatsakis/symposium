@@ -1,22 +1,48 @@
 # Tiled Windows
 
+## Implementation Status: ✅ BASIC FUNCTIONALITY COMPLETE
+
+**Last Updated**: 2025-09-14  
+**Current State**: Three-mode system fully functional with placeholder tiling logic
+
+### ✅ Completed Phases
+
+**Phase 1: Core Infrastructure (Commits 1-2)**
+- ✅ WindowManagementMode enum (free/stack/tile) 
+- ✅ Schema migration from v2 to v3
+- ✅ ProjectManager integration with mode system
+- ✅ Proper mode transition handling
+
+**Phase 2: UI Integration (Commit 3)**
+- ✅ Segmented control replacing boolean toggle
+- ✅ Three-mode selection: [Free | Stack | Tile]
+- ✅ State synchronization with project data
+
+**Phase 3: Tiling Foundation (Commits 4-6)**
+- ✅ WindowTileManager with grid layout algorithms
+- ✅ VisibleTaskspaceManager for 4-taskspace limit
+- ✅ Basic ProjectManager integration
+- ✅ Placeholder tile mode focusing (works like free mode)
+
+### 🚧 Next Phase: Actual Grid Positioning
+
+**Remaining Work**:
+- Implement actual window positioning in `focusWindowWithTiling()`
+- Add grid repositioning when new windows are registered
+- Handle screen size changes and panel width integration
+- Add visual feedback for tile mode activation
+
+**Key Implementation Notes**:
+- Taskspace activation ordering ✅ COMPLETE (most-recent-first)
+- WindowTileManager algorithms ✅ TESTED (1-4 taskspace layouts)
+- VisibleTaskspaceManager ✅ TESTED (mini-stack behavior)
+- Panel width integration ready (uses existing `calculateTaskspaceWidth()`)
+
 ## Overview
 
 Tiled windows is a window management mode that arranges taskspace windows in a structured grid layout alongside the Symposium panel. Unlike stacked windows which overlay all windows at the same position, tiled mode provides simultaneous visibility of multiple taskspaces while maintaining organized screen real estate usage.
 
 The system implements a "mini-stacks" approach where only the most recent 4 taskspaces are visible in the tile grid, with remaining taskspaces positioned in the background. This prevents screen overcrowding while maintaining quick access to all taskspaces.
-
-## User Experience
-
-### Window Management Modes
-
-The system provides three distinct window management modes via a segmented control:
-
-- **Free**: Default macOS window behavior - windows can be positioned anywhere
-- **Stack**: All taskspace windows occupy the same position (existing behavior)  
-- **Tile**: Windows arranged in structured grid with Symposium panel integration
-
-### Tiled Mode Layout
 
 #### Panel Integration
 - **Symposium Panel**: Fixed to left side, sized at "one taskspace width"
