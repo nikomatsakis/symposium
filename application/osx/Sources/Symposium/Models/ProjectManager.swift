@@ -904,27 +904,38 @@ extension ProjectManager {
             "ProjectManager[\(instanceId)]: Focusing window \(windowID) for taskspace: \(taskspace.name)"
         )
 
-        // Check if stacked windows mode is enabled for this project
-        if let project = currentProject, project.windowManagementMode == .stack {
-            Logger.shared.log(
-                "ProjectManager[\(instanceId)]: Stacked windows mode enabled - positioning all taskspace windows"
-            )
-            return focusWindowWithStacking(targetTaskspace: taskspace, targetWindowID: windowID)
-        } else {
-            // Use Core Graphics to focus the window normally
-            let result = focusWindow(windowID: windowID)
+        // Handle different window management modes
+        if let project = currentProject {
+            switch project.windowManagementMode {
+            case .stack:
+                Logger.shared.log(
+                    "ProjectManager[\(instanceId)]: Stacked windows mode enabled - positioning all taskspace windows"
+                )
+                return focusWindowWithStacking(targetTaskspace: taskspace, targetWindowID: windowID)
+            case .tile:
+                Logger.shared.log(
+                    "ProjectManager[\(instanceId)]: Tile mode enabled - positioning in grid"
+                )
+                return focusWindowWithTiling(targetTaskspace: taskspace, targetWindowID: windowID)
+            case .free:
+                // Use Core Graphics to focus the window normally
+                let result = focusWindow(windowID: windowID)
 
-            if result {
-                Logger.shared.log(
-                    "ProjectManager[\(instanceId)]: Successfully focused window for taskspace: \(taskspace.name)"
-                )
-            } else {
-                Logger.shared.log(
-                    "ProjectManager[\(instanceId)]: Failed to focus window for taskspace: \(taskspace.name)"
-                )
+                if result {
+                    Logger.shared.log(
+                        "ProjectManager[\(instanceId)]: Successfully focused window for taskspace: \(taskspace.name)"
+                    )
+                } else {
+                    Logger.shared.log(
+                        "ProjectManager[\(instanceId)]: Failed to focus window for taskspace: \(taskspace.name)"
+                    )
+                }
+
+                return result
             }
-
-            return result
+        } else {
+            // Fallback to free mode if no project
+            return focusWindow(windowID: windowID)
         }
     }
 
@@ -1068,6 +1079,29 @@ extension ProjectManager {
             stackTracker?.startTracking(windowIDs: allWindowIDs)
             Logger.shared.log("ProjectManager[\(instanceId)]: Updated stack tracker with new window")
         }
+    }
+    
+    /// Focus window in tile mode with grid positioning
+    private func focusWindowWithTiling(targetTaskspace: Taskspace, targetWindowID: CGWindowID) -> Bool {
+        Logger.shared.log(
+            "ProjectManager[\(instanceId)]: Tile mode - focusing window with tiling"
+        )
+        
+        // For now, just focus normally (placeholder implementation)
+        // TODO: Implement actual grid positioning logic
+        let result = focusWindow(windowID: targetWindowID)
+        
+        if result {
+            Logger.shared.log(
+                "ProjectManager[\(instanceId)]: Successfully focused window for taskspace: \(targetTaskspace.name) (tile mode placeholder)"
+            )
+        } else {
+            Logger.shared.log(
+                "ProjectManager[\(instanceId)]: Failed to focus window for taskspace: \(targetTaskspace.name) (tile mode)"
+            )
+        }
+        
+        return result
     }
 
     /// Get window information including bounds
