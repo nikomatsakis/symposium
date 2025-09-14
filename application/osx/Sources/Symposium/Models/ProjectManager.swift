@@ -1087,13 +1087,18 @@ extension ProjectManager {
             "ProjectManager[\(instanceId)]: Tile mode - focusing window with tiling"
         )
         
-        // For now, just focus normally (placeholder implementation)
-        // TODO: Implement actual grid positioning logic
+        // Update visible taskspace tracking
+        visibleTaskspaceManager.activateTaskspace(targetTaskspace.id)
+        
+        // Position all visible windows in grid
+        positionWindowsInGrid()
+        
+        // Focus the target window
         let result = focusWindow(windowID: targetWindowID)
         
         if result {
             Logger.shared.log(
-                "ProjectManager[\(instanceId)]: Successfully focused window for taskspace: \(targetTaskspace.name) (tile mode placeholder)"
+                "ProjectManager[\(instanceId)]: Successfully focused and positioned window for taskspace: \(targetTaskspace.name) (tile mode)"
             )
         } else {
             Logger.shared.log(
@@ -1102,6 +1107,90 @@ extension ProjectManager {
         }
         
         return result
+    }
+    
+    /// Position all visible taskspace windows in grid layout
+    private func positionWindowsInGrid() {
+        guard let tileManager = tileManager,
+              let screen = NSScreen.main else { return }
+        
+        let visibleTaskspaces = visibleTaskspaceManager.visible
+        guard !visibleTaskspaces.isEmpty else { return }
+        
+        // Calculate panel width (reuse existing logic)
+        let panelWidth = calculatePanelWidth()
+        
+        // Calculate available area for taskspaces
+        let screenBounds = screen.frame
+        let taskspaceArea = tileManager.calculateTaskspaceArea(screenBounds: screenBounds, panelWidth: panelWidth)
+        
+        // Calculate grid layout
+        let gridRects = tileManager.calculateTileLayout(visibleTaskspaces: visibleTaskspaces.count, availableArea: taskspaceArea)
+        
+        // Position each visible taskspace window
+        for (index, taskspaceId) in visibleTaskspaces.enumerated() {
+            guard index < gridRects.count,
+                  let windowID = getWindow(for: taskspaceId) else { continue }
+            
+            let targetRect = gridRects[index]
+            positionWindow(windowID: windowID, at: targetRect)
+        }
+        
+        Logger.shared.log(
+            "ProjectManager[\(instanceId)]: Positioned \(visibleTaskspaces.count) windows in grid"
+        )
+    }
+    
+    /// Calculate panel width using existing logic
+    private func calculatePanelWidth() -> CGFloat {
+        let screenshotWidth: CGFloat = 120
+        let sampleText = "Captain, we're getting mysterious sensor readings"
+        let textAttributes = [NSAttributedString.Key.font: NSFont.systemFont(ofSize: 13)]
+        let sampleTextWidth = sampleText.size(withAttributes: textAttributes).width
+        let padding: CGFloat = 40
+        return screenshotWidth + sampleTextWidth + padding
+    }
+    
+    /// Position and resize window to specific bounds
+    private func positionWindow(windowID: CGWindowID, at rect: CGRect) {
+        guard let windowElement = getWindowElement(for: windowID) else { return }
+        
+        // Set position
+        var position = rect.origin
+        let positionValue = AXValueCreate(.cgPoint, &position)!
+        AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, positionValue)
+        
+        // Set size
+        var size = rect.size
+        let sizeValue = AXValueCreate(.cgSize, &size)!
+        AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
+    }
+    
+    /// Get window element for accessibility operations
+    private func getWindowElement(for windowID: CGWindowID) -> AXUIElement? {
+        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        
+        for windowInfo in windowList {
+            if let id = windowInfo[kCGWindowNumber as String] as? CGWindowID, id == windowID,
+               let processID = windowInfo[kCGWindowOwnerPID as String] as? pid_t {
+                let appElement = AXUIElementCreateApplication(processID)
+                
+                var windowsRef: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                      let windows = windowsRef as? [AXUIElement] else { continue }
+                
+                for window in windows {
+                    var windowIDRef: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(window, kAXWindowAttribute as CFString, &windowIDRef) == .success {
+                        // For now, return the first window of the matching process
+                        // This is a simplification - in practice we'd need better window matching
+                        return window
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     /// Get window information including bounds
