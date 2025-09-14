@@ -162,7 +162,7 @@ class ProjectManager: ObservableObject, IpcMessageDelegate {
         }
 
         // Load project
-        var project = try Project.load(from: directoryPath)
+        let project = try Project.load(from: directoryPath)
 
         // Set as current project first to display it
         setCurrentProject(project)

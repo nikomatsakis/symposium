@@ -613,8 +613,8 @@ struct TaskspaceCard: View {
                 }
             )
         }
-        .onChange(of: taskspace.pendingDeletion) { pending in
-            if pending {
+        .onChange(of: taskspace.pendingDeletion) {
+            if taskspace.pendingDeletion {
                 showingDeleteConfirmation = true
                 // Clear the flag after showing dialog
                 if var updatedProject = projectManager.currentProject,
