@@ -137,9 +137,9 @@ class WindowStackTracker {
             if hasMovement && hasResize {
                 moveAndResizeWindow(windowID: windowID, positionDelta: positionDelta, newSize: currentSize)
             } else if hasMovement {
-                moveWindow(windowID: windowID, by: positionDelta)
+                _ = WindowPositioner.moveWindow(windowID: windowID, by: positionDelta)
             } else if hasResize {
-                resizeWindow(windowID: windowID, to: currentSize)
+                _ = WindowPositioner.resizeWindow(windowID: windowID, to: currentSize)
             }
         }
         
@@ -214,20 +214,9 @@ class WindowStackTracker {
         return CGSize(width: width, height: height)
     }
     
-    private func getWindowElement(for windowID: CGWindowID) -> AXUIElement? {
-        return WindowPositioner.getWindowElement(for: windowID)
-    }
-    
-    private func resizeWindow(windowID: CGWindowID, to newSize: CGSize) {
-        _ = WindowPositioner.resizeWindow(windowID: windowID, to: newSize)
-    }
-    
-    private func moveWindow(windowID: CGWindowID, by delta: CGPoint) {
-        _ = WindowPositioner.moveWindow(windowID: windowID, by: delta)
-    }
-    
+
     private func moveAndResizeWindow(windowID: CGWindowID, positionDelta: CGPoint, newSize: CGSize) {
-        guard let windowElement = getWindowElement(for: windowID) else { return }
+        guard let windowElement = WindowPositioner.getWindowElement(for: windowID) else { return }
         
         // Get current position
         var positionRef: CFTypeRef?
