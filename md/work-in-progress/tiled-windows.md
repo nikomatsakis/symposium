@@ -31,10 +31,15 @@
 - ✅ VisibleTaskspaceManager integration for mini-stack behavior
 - ✅ Panel width calculation and screen area integration
 
-### 🚧 Next Phase: Polish and Edge Cases
+**Phase 5: Window Registration (Commit 8)**
+- ✅ Fixed window registration gap in `associateWindow()`
+- ✅ New windows automatically join tile grid layout
+- ✅ Seamless experience when creating new taskspaces
+- ✅ Grid repositioning triggered for new window integration
+
+### 🚧 Next Phase: Advanced Features
 
 **Remaining Work**:
-- Add grid repositioning when new windows are registered
 - Handle screen size changes and monitor switching
 - Add visual feedback for tile mode activation
 - Handle window closure and taskspace deletion in tile mode
@@ -42,6 +47,7 @@
 
 **Key Implementation Notes**:
 - Grid positioning ✅ COMPLETE (positions all visible windows simultaneously)
+- Window registration ✅ COMPLETE (new windows automatically join grid)
 - Taskspace activation ordering ✅ COMPLETE (most-recent-first)
 - WindowTileManager algorithms ✅ TESTED (1-4 taskspace layouts)
 - VisibleTaskspaceManager ✅ TESTED (mini-stack behavior)
