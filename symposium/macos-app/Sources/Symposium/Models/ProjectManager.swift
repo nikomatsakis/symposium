@@ -1162,17 +1162,26 @@ extension ProjectManager {
     
     /// Position and resize window to specific bounds
     private func positionWindow(windowID: CGWindowID, at rect: CGRect) {
-        guard let windowElement = getWindowElement(for: windowID) else { return }
+        Logger.shared.log("ProjectManager[\(instanceId)]: Attempting to position window \(windowID) at \(rect)")
+        
+        guard let windowElement = getWindowElement(for: windowID) else { 
+            Logger.shared.log("ProjectManager[\(instanceId)]: Failed to get window element for window \(windowID)")
+            return 
+        }
+        
+        Logger.shared.log("ProjectManager[\(instanceId)]: Got window element, setting position and size")
         
         // Set position
         var position = rect.origin
         let positionValue = AXValueCreate(.cgPoint, &position)!
-        AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, positionValue)
+        let positionResult = AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, positionValue)
+        Logger.shared.log("ProjectManager[\(instanceId)]: Position result: \(positionResult.rawValue)")
         
         // Set size
         var size = rect.size
         let sizeValue = AXValueCreate(.cgSize, &size)!
-        AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
+        let sizeResult = AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
+        Logger.shared.log("ProjectManager[\(instanceId)]: Size result: \(sizeResult.rawValue)")
     }
     
     /// Get window element for accessibility operations
@@ -1183,17 +1192,18 @@ extension ProjectManager {
         for windowInfo in windowList {
             if let id = windowInfo[kCGWindowNumber as String] as? CGWindowID, id == windowID,
                let processID = windowInfo[kCGWindowOwnerPID as String] as? pid_t {
-                let appElement = AXUIElementCreateApplication(processID)
+                
+                let app = AXUIElementCreateApplication(processID)
                 
                 var windowsRef: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
+                
+                guard result == .success,
                       let windows = windowsRef as? [AXUIElement] else { continue }
                 
+                // Find the window with matching CGWindowID
                 for window in windows {
-                    var windowIDRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(window, kAXWindowAttribute as CFString, &windowIDRef) == .success {
-                        // For now, return the first window of the matching process
-                        // This is a simplification - in practice we'd need better window matching
+                    if let axWindowID = getWindowID(from: window), axWindowID == windowID {
                         return window
                     }
                 }
