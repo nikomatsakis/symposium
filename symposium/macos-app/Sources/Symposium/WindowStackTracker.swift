@@ -215,66 +215,15 @@ class WindowStackTracker {
     }
     
     private func getWindowElement(for windowID: CGWindowID) -> AXUIElement? {
-        // Get window info to find the owning process
-        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-        
-        guard let windowInfo = windowList.first(where: { window in
-            if let id = window[kCGWindowNumber as String] as? CGWindowID {
-                return id == windowID
-            }
-            return false
-        }) else { return nil }
-        
-        guard let processID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else { return nil }
-        
-        let app = AXUIElementCreateApplication(processID)
-        
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
-        
-        guard result == .success,
-              let windows = windowsRef as? [AXUIElement] else {
-            return nil
-        }
-        
-        // Find the window with matching CGWindowID
-        for window in windows {
-            if let axWindowID = getWindowID(from: window), axWindowID == windowID {
-                return window
-            }
-        }
-        
-        return nil
+        return WindowPositioner.getWindowElement(for: windowID)
     }
     
     private func resizeWindow(windowID: CGWindowID, to newSize: CGSize) {
-        guard let windowElement = getWindowElement(for: windowID) else { return }
-        
-        var sizeValue = newSize
-        let axSizeValue = AXValueCreate(.cgSize, &sizeValue)!
-        AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, axSizeValue)
+        _ = WindowPositioner.resizeWindow(windowID: windowID, to: newSize)
     }
     
     private func moveWindow(windowID: CGWindowID, by delta: CGPoint) {
-        guard let windowElement = getWindowElement(for: windowID) else { return }
-        
-        // Get current position
-        var positionRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef) == .success,
-              let positionValue = positionRef else { return }
-        
-        var currentPos = CGPoint.zero
-        AXValueGetValue(positionValue as! AXValue, .cgPoint, &currentPos)
-        
-        // Calculate new position
-        var newPos = CGPoint(x: currentPos.x + delta.x, y: currentPos.y + delta.y)
-        let newPosValue = AXValueCreate(.cgPoint, &newPos)!
-        
-        // Set new position
-        AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, newPosValue)
+        _ = WindowPositioner.moveWindow(windowID: windowID, by: delta)
     }
     
     private func moveAndResizeWindow(windowID: CGWindowID, positionDelta: CGPoint, newSize: CGSize) {
