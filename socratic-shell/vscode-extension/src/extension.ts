@@ -4,11 +4,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { quote } from 'shell-quote';
-import { SyntheticPRProvider } from './syntheticPRProvider';
+
 import { WalkthroughWebviewProvider } from './walkthroughWebview';
 import { Bus } from './bus';
 import { DaemonClient } from './ipc';
 import { StructuredLogger } from './structuredLogger';
+import { getCurrentTaskspaceUuid } from './taskspaceUtils';
 
 // TEST TEST TEST 
 
@@ -16,8 +17,8 @@ import { StructuredLogger } from './structuredLogger';
 // 💡: Types for IPC communication with MCP server
 interface IPCMessage {
     shellPid: number;
-    type: 'present_walkthrough' | 'log' | 'get_selection' | 'store_reference' | 'response' | 'marco' | 'polo' | 'goodbye' | 'resolve_symbol_by_name' | 'find_all_references' | 'create_synthetic_pr' | 'update_synthetic_pr' | 'reload_window' | 'get_taskspace_state' | 'taskspace_roll_call' | 'register_taskspace_window' | string; // string allows unknown types
-    payload: PresentWalkthroughPayload | LogPayload | GetSelectionPayload | PoloPayload | GoodbyePayload | ResolveSymbolPayload | FindReferencesPayload | ResponsePayload | SyntheticPRPayload | TaskspaceStateRequest | TaskspaceStateResponse | TaskspaceRollCallPayload | RegisterTaskspaceWindowPayload | unknown; // unknown allows any payload
+    type: 'present_walkthrough' | 'log' | 'get_selection' | 'store_reference' | 'response' | 'marco' | 'polo' | 'goodbye' | 'resolve_symbol_by_name' | 'find_all_references' | 'reload_window' | 'get_taskspace_state' | 'taskspace_roll_call' | 'register_taskspace_window' | string; // string allows unknown types
+    payload: PresentWalkthroughPayload | LogPayload | GetSelectionPayload | PoloPayload | GoodbyePayload | ResolveSymbolPayload | FindReferencesPayload | ResponsePayload | TaskspaceStateRequest | TaskspaceStateResponse | TaskspaceRollCallPayload | RegisterTaskspaceWindowPayload | unknown; // unknown allows any payload
     id: string;
 }
 
@@ -67,7 +68,7 @@ interface TaskspaceStateRequest {
 }
 
 /**
- * Response from Symposium app when querying taskspace state
+ * Response from Socratic Shell app when querying taskspace state
  * Contains taskspace metadata for agent initialization
  */
 interface TaskspaceStateResponse {
@@ -79,16 +80,6 @@ interface TaskspaceStateResponse {
     initial_prompt?: string;
     /** Command to launch the appropriate agent */
     agent_command: string[];
-}
-
-interface SyntheticPRPayload {
-    review_id: string;
-    title: string;
-    description: any;
-    commit_range: string;
-    files_changed: FileChange[];
-    comment_threads: CommentThread[];
-    status: string;
 }
 
 // ANCHOR: store_reference_payload
@@ -214,38 +205,6 @@ interface FileLocation {
     column: number,  // 💡: 1-based, vscode is 0-based
 }
 
-/**
- * Investigate current workspace to determine if we're in a taskspace
- * Returns taskspace UUID if valid, null otherwise
- */
-function getCurrentTaskspaceUuid(): string | null {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        return null;
-    }
-
-    const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const taskUuidPattern = /^task-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-
-    // Walk up the directory tree looking for task-UUID directory with taskspace.json
-    let currentDir = workspaceRoot;
-    while (currentDir !== path.dirname(currentDir)) { // Stop at filesystem root
-        const dirName = path.basename(currentDir);
-        const match = dirName.match(taskUuidPattern);
-
-        if (match) {
-            const taskspaceJsonPath = path.join(currentDir, 'taskspace.json');
-            if (fs.existsSync(taskspaceJsonPath)) {
-                return match[1]; // Return the UUID
-            }
-        }
-
-        currentDir = path.dirname(currentDir);
-    }
-
-    return null; // No taskspace found in directory tree
-}
-
 // 💡: Check if VSCode is running in a taskspace environment and auto-launch agent
 async function checkTaskspaceEnvironment(outputChannel: vscode.OutputChannel, bus: Bus): Promise<void> {
     outputChannel.appendLine('Checking for taskspace environment...');
@@ -259,7 +218,7 @@ async function checkTaskspaceEnvironment(outputChannel: vscode.OutputChannel, bu
     outputChannel.appendLine(`✅ Taskspace detected! UUID: ${taskspaceUuid}`);
 
     // Send taskspace_state message to get current taskspace information
-    const payload: TaskspaceStateRequest = { 
+    const payload: TaskspaceStateRequest = {
         project_path: getProjectPath(),
         taskspace_uuid: taskspaceUuid,
         name: null,        // Read-only operation
@@ -310,9 +269,9 @@ async function launchAIAgent(outputChannel: vscode.OutputChannel, bus: Bus, agen
 export function activate(context: vscode.ExtensionContext) {
 
     // 💡: Create dedicated output channel for cleaner logging
-    const outputChannel = vscode.window.createOutputChannel('Symposium');
-    outputChannel.appendLine('Symposium extension is now active');
-    console.log('Symposium extension is now active');
+    const outputChannel = vscode.window.createOutputChannel('Socratic Shell');
+    outputChannel.appendLine('Socratic Shell extension is now active');
+    console.log('Socratic Shell extension is now active');
 
     // Create the central bus
     const bus = new Bus(context, outputChannel);
@@ -321,10 +280,6 @@ export function activate(context: vscode.ExtensionContext) {
     logPIDDiscovery(outputChannel).catch(error => {
         outputChannel.appendLine(`Error in PID discovery: ${error}`);
     });
-
-    // Create synthetic PR provider for AI-generated pull requests
-    const syntheticPRProvider = new SyntheticPRProvider(context);
-    bus.setSyntheticPRProvider(syntheticPRProvider);
 
     // Create walkthrough webview provider
     const walkthroughProvider = new WalkthroughWebviewProvider(context.extensionUri, bus);
@@ -360,9 +315,6 @@ export function activate(context: vscode.ExtensionContext) {
                 console.log('Sending reference to active terminal...');
                 await bus.sendToActiveTerminal(referenceData, { includeNewline: false });
                 console.log('Reference sent successfully');
-
-                // Show success message
-                vscode.window.showInformationMessage('Comment reply inserted into AI chat');
             } catch (error) {
                 console.error('Failed to reply to walkthrough comment:', error);
                 vscode.window.showErrorMessage(`Failed to reply to comment: ${error}`);
@@ -374,7 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Webview provider created successfully');
 
     // 💡: Set up daemon client connection for message bus communication
-    const daemonClient = new DaemonClient(context, outputChannel, syntheticPRProvider, walkthroughProvider);
+    const daemonClient = new DaemonClient(context, outputChannel, walkthroughProvider);
     bus.setDaemonClient(daemonClient);
 
     daemonClient.start();
@@ -383,11 +335,6 @@ export function activate(context: vscode.ExtensionContext) {
     // (Must be after DaemonClient is initialized)
     checkTaskspaceEnvironment(outputChannel, bus).catch(error => {
         outputChannel.appendLine(`Error in taskspace detection: ${error}`);
-    });
-
-    // Set up comment callback to send comments as feedback
-    syntheticPRProvider.setCommentCallback((comment: string, filePath: string, lineNumber: number) => {
-        daemonClient.handleCommentFeedback(comment, filePath, lineNumber);
     });
 
     // 💡: Set up universal selection detection for interactive code review
@@ -413,7 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
     const logPIDsCommand = vscode.commands.registerCommand('socratic-shell.logPIDs', async () => {
         outputChannel.show(); // Bring output channel into focus
         await logPIDDiscovery(outputChannel);
-        vscode.window.showInformationMessage('PID information logged to Symposium output channel');
+        vscode.window.showInformationMessage('PID information logged to Socratic Shell output channel');
     });
 
     // Window title toggle command for POC
@@ -434,11 +381,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    context.subscriptions.push(showReviewCommand, reviewActionCommand, copyReviewCommand, logPIDsCommand, syntheticPRProvider, daemonClient, toggleWindowTitleCommand);
+    context.subscriptions.push(showReviewCommand, reviewActionCommand, copyReviewCommand, logPIDsCommand, daemonClient, toggleWindowTitleCommand);
 
     // Return API for Ask Socratic Shell integration
     return {
-        getActiveTerminals: () => daemonClient.getActiveTerminals()
+        discoverActiveShells: () => daemonClient.discoverActiveShells()
     };
 }
 
@@ -537,7 +484,7 @@ function setupSelectionDetection(bus: Bus): void {
     outputChannel.appendLine('Selection detection with Code Actions setup complete');
 }
 
-// 💡: Phase 4 - Intelligent terminal detection using registry
+// 💡: Phase 4 - Intelligent terminal detection using discovery
 async function findQChatTerminal(bus: Bus): Promise<vscode.Terminal | null> {
     const { outputChannel, context } = bus;
     const terminals = vscode.window.terminals;
@@ -548,11 +495,11 @@ async function findQChatTerminal(bus: Bus): Promise<vscode.Terminal | null> {
         return null;
     }
 
-    // Get active terminals with MCP servers from registry
-    const activeTerminals = bus.getActiveTerminals();
-    outputChannel.appendLine(`Active MCP server terminals: [${Array.from(activeTerminals).join(', ')}]`);
+    // Discover active MCP servers using MARCO/POLO
+    const discoveredShells = await bus.daemonClient.discoverActiveShells();
+    outputChannel.appendLine(`Discovered MCP server terminals: [${Array.from(discoveredShells.keys()).join(', ')}]`);
 
-    if (activeTerminals.size === 0) {
+    if (discoveredShells.size === 0) {
         outputChannel.appendLine('No terminals with active MCP servers found');
         return null;
     }
@@ -566,8 +513,8 @@ async function findQChatTerminal(bus: Bus): Promise<vscode.Terminal | null> {
             // Log terminal for debugging
             outputChannel.appendLine(`  Checking terminal: "${terminal.name}" (PID: ${shellPID})`);
 
-            // Check if this terminal's shell PID is in our active registry
-            if (shellPID && activeTerminals.has(shellPID)) {
+            // Check if this terminal's shell PID is in our discovered shells
+            if (shellPID && discoveredShells.has(shellPID)) {
                 outputChannel.appendLine(`    ✅ Terminal "${terminal.name}" has active MCP server (PID: ${shellPID})`);
                 return { terminal, isAiEnabled: true };
             } else {
@@ -701,7 +648,6 @@ async function findQChatTerminal(bus: Bus): Promise<vscode.Terminal | null> {
     outputChannel.appendLine('Multiple terminals found, but none are AI-enabled or named appropriately');
     return null;
 }
-
 /**
  * Get the project path (.symposium directory) for the current workspace
  * Returns project path if valid, empty string otherwise
@@ -713,7 +659,7 @@ function getProjectPath(): string {
     }
 
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    
+
     // Walk up the directory tree looking for .symposium directory
     let currentDir = workspaceRoot;
     while (currentDir !== path.dirname(currentDir)) { // Stop at filesystem root
@@ -725,69 +671,6 @@ function getProjectPath(): string {
     }
 
     return '';
-}
-
-// 💡: Phase 5 - Create compact reference for selection context
-async function createCompactSelectionReference(
-    selectedText: string,
-    filePath: string,
-    startLine: number,
-    startColumn: number,
-    endLine: number,
-    endColumn: number,
-    bus: Bus
-): Promise<string> {
-    try {
-        const relativePath = vscode.workspace.asRelativePath(filePath);
-        const referenceId = crypto.randomUUID();
-
-        // Create reference data matching the expected format
-        const referenceData = {
-            file: relativePath,
-            line: startLine,
-            selection: selectedText.length > 0 ? selectedText : undefined
-        };
-
-        // Store the reference using the bus
-        await bus.sendReferenceToActiveShell(referenceId, referenceData);
-
-        // Return compact reference tag
-        const compactRef = `<symposium-ref id="${referenceId}"/>\n\n`;
-        bus.log(`Created compact reference ${referenceId} for ${relativePath}:${startLine}`);
-
-        return compactRef;
-    } catch (error) {
-        bus.log(`Failed to create compact reference: ${error}`);
-        // Fallback to old format if compact reference fails
-        return formatSelectionMessageLegacy(selectedText, filePath, startLine, startColumn, endLine, endColumn);
-    }
-}
-
-// 💡: Legacy fallback - Format selection context for Q chat injection (old verbose format)
-function formatSelectionMessageLegacy(
-    selectedText: string,
-    filePath: string,
-    startLine: number,
-    startColumn: number,
-    endLine: number,
-    endColumn: number
-): string {
-    // 💡: Create a formatted message that provides context to the AI
-    const relativePath = vscode.workspace.asRelativePath(filePath);
-    const location = startLine === endLine
-        ? `${relativePath}:${startLine}:${startColumn}-${endColumn}`
-        : `${relativePath}:${startLine}:${startColumn}-${endLine}:${endColumn}`;
-
-    // 💡: Format as a natural message that user can continue typing after
-    // 💡: Show just first 30 chars with escaped newlines for concise terminal display
-    const escapedText = selectedText.replace(/\n/g, '\\n');
-    const truncatedText = escapedText.length > 30
-        ? escapedText.substring(0, 30) + '...'
-        : escapedText;
-
-    const message = `<context>looking at this code from ${location} <content>${truncatedText}</content></context> `;
-
-    return message;
 }
 
 // 💡: PID Discovery Testing - Log all relevant PIDs for debugging

@@ -161,10 +161,7 @@ pub enum IPCMessageType {
     ResolveSymbolByName,
     /// Find all references to a symbol - returns Vec<FileLocation>
     FindAllReferences,
-    /// Create synthetic pull request
-    CreateSyntheticPr,
-    /// Update synthetic pull request
-    UpdateSyntheticPr,
+
     /// User feedback from VSCode extension (comments, review completion)
     UserFeedback,
     /// Store reference context for compact symposium-ref system
@@ -200,17 +197,7 @@ pub struct StoreReferencePayload {
 }
 // ANCHOR_END: store_reference_payload
 
-/// Payload for synthetic PR creation/update messages
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SyntheticPRPayload {
-    pub review_id: String,
-    pub title: String,
-    pub description: serde_json::Value,
-    pub commit_range: String,
-    pub files_changed: Vec<crate::synthetic_pr::FileChange>,
-    pub comment_threads: Vec<crate::synthetic_pr::CommentThread>,
-    pub status: String,
-}
+
 
 /// Payload for user feedback messages from VSCode extension
 #[derive(Debug, Clone, Deserialize, Serialize)]

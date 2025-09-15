@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { DaemonClient } from './ipc';
-import { SyntheticPRProvider } from './syntheticPRProvider';
+
 import { WalkthroughWebviewProvider } from './walkthroughWebview';
 import { StructuredLogger } from './structuredLogger';
+import { getCurrentTaskspaceUuid } from './taskspaceUtils';
 
 /**
  * Central message bus for extension components
@@ -14,7 +15,6 @@ export class Bus {
     public outputChannel: vscode.OutputChannel;
     private logger: StructuredLogger;
     private _daemonClient: DaemonClient | undefined;
-    private _syntheticPRProvider: SyntheticPRProvider | undefined;
     private _walkthroughProvider: WalkthroughWebviewProvider | undefined;
 
     constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel) {
@@ -26,10 +26,6 @@ export class Bus {
     // Register components as they're created
     setDaemonClient(client: DaemonClient) {
         this._daemonClient = client;
-    }
-
-    setSyntheticPRProvider(provider: SyntheticPRProvider) {
-        this._syntheticPRProvider = provider;
     }
 
     setWalkthroughProvider(provider: WalkthroughWebviewProvider) {
@@ -44,23 +40,11 @@ export class Bus {
         return this._daemonClient;
     }
 
-    get syntheticPRProvider(): SyntheticPRProvider {
-        if (!this._syntheticPRProvider) {
-            throw new Error('SyntheticPRProvider not initialized on Bus');
-        }
-        return this._syntheticPRProvider;
-    }
-
     get walkthroughProvider(): WalkthroughWebviewProvider {
         if (!this._walkthroughProvider) {
             throw new Error('WalkthroughWebviewProvider not initialized on Bus');
         }
         return this._walkthroughProvider;
-    }
-
-    // Convenience methods for common operations
-    async sendReferenceToActiveShell(referenceId: string, referenceData: any): Promise<void> {
-        return this.daemonClient.sendReferenceToActiveShell(referenceId, referenceData);
     }
 
     /**
@@ -74,29 +58,45 @@ export class Bus {
             return null;
         }
 
-        const activeTerminals = this.getActiveTerminals();
-        this.log(`Active MCP server terminals: [${Array.from(activeTerminals).join(', ')}]`);
+        // Discover active MCP servers using MARCO/POLO
+        const discoveredShells = await this.daemonClient.discoverActiveShells();
+        this.log(`Discovered MCP server terminals: [${Array.from(discoveredShells.keys()).join(', ')}]`);
 
-        if (activeTerminals.size === 0) {
+        if (discoveredShells.size === 0) {
             vscode.window.showWarningMessage('No terminals with active MCP servers found. Please ensure you have a terminal with an active AI assistant (like Q chat or Claude CLI) running.');
             return null;
+        }
+
+        // Get current taskspace for filtering
+        const currentTaskspaceUuid = getCurrentTaskspaceUuid();
+
+        // Filter shells by taskspace if we're in one
+        let candidateShells = Array.from(discoveredShells.entries());
+        if (currentTaskspaceUuid) {
+            const taskspaceMatches = candidateShells.filter(([pid, payload]) =>
+                payload.taskspace_uuid === currentTaskspaceUuid
+            );
+            if (taskspaceMatches.length > 0) {
+                candidateShells = taskspaceMatches;
+                this.log(`Filtered to ${candidateShells.length} shells matching taskspace ${currentTaskspaceUuid}`);
+            }
         }
 
         // Filter terminals to only those with active MCP servers
         const terminalChecks = await Promise.all(
             terminals.map(async (terminal) => {
                 const shellPID = await terminal.processId;
-                const isAiEnabled = shellPID && activeTerminals.has(shellPID);
-                return { terminal, shellPID, isAiEnabled };
+                const hasActiveShell = shellPID && candidateShells.some(([pid]) => pid === shellPID);
+                return { terminal, shellPID, hasActiveShell };
             })
         );
 
         const aiEnabledTerminals = terminalChecks
-            .filter(check => check.isAiEnabled && check.shellPID)
+            .filter(check => check.hasActiveShell && check.shellPID)
             .map(check => ({ terminal: check.terminal, shellPID: check.shellPID! }));
 
         if (aiEnabledTerminals.length === 0) {
-            vscode.window.showWarningMessage('No AI-enabled terminals found. Please ensure you have a terminal with an active MCP server running.');
+            vscode.window.showWarningMessage('No AI-enabled terminals found in current context. Please ensure you have a terminal with an active MCP server running.');
             return null;
         }
 
@@ -105,7 +105,18 @@ export class Bus {
             return aiEnabledTerminals[0];
         }
 
-        // Multiple terminals - show picker for ambiguity resolution
+        // Multiple terminals - prefer currently active terminal if possible
+        const activeTerminal = vscode.window.activeTerminal;
+        if (activeTerminal) {
+            const activeTerminalPID = await activeTerminal.processId;
+            const activeMatch = aiEnabledTerminals.find(({ shellPID }) => shellPID === activeTerminalPID);
+            if (activeMatch) {
+                this.log(`Using currently active terminal ${activeMatch.shellPID}`);
+                return activeMatch;
+            }
+        }
+
+        // Still multiple terminals - show picker for ambiguity resolution
         const terminalItems = aiEnabledTerminals.map(({ terminal, shellPID }) => ({
             label: terminal.name,
             description: `PID: ${shellPID}`,
@@ -132,9 +143,8 @@ export class Bus {
         const referenceId = crypto.randomUUID();
 
         // Send reference data to MCP server for selected terminal
-        if (selectedTerminal.shellPID) {
-            await this.sendReferenceToActiveShell(referenceId, referenceData);
-        }
+        this.daemonClient.sendStoreReferenceToShell(selectedTerminal.shellPID, referenceId, referenceData);
+        this.log(`Reference ${referenceId} sent to shell ${selectedTerminal.shellPID}`);
 
         // Generate <symposium-ref id="..."/> XML (using current format)
         const xmlMessage = `<symposium-ref id="${referenceId}"/>` + (options.includeNewline ? '\n\n' : ' ');
@@ -159,10 +169,6 @@ export class Bus {
         selectedTerminal.terminal.show(); // Bring terminal into focus
 
         this.log(`Text message sent to terminal ${selectedTerminal.terminal.name} (PID: ${selectedTerminal.shellPID})`);
-    }
-
-    getActiveTerminals(): Set<number> {
-        return this.daemonClient.getActiveTerminals();
     }
 
     log(message: string) {

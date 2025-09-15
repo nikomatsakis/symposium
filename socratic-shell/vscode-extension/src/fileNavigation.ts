@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { parseSymposiumUrl, SymposiumUrl } from './symposiumUrl';
+import { parseSocraticShellUrl, SocraticShellUrl } from './socraticShellUrl';
 import { searchInFile, getBestSearchResult, formatSearchResults, needsDisambiguation } from './searchEngine';
 
 // Placement state for unified link and comment management
@@ -11,24 +11,24 @@ interface PlacementState {
 }
 
 /**
- * Resolve a dialectic URL to a precise location, using placement memory and user disambiguation
+ * Resolve a socratic-shell URL to a precise location, using placement memory and user disambiguation
  * Returns the resolved location without navigating to it
  */
-export async function resolveSymposiumUrlPlacement(
-    symposiumUrl: string,
+export async function resolveSocraticShellUrlPlacement(
+    socraticShellUrl: string,
     outputChannel: vscode.OutputChannel,
     baseUri?: vscode.Uri,
     placementMemory?: Map<string, PlacementState>
 ): Promise<{ range: vscode.Range; document: vscode.TextDocument } | null> {
     try {
-        // Parse the dialectic URL to extract components
-        const parsed = parseSymposiumUrl(symposiumUrl);
+        // Parse the socratic-shell URL to extract components
+        const parsed = parseSocraticShellUrl(socraticShellUrl);
         if (!parsed) {
-            vscode.window.showErrorMessage(`Invalid dialectic URL: ${symposiumUrl}`);
+            vscode.window.showErrorMessage(`Invalid socratic-shell URL: ${socraticShellUrl}`);
             return null;
         }
 
-        outputChannel.appendLine(`Resolving dialectic URL: ${symposiumUrl}`);
+        outputChannel.appendLine(`Resolving socratic-shell URL: ${socraticShellUrl}`);
         outputChannel.appendLine(`Parsed components: ${JSON.stringify(parsed, null, 2)}`);
 
         // Resolve the file path
@@ -60,7 +60,7 @@ export async function resolveSymposiumUrlPlacement(
                     }
                 } else {
                     // Check if we have a stored placement
-                    const linkKey = `link:${symposiumUrl}`;
+                    const linkKey = `link:${socraticShellUrl}`;
                     const placementState = placementMemory?.get(linkKey);
                     
                     if (placementState?.isPlaced && placementState.chosenLocation) {
@@ -116,24 +116,24 @@ export async function resolveSymposiumUrlPlacement(
         };
 
     } catch (error) {
-        outputChannel.appendLine(`Error resolving dialectic URL: ${error}`);
-        vscode.window.showErrorMessage(`Failed to resolve dialectic URL: ${error}`);
+        outputChannel.appendLine(`Error resolving socratic-shell URL: ${error}`);
+        vscode.window.showErrorMessage(`Failed to resolve socratic-shell URL: ${error}`);
         return null;
     }
 }
 
 /**
- * Open a file location specified by a dialectic URL
+ * Open a file location specified by a socratic-shell URL
  * Full implementation with regex search support extracted from reviewWebview
  */
-export async function openSymposiumUrl(
-    symposiumUrl: string, 
+export async function openSocraticShellUrl(
+    socraticShellUrl: string, 
     outputChannel: vscode.OutputChannel, 
     baseUri?: vscode.Uri,
     placementMemory?: Map<string, PlacementState>
 ): Promise<void> {
     // Resolve the placement
-    const resolved = await resolveSymposiumUrlPlacement(symposiumUrl, outputChannel, baseUri, placementMemory);
+    const resolved = await resolveSocraticShellUrlPlacement(socraticShellUrl, outputChannel, baseUri, placementMemory);
     if (!resolved) {
         return; // Resolution failed or was cancelled
     }
@@ -149,7 +149,7 @@ export async function openSymposiumUrl(
     // Add line decorations for better visibility
     const decorationRanges = createDecorationRanges(
         document, 
-        undefined, // No line constraint for dialectic URLs
+        undefined, // No line constraint for socratic-shell URLs
         range.start.line + 1, // Convert back to 1-based for createDecorationRanges
         range.start.character + 1, 
         undefined // No search result highlighting needed
@@ -412,7 +412,7 @@ async function showSearchDisambiguation(
  */
 function createDecorationRanges(
     document: vscode.TextDocument, 
-    lineSpec?: import('./symposiumUrl').LineSpec, 
+    lineSpec?: import('./socraticShellUrl').LineSpec, 
     targetLine?: number, 
     targetColumn?: number,
     searchResult?: import('./searchEngine').SearchResult

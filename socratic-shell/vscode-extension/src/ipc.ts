@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { SyntheticPRProvider } from './syntheticPRProvider';
+
 import { WalkthroughWebviewProvider } from './walkthroughWebview';
 import { StructuredLogger } from './structuredLogger';
+import { getCurrentTaskspaceUuid } from './taskspaceUtils';
 
 interface IPCMessage {
     shellPid: number;
@@ -31,16 +32,6 @@ interface ResponsePayload {
     error?: string;
 }
 
-interface SyntheticPRPayload {
-    review_id: string;
-    title: string;
-    description: any;
-    commit_range: string;
-    files_changed: any[];
-    comment_threads: any[];
-    status: string;
-}
-
 interface StoreReferencePayload {
     key: string;
     value: any;
@@ -58,6 +49,11 @@ interface TaskspaceRollCallPayload {
 interface RegisterTaskspaceWindowPayload {
     window_title: string;
     taskspace_uuid: string;
+}
+
+interface PoloDiscoveryPayload {
+    taskspace_uuid?: string;
+    // Shell PID is at message level (message.shellPid)
 }
 
 interface UserFeedback {
@@ -87,42 +83,14 @@ interface Position {
     column: number;
 }
 
-function getCurrentTaskspaceUuid(): string | null {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        return null;
-    }
-
-    const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const taskUuidPattern = /^task-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-
-    let currentDir = workspaceRoot;
-    while (currentDir !== path.dirname(currentDir)) {
-        const dirName = path.basename(currentDir);
-        const match = dirName.match(taskUuidPattern);
-
-        if (match) {
-            const taskspaceJsonPath = path.join(currentDir, 'taskspace.json');
-            const fs = require('fs');
-            if (fs.existsSync(taskspaceJsonPath)) {
-                return match[1];
-            }
-        }
-
-        currentDir = path.dirname(currentDir);
-    }
-
-    return null;
-}
-
 export class DaemonClient implements vscode.Disposable {
     private clientProcess: any = null;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private isDisposed = false;
     private readonly RECONNECT_INTERVAL_MS = 5000; // 5 seconds
 
-    // Terminal registry: track active shell PIDs with MCP servers
-    private activeTerminals: Set<number> = new Set();
+    // MARCO/POLO discovery: temporary storage for discovery responses
+    private discoveryResponses: Map<number, PoloDiscoveryPayload> = new Map();
 
     // Review feedback handling
     private pendingFeedbackResolvers: Map<string, (feedback: UserFeedback) => void> = new Map();
@@ -136,7 +104,6 @@ export class DaemonClient implements vscode.Disposable {
     constructor(
         private context: vscode.ExtensionContext,
         private outputChannel: vscode.OutputChannel,
-        private syntheticPRProvider: SyntheticPRProvider,
         private walkthroughProvider: WalkthroughWebviewProvider
     ) {
         this.logger = new StructuredLogger(this.outputChannel);
@@ -150,19 +117,19 @@ export class DaemonClient implements vscode.Disposable {
     private async startClientProcess(): Promise<void> {
         if (this.isDisposed) return;
 
-        this.logger.info(`Starting symposium-mcp client via shell`);
+        this.logger.info(`Starting socratic-shell-mcp client via shell`);
 
-        // Spawn symposium-mcp client process
+        // Spawn socratic-shell-mcp client process
         const { spawn } = require('child_process');
 
         // Use shell to handle PATH resolution, same as macOS app
-        this.clientProcess = spawn('/bin/sh', ['-c', 'symposium-mcp client'], {
+        this.clientProcess = spawn('/bin/sh', ['-c', 'socratic-shell-mcp client'], {
             stdio: ['pipe', 'pipe', 'pipe'] // stdin, stdout, stderr
         });
 
         // Handle client process events
         this.clientProcess.on('spawn', () => {
-            this.logger.info('✅ Symposium client process started');
+            this.logger.info('✅ Socratic Shell client process started');
             this.setupClientCommunication();
         });
 
@@ -220,7 +187,7 @@ export class DaemonClient implements vscode.Disposable {
 
     private async attemptAutoRegistration(): Promise<void> {
         try {
-            const taskspaceUuid = await this.detectTaskspaceUUID();
+            const taskspaceUuid = getCurrentTaskspaceUuid();
             if (taskspaceUuid) {
                 this.outputChannel.appendLine(`[WINDOW REG] Auto-registering window for taskspace: ${taskspaceUuid}`);
                 await this.registerWindow(taskspaceUuid);
@@ -290,24 +257,20 @@ export class DaemonClient implements vscode.Disposable {
                 this.outputChannel.appendLine(`Error handling log message: ${error}`);
             }
         } else if (message.type === 'polo') {
-            // Handle Polo messages - MCP server announcing presence
+            // Handle Polo messages during discovery
             try {
-                this.outputChannel.appendLine(`[DISCOVERY] MCP server connected in terminal PID ${message.shellPid}`);
+                const poloPayload = message.payload as PoloDiscoveryPayload;
+                this.outputChannel.appendLine(`[DISCOVERY] POLO response from terminal PID ${message.shellPid}, taskspace: ${poloPayload.taskspace_uuid || 'none'}`);
 
-                // Add to terminal registry for Ask Socratic Shell integration
-                this.activeTerminals.add(message.shellPid);
-                this.outputChannel.appendLine(`[REGISTRY] Active terminals: [${Array.from(this.activeTerminals).join(', ')}]`);
+                // Store discovery response temporarily (only during active discovery)
+                this.discoveryResponses.set(message.shellPid, poloPayload);
             } catch (error) {
                 this.outputChannel.appendLine(`Error handling polo message: ${error}`);
             }
         } else if (message.type === 'goodbye') {
-            // Handle Goodbye messages - MCP server announcing departure
+            // Handle Goodbye messages - just log for now (no persistent registry)
             try {
                 this.outputChannel.appendLine(`[DISCOVERY] MCP server disconnected from terminal PID ${message.shellPid}`);
-
-                // Remove from terminal registry for Ask Socratic Shell integration
-                this.activeTerminals.delete(message.shellPid);
-                this.outputChannel.appendLine(`[REGISTRY] Active terminals: [${Array.from(this.activeTerminals).join(', ')}]`);
             } catch (error) {
                 this.outputChannel.appendLine(`Error handling goodbye message: ${error}`);
             }
@@ -356,54 +319,6 @@ export class DaemonClient implements vscode.Disposable {
                     error: error instanceof Error ? error.message : String(error)
                 });
             }
-        } else if (message.type === 'create_synthetic_pr') {
-            // Handle synthetic PR creation
-            const startTime = Date.now();
-            this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Received create_synthetic_pr message`);
-            try {
-                const prPayload = message.payload as SyntheticPRPayload;
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Creating PR: ${prPayload.title}`);
-
-                // Create PR UI using SyntheticPRProvider
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Calling syntheticPRProvider.createSyntheticPR`);
-                await this.syntheticPRProvider.createSyntheticPR(prPayload);
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: syntheticPRProvider.createSyntheticPR completed`);
-
-                // Collect user feedback
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Collecting user feedback`);
-                const userFeedback = await this.collectUserFeedback(prPayload.review_id);
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: User feedback collected`);
-
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Sending feedback response`);
-                this.sendResponse(message.id, { success: true, data: userFeedback });
-                this.outputChannel.appendLine(`[SYNTHETIC PR] ${Date.now() - startTime}ms: Feedback response sent`);
-            } catch (error) {
-                this.outputChannel.appendLine(`Error handling create_synthetic_pr: ${error}`);
-                this.sendResponse(message.id, {
-                    success: false,
-                    error: error instanceof Error ? error.message : String(error)
-                });
-            }
-        } else if (message.type === 'update_synthetic_pr') {
-            // Handle synthetic PR updates
-            try {
-                const prPayload = message.payload as SyntheticPRPayload;
-                this.outputChannel.appendLine(`[SYNTHETIC PR] Updating PR: ${prPayload.review_id}`);
-
-                // Update PR UI using SyntheticPRProvider
-                await this.syntheticPRProvider.updateSyntheticPR(prPayload);
-
-                // Collect user feedback
-                const userFeedback = await this.collectUserFeedback(prPayload.review_id);
-
-                this.sendResponse(message.id, { success: true, data: userFeedback });
-            } catch (error) {
-                this.outputChannel.appendLine(`Error handling update_synthetic_pr: ${error}`);
-                this.sendResponse(message.id, {
-                    success: false,
-                    error: error instanceof Error ? error.message : String(error)
-                });
-            }
         } else if (message.type === 'log') {
             // Handle log messages from daemon/MCP servers with structured formatting
             try {
@@ -437,7 +352,7 @@ export class DaemonClient implements vscode.Disposable {
                 this.outputChannel.appendLine(`[WINDOW REG] Received roll call for taskspace: ${rollCallPayload.taskspace_uuid}`);
 
                 // Check if this roll call is for our taskspace
-                const currentTaskspaceUuid = await this.detectTaskspaceUUID();
+                const currentTaskspaceUuid = getCurrentTaskspaceUuid();
                 if (currentTaskspaceUuid === rollCallPayload.taskspace_uuid) {
                     this.outputChannel.appendLine(`[WINDOW REG] Roll call matches our taskspace, registering window`);
                     await this.registerWindow(rollCallPayload.taskspace_uuid);
@@ -552,7 +467,6 @@ export class DaemonClient implements vscode.Disposable {
         });
 
         // Clear tree view and cleanup
-        this.syntheticPRProvider.clearPR();
         this.pendingFeedbackResolvers.delete(reviewId);
     }
 
@@ -612,7 +526,6 @@ export class DaemonClient implements vscode.Disposable {
         }
 
         // Clear tree view after action
-        this.syntheticPRProvider.clearPR();
         this.pendingFeedbackResolvers.delete(reviewId);
     }
 
@@ -649,10 +562,6 @@ export class DaemonClient implements vscode.Disposable {
         } catch (error) {
             this.outputChannel.appendLine(`Failed to send response: ${error}`);
         }
-    }
-
-    private async detectTaskspaceUUID(): Promise<string | null> {
-        return getCurrentTaskspaceUuid();
     }
 
     private async registerWindow(taskspaceUuid: string): Promise<void> {
@@ -713,59 +622,6 @@ export class DaemonClient implements vscode.Disposable {
     /**
      * Send a reference to the active AI terminal via IPC
      */
-    public async sendReferenceToActiveShell(key: string, value: any): Promise<void> {
-        const terminals = vscode.window.terminals;
-        if (terminals.length === 0) {
-            vscode.window.showWarningMessage('No terminals found. Please open a terminal with an active AI assistant.');
-            return;
-        }
-
-        // Get active terminals with MCP servers from registry
-        const activeTerminals = this.getActiveTerminals();
-        this.outputChannel.appendLine(`Active MCP server terminals: [${Array.from(activeTerminals).join(', ')}]`);
-
-        if (activeTerminals.size === 0) {
-            vscode.window.showWarningMessage('No terminals with active MCP servers found. Please ensure you have a terminal with an active AI assistant (like Q chat or Claude CLI) running.');
-            return;
-        }
-
-        // Filter terminals to only those with active MCP servers
-        const terminalChecks = await Promise.all(
-            terminals.map(async (terminal) => {
-                const shellPID = await terminal.processId;
-                const isAiEnabled = shellPID && activeTerminals.has(shellPID);
-                return { terminal, shellPID, isAiEnabled };
-            })
-        );
-
-        const aiEnabledTerminals = terminalChecks
-            .filter(check => check.isAiEnabled)
-            .map(check => ({ terminal: check.terminal, shellPID: check.shellPID }));
-
-        if (aiEnabledTerminals.length === 0) {
-            vscode.window.showWarningMessage('No AI-enabled terminals found. Please ensure you have a terminal with an active MCP server running.');
-            return;
-        }
-
-        // Simple case - exactly one AI-enabled terminal
-        if (aiEnabledTerminals.length === 1) {
-            const { shellPID } = aiEnabledTerminals[0];
-            if (shellPID) {
-                this.sendStoreReferenceToShell(shellPID, key, value);
-                this.outputChannel.appendLine(`Reference ${key} sent to shell ${shellPID}`);
-            }
-            return;
-        }
-
-        // Multiple terminals - send to all (or we could show a picker)
-        for (const { shellPID } of aiEnabledTerminals) {
-            if (shellPID) {
-                this.sendStoreReferenceToShell(shellPID, key, value);
-                this.outputChannel.appendLine(`Reference ${key} sent to shell ${shellPID}`);
-            }
-        }
-    }
-
     public sendStoreReferenceToShell(shellPid: number, key: string, value: any): void {
         if (!this.clientProcess || this.clientProcess.stdin?.destroyed) {
             this.outputChannel.appendLine(`Cannot send store_reference - client not connected`);
@@ -789,27 +645,6 @@ export class DaemonClient implements vscode.Disposable {
             this.outputChannel.appendLine(`[REFERENCE] Stored reference ${key} for shell ${shellPid}`);
         } catch (error) {
             this.outputChannel.appendLine(`Failed to send store_reference to shell ${shellPid}: ${error}`);
-        }
-    }
-
-
-    private sendMarco(): void {
-        if (!this.clientProcess || this.clientProcess.killed) {
-            this.outputChannel.appendLine(`Cannot send Marco - client process not available`);
-            return;
-        }
-
-        const marcoMessage = {
-            type: 'marco',
-            payload: {},
-            id: crypto.randomUUID()
-        };
-
-        try {
-            this.clientProcess.stdin.write(JSON.stringify(marcoMessage) + '\n');
-            this.logger.info('[DISCOVERY] Sent Marco broadcast to discover MCP servers');
-        } catch (error) {
-            this.outputChannel.appendLine(`Failed to send Marco: ${error}`);
         }
     }
 
@@ -995,14 +830,51 @@ export class DaemonClient implements vscode.Disposable {
             this.clientProcess = null;
         }
 
-        this.outputChannel.appendLine('Symposium client disposed');
+        this.outputChannel.appendLine('Socratic Shell client disposed');
     }
 
     /**
-     * Get the set of active terminal shell PIDs with MCP servers
-     * For Ask Socratic Shell integration
+     * Discover active MCP servers using MARCO/POLO pattern
+     * Returns map of shell PID to discovery payload
      */
-    getActiveTerminals(): Set<number> {
-        return new Set(this.activeTerminals); // Return a copy to prevent external modification
+    public async discoverActiveShells(timeoutMs: number = 100): Promise<Map<number, PoloDiscoveryPayload>> {
+        // Clear any previous discovery responses
+        this.discoveryResponses.clear();
+
+        // Send MARCO broadcast
+        this.outputChannel.appendLine(`[DISCOVERY] Sending MARCO broadcast`);
+        this.sendMarco();
+
+        // Wait for POLO responses with timeout
+        await new Promise(resolve => setTimeout(resolve, timeoutMs));
+
+        // Return collected responses
+        const responses = new Map(this.discoveryResponses);
+        this.discoveryResponses.clear(); // Clean up
+        
+        this.outputChannel.appendLine(`[DISCOVERY] Collected ${responses.size} POLO responses: [${Array.from(responses.keys()).join(', ')}]`);
+        return responses;
     }
+
+    private sendMarco(): void {
+        if (!this.clientProcess || this.clientProcess.stdin?.destroyed) {
+            this.outputChannel.appendLine(`Cannot send MARCO - client not connected`);
+            return;
+        }
+
+        const marcoMessage: IPCMessage = {
+            shellPid: process.pid, // Use our own PID as sender
+            type: 'marco',
+            payload: {}, // Empty payload for MARCO
+            id: crypto.randomUUID()
+        };
+
+        try {
+            this.clientProcess.stdin.write(JSON.stringify(marcoMessage) + '\n');
+            this.outputChannel.appendLine(`[DISCOVERY] MARCO broadcast sent`);
+        } catch (error) {
+            this.outputChannel.appendLine(`Error sending MARCO: ${error}`);
+        }
+    }
+
 } 

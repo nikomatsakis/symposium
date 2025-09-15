@@ -20,9 +20,6 @@ use tracing::{info, warn};
 use crate::dialect::DialectInterpreter;
 use crate::ipc::IPCCommunicator;
 use crate::reference_store::ReferenceStore;
-use crate::synthetic_pr::{
-    CompletionAction, RequestReviewParams, UpdateReviewParams, UserFeedback,
-};
 use crate::types::{LogLevel, PresentWalkthroughParams};
 use serde::{Deserialize, Serialize};
 
@@ -184,73 +181,6 @@ impl DialecticServer {
     /// Get a reference to the IPC communicator
     pub fn ipc(&self) -> &IPCCommunicator {
         &self.ipc
-    }
-
-    /// Format user feedback into clear instructions for the LLM
-    fn format_user_feedback_message(&self, feedback: &UserFeedback) -> String {
-        match &feedback.feedback {
-            crate::synthetic_pr::FeedbackData::Comment {
-                file_path,
-                line_number,
-                comment_text,
-                context_lines,
-            } => {
-                let file_path = file_path.as_deref().unwrap_or("unknown file");
-                let line_number = line_number.unwrap_or(0);
-
-                let context = if let Some(lines) = context_lines {
-                    format!("\n\nCode context:\n```\n{}\n```", lines.join("\n"))
-                } else {
-                    String::new()
-                };
-
-                format!(
-                    "The user reviewed your code changes and left a comment on file `{}` at line {}:\n\n\
-                    User comment: '{}'{}\n\n\
-                    Please analyze the user's feedback and prepare a thoughtful response addressing their concern. \
-                    Do NOT modify any files on disk.\n\n\
-                    When ready, invoke the update_review tool with:\n\
-                    - review_id: '{}'\n\
-                    - action: AddComment\n\
-                    - comment: {{ response: 'Your response text here' }}\n\n\
-                    After responding, invoke update_review again with action: WaitForFeedback to continue the conversation.",
-                    file_path, line_number, comment_text, context, &feedback.review_id
-                )
-            }
-            crate::synthetic_pr::FeedbackData::CompleteReview {
-                completion_action,
-                additional_notes,
-            } => {
-                let notes = additional_notes.as_deref().unwrap_or("");
-
-                let notes_section = if !notes.is_empty() {
-                    format!("\nAdditional notes: '{}'\n", notes)
-                } else {
-                    String::new()
-                };
-
-                match completion_action {
-                    CompletionAction::RequestChanges => format!(
-                        "User completed their review and selected: 'Request agent to make changes'{}\n\
-                        Based on the review discussion, please implement the requested changes. \
-                        You may now edit files as needed.\n\n\
-                        When finished, invoke: update_review(review_id: '{}', action: Approve)",
-                        notes_section, &feedback.review_id
-                    ),
-                    CompletionAction::Checkpoint => format!(
-                        "User completed their review and selected: 'Request agent to checkpoint this work'{}\n\
-                        Please commit the current changes and document the work completed.\n\n\
-                        When finished, invoke: update_review(review_id: '{}', action: Approve)",
-                        notes_section, &feedback.review_id
-                    ),
-                    CompletionAction::Return => format!(
-                        "User completed their review and selected: 'Return to agent without explicit request'{}\n\
-                        The review is complete. You may proceed as you see fit.",
-                        notes_section
-                    ),
-                }
-            }
-        }
     }
 
     /// Creates a new DialecticServer in test mode
@@ -516,165 +446,14 @@ impl DialecticServer {
     /// Analyzes Git changes and extracts AI insight comments (💡❓TODO/FIXME) to create
     /// a PR-like review interface with structured file changes and comment threads.
     // ANCHOR: request_review_tool
-    #[tool(
-        description = "Create a synthetic pull request from a Git commit range with AI insight comments. \
-                       Supports commit ranges like 'HEAD', 'HEAD~2', 'abc123..def456'. \
-                       Extracts AI insight comments (TODO/FIXME/insight markers) and generates structured review data. \
-                       BLOCKS until user provides initial feedback."
-    )]
-    async fn request_review(
-        &self,
-        Parameters(params): Parameters<RequestReviewParams>,
-    ) -> Result<CallToolResult, McpError> {
-        self.ipc
-            .send_log(
-                LogLevel::Debug,
-                format!("Received request_review tool call: {:?}", params),
-            )
-            .await;
 
-        // Execute the synthetic PR creation
-        let result = crate::synthetic_pr::harvest_review_data(params)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    "Synthetic PR creation failed",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    })),
-                )
-            })?;
-
-        // Send synthetic PR data to VSCode extension via IPC
-        self.ipc
-            .send_create_synthetic_pr(&result)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    "Failed to send synthetic PR to VSCode",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    })),
-                )
-            })?;
-
-        self.ipc
-            .send_log(
-                LogLevel::Info,
-                format!("Synthetic PR created successfully: {}", result.review_id),
-            )
-            .await;
-
-        // Send initial review to VSCode extension and wait for user response
-        let user_feedback = self.ipc.send_review_update(&result).await.map_err(|e| {
-            McpError::internal_error(
-                "Failed to send initial review",
-                Some(serde_json::json!({
-                    "error": e.to_string()
-                })),
-            )
-        })?;
-
-        let message = self.format_user_feedback_message(&user_feedback);
-        Ok(CallToolResult::success(vec![Content::text(message)]))
-    }
-
-    // ANCHOR: update_review_tool
-    /// Update an existing synthetic pull request or wait for user feedback
-    ///
-    /// Supports actions: wait_for_feedback, add_comment, approve, request_changes.
-    /// Used for iterative review workflows between AI and developer.
-    #[tool(
-        description = "Update an existing synthetic pull request or wait for user feedback. \
-                         This tool is used to interact with the user through their IDE. \
-                         Do not invoke it except when asked to do so by other tools within dialectic."
-    )]
-    async fn update_review(
-        &self,
-        Parameters(params): Parameters<UpdateReviewParams>,
-    ) -> Result<CallToolResult, McpError> {
-        self.ipc
-            .send_log(
-                LogLevel::Debug,
-                format!("Received update_review tool call: {:?}", params),
-            )
-            .await;
-
-        // 1. Update the review state based on action
-        let updated_review = crate::synthetic_pr::update_review(params)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    "Review update failed",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    })),
-                )
-            })?;
-
-        // 2. Send updated state to VSCode extension via IPC and wait for response
-        let user_feedback = self
-            .ipc
-            .send_review_update(&updated_review)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    "Failed to send review update",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    })),
-                )
-            })?;
-
-        // 3. Return formatted user response to LLM
-        let message = self.format_user_feedback_message(&user_feedback);
-        Ok(CallToolResult::success(vec![Content::text(message)]))
-    }
-
-    /// Get the status of the current synthetic pull request
-    ///
-    /// Returns information about the active review including file counts,
-    /// comment threads, and current status.
-    // ANCHOR: get_review_status_tool
-    #[tool(description = "Get the status of the current synthetic pull request. \
-                       Returns review information including file counts, comment threads, and status.")]
-    async fn get_review_status(&self) -> Result<CallToolResult, McpError> {
-        self.ipc
-            .send_log(
-                LogLevel::Debug,
-                "Received get_review_status tool call".to_string(),
-            )
-            .await;
-
-        let result = crate::synthetic_pr::get_review_status(None)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    "Status retrieval failed",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    })),
-                )
-            })?;
-
-        let json_content = Content::json(result).map_err(|e| {
-            McpError::internal_error(
-                "Serialization failed",
-                Some(serde_json::json!({
-                    "error": format!("Failed to serialize status result: {}", e)
-                })),
-            )
-        })?;
-
-        Ok(CallToolResult::success(vec![json_content]))
-    }
 
     /// Expand a compact reference to get full context
     ///
     /// This tool allows LLMs to retrieve the full context for a compact symposium-ref reference.
     // ANCHOR: expand_reference_tool
     #[tool(description = "
-        Expand a compact reference (denoted as `<symposium-ref id='..'/>`) to get full context. \
+        Expand a compact reference (denoted as `<socratic-shell-ref id='..'/>`) to get full context. \
         Invoke with the contents of `id` attribute. Returns structured JSON with all available context data. \
     ")]
     async fn expand_reference(
@@ -1474,8 +1253,9 @@ This is test content."#;
         // Test the actual resource generation logic used by list_resources
         let resources = DialecticServer::generate_resources();
 
-        // Verify we have the expected files
-        assert_eq!(resources.len(), 3);
+        // Verify we have resources for all guidance files
+        let expected_count = GuidanceFiles::iter().count();
+        assert_eq!(resources.len(), expected_count);
 
         // Check that all files have proper metadata
         let main_resource = resources.iter().find(|r| r.raw.uri == "main.md").unwrap();
@@ -1494,7 +1274,7 @@ This is test content."#;
         assert_eq!(
             walkthrough_resource.raw.description,
             Some(
-                "Specification for creating interactive code walkthroughs with XML elements"
+                "Specification for creating interactive code walkthroughs with code block elements"
                     .to_string()
             )
         );
@@ -1506,7 +1286,7 @@ This is test content."#;
         assert_eq!(coding_resource.raw.name, "Coding Guidelines");
         assert_eq!(
             coding_resource.raw.description,
-            Some("Development best practices and standards for the Symposium project".to_string())
+            Some("Development best practices and standards for the Socratic Shell project".to_string())
         );
     }
 

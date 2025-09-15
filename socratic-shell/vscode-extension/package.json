@@ -1,10 +1,9 @@
 {
   "name": "socratic-shell",
   "displayName": "Socratic Shell",
-  "description": "AI-powered code walkthroughs and MCP server integration for enhanced development workflows",
+  "description": "",
   "version": "0.1.0",
   "publisher": "socratic-shell",
-  "icon": "logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/socratic-shell/symposium.git"
@@ -85,28 +84,11 @@
           "id": "socratic-shell.walkthrough",
           "name": "Walkthrough",
           "type": "webview"
-        },
-        {
-          "id": "socratic-shell.syntheticPR",
-          "name": "Synthetic PR",
-          "type": "tree"
         }
       ]
     },
     "menus": {
-      "view/title": [
-        {
-          "command": "socratic-shell.toggleComments",
-          "when": "view == dialectic.syntheticPR",
-          "group": "navigation"
-        }
-      ],
       "comments/commentThread/context": [
-        {
-          "command": "socratic-shell.addComment",
-          "group": "inline@1",
-          "when": "commentController == dialectic-synthetic-pr"
-        },
         {
           "command": "socratic-shell.addWalkthroughComment",
           "group": "inline@1",
