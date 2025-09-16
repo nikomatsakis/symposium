@@ -1,35 +1,34 @@
 import Foundation
 import AppKit
 
-/// Tracks and positions windows in a tiled grid layout
+/// Tracks and positions windows in a tiled grid layout with stacked positions
 struct WindowTileTracker {
     private let tileManager: WindowTileManager
-    private var visibleTaskspaceManager: VisibleTaskspaceManager
+    private var gridStackManager: GridStackManager
     
-    init(taskspaces: [UUID]) {
+    init() {
         self.tileManager = WindowTileManager()
-        self.visibleTaskspaceManager = VisibleTaskspaceManager()
-        // Initialize with taskspaces
-        for taskspaceId in taskspaces {
-            self.visibleTaskspaceManager.addTaskspace(taskspaceId)
-        }
+        self.gridStackManager = GridStackManager()
     }
     
-    /// Add a taskspace to the visible list and reposition grid
-    mutating func addTaskspace(_ taskspaceId: UUID) {
-        visibleTaskspaceManager.addTaskspace(taskspaceId)
+    /// Add a taskspace window to the grid
+    mutating func addWindow(_ windowId: UUID) {
+        gridStackManager.addWindow(windowId)
+    }
+    
+    /// Remove a taskspace window from the grid
+    mutating func removeWindow(_ windowId: UUID) {
+        gridStackManager.removeWindow(windowId)
     }
     
     /// Activate a taskspace and reposition all windows in grid
-    mutating func activateTaskspace(_ taskspaceId: UUID, windowMappings: [UUID: CGWindowID], panelWidth: CGFloat) -> Bool {
-        visibleTaskspaceManager.activateTaskspace(taskspaceId)
+    mutating func activateWindow(_ windowId: UUID, windowMappings: [UUID: CGWindowID], panelWidth: CGFloat) -> Bool {
+        gridStackManager.activateWindow(windowId)
         return positionWindowsInGrid(windowMappings: windowMappings, panelWidth: panelWidth)
     }
     
     /// Position all visible windows in calculated grid layout
     private func positionWindowsInGrid(windowMappings: [UUID: CGWindowID], panelWidth: CGFloat) -> Bool {
-        let visibleTaskspaces = visibleTaskspaceManager.visible
-        
         // Get screen dimensions
         guard let screen = NSScreen.main else { return false }
         let screenFrame = screen.frame
@@ -42,20 +41,19 @@ struct WindowTileTracker {
             height: screenFrame.height
         )
         
-        // Calculate grid layout
-        let gridRects = tileManager.calculateTileLayout(
-            visibleTaskspaces: visibleTaskspaces.count,
-            availableArea: availableArea
-        )
+        // Calculate grid layout bounds
+        let gridBounds = gridStackManager.calculateGridBounds(availableArea: availableArea)
         
-        // Position each visible window
+        // Position each visible window (front of each stack)
         var successCount = 0
-        for (index, taskspaceId) in visibleTaskspaces.enumerated() {
-            guard index < gridRects.count,
-                  let windowID = windowMappings[taskspaceId] else { continue }
+        let visibleWindows = gridStackManager.getVisibleWindows()
+        
+        for (index, windowId) in visibleWindows.enumerated() {
+            guard index < gridBounds.count,
+                  let windowCGID = windowMappings[windowId] else { continue }
             
-            let rect = gridRects[index]
-            if WindowPositioner.positionWindow(windowID: windowID, at: rect) {
+            let rect = gridBounds[index]
+            if WindowPositioner.positionWindow(windowID: windowCGID, at: rect) {
                 successCount += 1
             }
         }
@@ -63,13 +61,23 @@ struct WindowTileTracker {
         return successCount > 0
     }
     
-    /// Get current visible taskspaces
-    func getVisibleTaskspaces() -> [UUID] {
-        return visibleTaskspaceManager.visible
+    /// Get current visible windows (front of each stack)
+    func getVisibleWindows() -> [UUID] {
+        return gridStackManager.getVisibleWindows()
     }
     
-    /// Get count of visible taskspaces
+    /// Get count of visible windows
     func getVisibleCount() -> Int {
-        return visibleTaskspaceManager.visible.count
+        return gridStackManager.getVisibleWindows().count
+    }
+    
+    /// Get total count of all windows in grid
+    func getTotalCount() -> Int {
+        return gridStackManager.totalWindowCount
+    }
+    
+    /// Get number of grid positions
+    func getPositionCount() -> Int {
+        return gridStackManager.positionCount
     }
 }
