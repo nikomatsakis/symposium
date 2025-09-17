@@ -1,7 +1,18 @@
 import Foundation
 import AppKit
 
-/// Manages grid positions with stacked windows for tile mode
+/// Manages a dynamic grid of window stacks for tile mode
+///
+/// This struct implements a flexible tiling system where:
+/// - Grid positions grow dynamically from 0 to maxGridPositions (currently 4)
+/// - Each grid position can stack multiple windows (back-to-front order)
+/// - Layout adapts based on position count: 1→full screen, 2→split, 3→L-shape, 4→2x2
+/// - New windows create positions until max, then stack in least crowded position
+/// - Empty positions are automatically cleaned up when windows close
+/// - Only the front window of each stack is visible and positioned
+///
+/// Example: With 3 windows, you get 3 grid positions each with 1 window.
+/// With 6 windows at max=4, you get 4 positions with 2 windows stacked in some positions.
 struct GridStackManager {
     private var gridPositions: [[UUID]] = []  // Each array is a stack (back-to-front)
     private let maxGridPositions: Int = 4
@@ -24,13 +35,36 @@ struct GridStackManager {
             if let index = gridPositions[i].firstIndex(of: windowId) {
                 gridPositions[i].remove(at: index)
                 
-                // Remove empty grid positions
+                // If position is now empty, try to redistribute before removing
                 if gridPositions[i].isEmpty {
-                    gridPositions.remove(at: i)
+                    // Try to steal a window from another position to keep this position alive
+                    if let donorIndex = findDonorPosition() {
+                        // Take the second-to-top window (preserve front window visibility)
+                        let donorStack = gridPositions[donorIndex]
+                        if donorStack.count > 1 {
+                            let stolenWindow = gridPositions[donorIndex].remove(at: donorStack.count - 2)
+                            gridPositions[i].append(stolenWindow)
+                        } else {
+                            // No suitable donor, remove empty position
+                            gridPositions.remove(at: i)
+                        }
+                    } else {
+                        // No donors available, remove empty position
+                        gridPositions.remove(at: i)
+                    }
                 }
                 break
             }
         }
+    }
+    
+    /// Find a position with multiple windows that can donate one
+    private func findDonorPosition() -> Int? {
+        // Find position with most windows (and at least 2)
+        return gridPositions.enumerated()
+            .filter { $0.element.count > 1 }
+            .max { $0.element.count < $1.element.count }?
+            .offset
     }
     
     /// Activate a window, bringing it to the front of its stack
