@@ -13,9 +13,13 @@
 # Design and implementation
 
 - [Implementation Overview](./design/implementation-overview.md)
+- [mdbook Conventions](./design/mdbook-conventions.md)
+- [Persistent Agent Sessions](./design/persistent-agent-sessions.md)
 - [Guidance and Initialization](./design/guidance-and-initialization.md)
 - [Taskspace Deletion System](./design/taskspace-deletion.md)
 - [IPC Communication and Daemon Architecture](./design/daemon.md)
+    - [IPC message type reference](./design/ipc_message_type_reference.md)
+- [Agent manager](./design/agent-manager.md)
 - [Socratic Shell MCP server + IDE extension specifics]()
     - [MCP Server Tools](./design/mcp-server.md)
         - [IDE Integration Tools](./design/mcp-tools/ide-integration.md)

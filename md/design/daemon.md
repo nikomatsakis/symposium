@@ -1,8 +1,8 @@
-# Daemon Message Bus Architecture
+# Daemon Message Bus Architecture ![Implemented](https://img.shields.io/badge/status-implemented-green) ![Experimental](https://img.shields.io/badge/stability-experimental-orange)
 
-The daemon message bus serves as the central communication hub that routes messages between MCP servers and VSCode extensions across multiple windows. It eliminates the need for direct connections while enabling intelligent message routing based on terminal capabilities.
+The daemon message bus serves as the central communication hub that routes messages between MCP servers and VSCode extensions across multiple windows. It eliminates the need for direct connections while enabling intelligent message routing, buffering, and replay capabilities.
 
-## Architecture Overview
+## Architecture Overview ![Implemented](https://img.shields.io/badge/status-implemented-green)
 
 ```mermaid
 graph TB
@@ -12,6 +12,7 @@ graph TB
     DAEMON[socratic-shell-mcp daemon<br/>Auto-spawned if needed]
     SOCKET[Unix Socket<br>/tmp/symposium-daemon.sock]
     AGENT[Coding agent like<br>Claude Code or Q CLI]
+    BUFFER[(Message Buffer<br/>Per Client)]
     
     subgraph "Client Processes"
         CLIENT2[socratic-shell-mcp client<br/>spawned by OS X App]
@@ -27,13 +28,136 @@ graph TB
 
     AGENT -- starts --> MCP
     
-    DAEMON -->|broadcasts all messages<br/>to all clients| SOCKET
+    DAEMON -->|broadcasts + buffers| SOCKET
+    DAEMON --> BUFFER
     
     style DAEMON fill:#e1f5fe
     style SOCKET fill:#f3e5f5
     style CLIENT1 fill:#fff2cc
     style CLIENT2 fill:#fff2cc
     style AGENT fill:#f0f0f0,stroke:#999,stroke-dasharray: 5 5
+    style BUFFER fill:#e8f5e8
+```
+
+## Message Targeting and Routing
+
+## Message Targeting and Routing ![Implemented](https://img.shields.io/badge/status-implemented-green)
+
+### Hybrid Directory + PID Approach
+The daemon uses intelligent message targeting to support both synchronous and persistent agents:
+
+```typescript
+{{#include ../../socratic-shell/vscode-extension/src/ipc.ts:ipc_message}}
+```
+
+### Client-Side Filtering Logic
+VSCode extensions filter incoming messages using hybrid directory + PID matching:
+
+```typescript
+{{#include ../../socratic-shell/vscode-extension/src/ipc.ts:is_message_for_our_window}}
+```
+
+### Benefits of Hybrid Approach
+- **Universal Compatibility**: Works with both synchronous (terminal-based) and persistent (tmux-based) agents
+- **Precise When Possible**: Uses PID matching when available for accuracy
+- **Robgust Fallback**: Directory matching works across all execution models
+- **Multi-Window Safe**: Prevents cross-window message leakage
+
+### Sender Information by Component
+
+Different components populate sender information differently:
+
+**MCP Server (Agent Messages)**:
+```typescript
+sender: {
+    workingDirectory: "/path/to/workspace",  // Current working directory
+    taskspaceUuid: "task-ABC123",           // Extracted from directory structure
+    shellPid: 12345                        // Terminal shell PID (if available)
+}
+```
+
+**VSCode Extension Messages**:
+```typescript
+sender: {
+    workingDirectory: vscode.workspace.workspaceFolders[0].uri.fsPath,  // First workspace folder
+    taskspaceUuid: getCurrentTaskspaceUuid() || undefined,  // Extracted from directory structure (if available)
+    shellPid: undefined                         // Extensions don't provide shell PID
+}
+```
+
+**Daemon Shutdown Messages**:
+```typescript
+sender: {
+    workingDirectory: "/tmp",               // Generic path for daemon messages
+    taskspaceUuid: undefined,
+    shellPid: undefined                     // No specific PID for daemon messages
+}
+```
+
+The daemon sends `reload_window` messages to all clients when it shuts down.
+
+## Message Buffering and Replay ![Planned](https://img.shields.io/badge/status-planned-blue)
+
+### Buffering Architecture
+The daemon implements per-client message buffering to handle disconnections gracefully:
+
+```rust
+struct DaemonState {
+    clients: HashMap<ClientId, ClientConnection>,
+    message_buffers: HashMap<ClientId, VecDeque<IPCMessage>>,
+    buffer_limits: BufferConfig,
+}
+
+struct BufferConfig {
+    max_messages_per_client: usize,  // Default: 1000
+    message_ttl: Duration,           // Default: 5 minutes
+    eviction_policy: EvictionPolicy, // LRU, FIFO, etc.
+}
+```
+
+### Buffering Behavior
+1. **Message Routing**: When a message arrives, daemon attempts to deliver to target clients
+2. **Buffer on Disconnect**: If target client is disconnected, message goes to their buffer
+3. **Buffer Limits**: Enforce size and TTL limits to prevent memory exhaustion
+4. **Replay on Reconnect**: When client reconnects, replay all buffered messages in order
+5. **Buffer Cleanup**: Remove expired messages and enforce size limits
+
+### Use Cases for Buffering
+- **Agent Progress Updates**: Persistent agents can report progress while VSCode is closed
+- **User Attention Signals**: `signal_user` messages buffered until VSCode reconnects
+- **Taskspace Events**: Spawn/update notifications preserved across disconnections
+- **Development Workflow**: Daemon restarts don't lose in-flight messages
+
+### Buffering Implementation
+```rust
+impl MessageBus {
+    async fn route_message(&mut self, message: IPCMessage) -> Result<()> {
+        let target_clients = self.find_target_clients(&message).await?;
+        
+        for client_id in target_clients {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                if client.is_connected() {
+                    // Direct delivery
+                    client.send_message(message.clone()).await?;
+                } else {
+                    // Buffer for later replay
+                    self.buffer_message(client_id, message.clone()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    async fn handle_client_reconnect(&mut self, client_id: ClientId) -> Result<()> {
+        // Replay all buffered messages for this client
+        if let Some(buffer) = self.message_buffers.get_mut(&client_id) {
+            while let Some(message) = buffer.pop_front() {
+                self.clients[&client_id].send_message(message).await?;
+            }
+        }
+        Ok(())
+    }
+}
 ```
 
 ## Binary and Process Structure
@@ -63,8 +187,13 @@ The daemon creates a Unix domain socket at `/tmp/symposium-daemon.sock` for IPC 
 - See: `socratic-shell/mcp-server/src/main.rs` - subcommands for `client`, `daemon` modes
 - See: `socratic-shell/vscode-extension/src/extension.ts` - spawns `socratic-shell-mcp client` process
 
-**Simple broadcast model**: Daemon forwards every message to all connected clients. No parsing, filtering, or routing logic in the daemon itself.
-- See: `socratic-shell/mcp-server/src/daemon.rs` - `broadcast_to_clients()` function
+**Intelligent message routing**: Daemon uses hybrid directory + PID targeting to route messages accurately across different agent execution models.
+- Supports both synchronous (terminal-based) and persistent (tmux-based) agents
+- Directory-based matching with PID precision when available
+
+**Message buffering and replay**: Daemon buffers messages when target clients are disconnected and replays them on reconnection.
+- Prevents message loss during VSCode restarts or network issues
+- Essential for persistent agents that may outlive VSCode sessions
 
 **Message format**: One JSON document per line over Unix domain socket at `/tmp/symposium-daemon.sock`.
 - See: `socratic-shell/mcp-server/src/daemon.rs` - socket creation and message handling
@@ -73,5 +202,16 @@ The daemon creates a Unix domain socket at `/tmp/symposium-daemon.sock` for IPC 
 **Automatic lifecycle**: Clients auto-spawn daemon if needed. Daemon auto-terminates after 30s idle. During development, `cargo setup --dev` kills daemon and sends `reload_window` to trigger VSCode reloads.
 - See: `socratic-shell/mcp-server/src/daemon.rs` - `run_client()` spawns daemon if needed
 - See: `setup/src/dev_setup.rs` - kills existing daemons during development
+
+## Future Enhancements
+
+### HTTP-Based Communication
+[Experiment 1](../work-in-progress/big-picture/experiments/experiment-1-http-buffering-daemon.md) explores migrating from Unix sockets to HTTP for improved debugging and cross-platform compatibility.
+
+### Persistent Message Storage
+Buffered messages could be persisted to disk for daemon restart resilience, though this adds complexity.
+
+### Advanced Routing
+More sophisticated routing based on message content, client capabilities, or user preferences.
 
 See [Communication Protocol](./protocol.md) for detailed message format specifications.

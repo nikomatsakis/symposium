@@ -23,6 +23,7 @@ pub struct PresentWalkthroughParams {
 // ANCHOR_END: present_walkthrough_params
 
 /// Parameters for log messages sent via IPC
+// ANCHOR: log_params
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LogParams {
     /// Log level
@@ -31,6 +32,7 @@ pub struct LogParams {
     /// Log message content
     pub message: String,
 }
+// ANCHOR_END: log_params
 
 /// Log levels for IPC communication
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -85,10 +87,12 @@ pub struct GetSelectionResult {
 }
 
 /// Payload for Polo discovery messages (MCP server announces presence)
+// ANCHOR: polo_payload
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PoloPayload {
     // Shell PID is now at top level in IPCMessage
 }
+// ANCHOR_END: polo_payload
 
 /// Payload for Goodbye discovery messages (MCP server announces departure)
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -123,23 +127,42 @@ pub struct ResponsePayload {
     pub data: Option<serde_json::Value>,
 }
 
-/// IPC message sent from MCP server to VSCode extension
+/// Sender information for message routing
+// ANCHOR: message_sender
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct IPCMessage {
-    /// Shell PID for routing to correct VSCode window (optional for response messages)
+pub struct MessageSender {
+    /// Working directory - always present for reliable matching
+    #[serde(rename = "workingDirectory")]
+    pub working_directory: String,
+
+    /// Optional taskspace UUID for taskspace-specific routing
+    #[serde(rename = "taskspaceUuid")]
+    pub taskspace_uuid: Option<String>,
+
+    /// Optional shell PID - only when VSCode parent found
     #[serde(rename = "shellPid")]
     pub shell_pid: Option<u32>,
+}
+// ANCHOR_END: message_sender
 
+/// IPC message sent from MCP server to VSCode extension
+// ANCHOR: ipc_message
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IPCMessage {
     /// Message type identifier
     #[serde(rename = "type")]
     pub message_type: IPCMessageType,
 
-    /// Message payload - for store_reference: { key: string, value: arbitrary_json }
-    pub payload: serde_json::Value,
-
     /// Unique message ID for response tracking
     pub id: String,
+
+    /// Sender information for routing
+    pub sender: MessageSender,
+
+    /// Message payload - for store_reference: { key: string, value: arbitrary_json }
+    pub payload: serde_json::Value,
 }
+// ANCHOR_END: ipc_message
 
 /// IPC message types
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -200,6 +223,7 @@ pub struct StoreReferencePayload {
 
 
 /// Payload for user feedback messages from VSCode extension
+// ANCHOR: user_feedback_payload
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserFeedbackPayload {
     pub review_id: String,
@@ -211,6 +235,7 @@ pub struct UserFeedbackPayload {
     pub additional_notes: Option<String>,
     pub context_lines: Option<Vec<String>>,
 }
+// ANCHOR_END: user_feedback_payload
 
 /// Parameters for presenting a review to the user
 #[derive(Debug, Clone, Deserialize, Serialize)]

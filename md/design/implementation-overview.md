@@ -8,17 +8,21 @@ Symposium is a "meta-IDE" that orchestrates multiple AI agent workspaces through
 graph TB
     A[Symposium App] -->|IPC via Unix Socket| B[Daemon]
     C[MCP Server] -->|IPC via Unix Socket| B
-    D[VSCode Extension] -->|Launches in Terminal| E[Claude Code/Q CLI]
+    D[VSCode Extension] -->|Launches Agent| AM[Agent Manager]
+    AM -->|tmux Sessions| E[Claude Code/Q CLI]
     E -->|Loads and Connects| C
     A -->|Window Management| F[VSCode Windows]
     A -->|Accessibility APIs| G[Other App Windows]
     F -->|Extension| D
+    AM -->|Persists| H[~/.symposium/agent-sessions.json]
     
     style A fill:#e1f5fe
     style B fill:#f3e5f5
     style C fill:#e8f5e8
     style D fill:#fff3e0
     style E fill:#e8f5e8
+    style AM fill:#f3e5f5
+    style H fill:#e8f5e8
 ```
 
 ## Architecture Principles
@@ -63,6 +67,12 @@ All views observe AppDelegate via `@EnvironmentObject` rather than holding direc
 - **Screenshot Capture**: Uses ScreenCaptureKit to create window thumbnails for the panel interface
 - **IPC Communication**: Listens on Unix socket for MCP server commands
 - **Main UI**: Panel interface showing agentspace overviews with tiling controls
+
+### [Agent Manager](./agent-manager.md) (Rust)
+- **Persistent Sessions**: Manages long-running AI agent processes using tmux sessions
+- **Session Lifecycle**: Handles spawn, attach, detach, and kill operations for agent sessions
+- **Background Execution**: Enables agents to run independently of terminal sessions
+- **State Persistence**: Tracks session metadata in `~/.symposium/agent-sessions.json`
 
 ### Daemon (Node.js/TypeScript)
 - **Communication Hub**: Central IPC coordinator between Symposium app and MCP servers
