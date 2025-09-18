@@ -139,7 +139,7 @@ pub struct IPCCommunicator {
     reference_store: Arc<crate::reference_store::ReferenceStore>,
     
     /// New actor-based dispatch system (for marco/polo messages initially)
-    dispatch_handle: Option<crate::actor::DispatchHandle>,
+    dispatch_handle: crate::actor::DispatchHandle,
 
     /// When true, disables actual IPC communication and uses only local logging.
     /// Used during unit testing to avoid requiring a running VSCode extension.
@@ -181,8 +181,7 @@ impl IPCCommunicator {
             );
 
             // Create dispatch actor with client channels
-            let handle = crate::actor::DispatchHandle::new(from_daemon_rx, to_daemon_tx);
-            Some(handle)
+            crate::actor::DispatchHandle::new(from_daemon_rx, to_daemon_tx)
         };
 
         Ok(Self {
