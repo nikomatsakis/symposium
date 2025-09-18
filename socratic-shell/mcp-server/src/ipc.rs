@@ -4,9 +4,8 @@
 //! Ports the logic from server/src/ipc.ts to Rust with cross-platform support.
 
 use crate::types::{
-    FindAllReferencesPayload, GetSelectionResult, GoodbyePayload, IPCMessage, IPCMessageType,
-    LogLevel, LogParams, MessageSender, PoloPayload, ResolveSymbolByNamePayload, ResponsePayload,
-    UserFeedbackPayload,
+    FindAllReferencesPayload, GetSelectionResult, IPCMessage, IPCMessageType, LogLevel,
+    MessageSender, ResolveSymbolByNamePayload, ResponsePayload,
 };
 use anyhow::Context;
 use futures::FutureExt;
