@@ -3,10 +3,10 @@
 //! Handles Unix socket/named pipe communication with the VSCode extension.
 //! Ports the logic from server/src/ipc.ts to Rust with cross-platform support.
 
-use crate::types::{
+use crate::{constants::DAEMON_SOCKET_PREFIX, types::{
     FindAllReferencesPayload, GetSelectionMessage, GetSelectionResult,
     LogLevel, ResolveSymbolByNamePayload,
-};
+}};
 use anyhow::Context;
 
 use serde_json;
@@ -130,7 +130,7 @@ impl IPCCommunicator {
         let dispatch_handle = {
             // Create client connection to daemon
             let (to_daemon_tx, from_daemon_rx) = crate::actor::spawn_client(
-                "dialectic".to_string(), // socket prefix
+                DAEMON_SOCKET_PREFIX,
                 true,                    // auto_start daemon
                 options,                 // pass options for daemon spawning
             );
