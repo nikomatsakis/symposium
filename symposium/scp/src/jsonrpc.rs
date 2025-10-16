@@ -6,6 +6,7 @@ use futures::AsyncBufReadExt as _;
 use futures::AsyncRead;
 use futures::AsyncWrite;
 use futures::AsyncWriteExt as _;
+use futures::Stream;
 use futures::StreamExt;
 use futures::channel::mpsc;
 use futures::channel::oneshot;
@@ -13,16 +14,33 @@ use futures::io::BufReader;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-#[must_use]
+mod actors;
+
 pub struct JsonRpcServer {
+    connection: JsonRpcConnection,
+}
+
+impl JsonRpcServer {
+    pub fn new(
+        outgoing_bytes: impl AsyncWrite + 'static,
+        incoming_bytes: impl AsyncRead + 'static,
+    ) -> Self {
+        let connection = JsonRpcConnection::new(outgoing_bytes, incoming_bytes);
+        Self { connection }
+    }
+}
+
+/// Create a JsonRpcConnection. This can be the basis for either a server or a client.
+#[must_use]
+pub struct JsonRpcConnection {
     outgoing_bytes: Pin<Box<dyn AsyncWrite>>,
     incoming_bytes: Pin<Box<dyn AsyncRead>>,
     outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
     outgoing_tx: mpsc::UnboundedSender<OutgoingMessage>,
-    layers: Vec<Box<dyn JsonRpcReceiver>>,
+    layers: Vec<Box<dyn JsonRpcHandler>>,
 }
 
-impl JsonRpcServer {
+impl JsonRpcConnection {
     pub fn new(
         outgoing_bytes: impl AsyncWrite + 'static,
         incoming_bytes: impl AsyncRead + 'static,
@@ -37,211 +55,74 @@ impl JsonRpcServer {
         }
     }
 
-    pub fn add_layer(mut self, layer: impl JsonRpcReceiver + 'static) -> Self {
+    /// Adds a message handler that will have the opportunity to process incoming messages.
+    /// When a new message arrives, handlers are tried in the order they were added, and
+    /// the first to "claim" the message "wins".
+    pub fn add_handler(mut self, layer: impl JsonRpcHandler + 'static) -> Self {
         self.layers.push(Box::new(layer));
         self
     }
 
-    pub async fn execute(self) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_with(async |_| Ok(())).await
+    pub fn json_rpc_cx(&self) -> JsonRpcCx {
+        JsonRpcCx::new(self.outgoing_tx)
     }
 
-    pub async fn execute_with(
-        self,
-        op: impl AsyncFnOnce(&JsonRpcCx) -> Result<(), Box<dyn std::error::Error>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    /// Runs a server that listens for incoming requests and handles them according to the added handlers.
+    pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
         let (reply_tx, reply_rx) = mpsc::unbounded();
+        let (incoming_cancel_tx, incoming_cancel_rx) = oneshot::channel();
         let json_rpc_cx = JsonRpcCx::new(self.outgoing_tx);
-        let (r1, r2, r3, r4) = futures::join!(
-            Self::outgoing_actor(self.outgoing_rx, reply_tx.clone(), self.outgoing_bytes),
-            Self::incoming_actor(&json_rpc_cx, self.incoming_bytes, reply_tx, self.layers),
-            Self::reply_actor(reply_rx),
-            op(&json_rpc_cx),
+        let (r1, r2, r3) = futures::join!(
+            actors::outgoing_actor(
+                self.outgoing_rx,
+                reply_tx.clone(),
+                self.outgoing_bytes,
+                incoming_cancel_rx
+            ),
+            actors::incoming_actor(
+                &json_rpc_cx,
+                self.incoming_bytes,
+                reply_tx,
+                incoming_cancel_tx,
+                self.layers
+            ),
+            actors::reply_actor(reply_rx),
         );
         r1?;
         r2?;
         r3?;
-        r4?;
         Ok(())
     }
 
-    /// The "reply actor" manages a queue of pending replies.
-    async fn reply_actor(
-        mut reply_rx: mpsc::UnboundedReceiver<ReplyMessage>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Map from the `id` to a oneshot sender where we should send the value.
-        let mut map = HashMap::new();
+    /// Serves messages over the connection until `main_fn` returns, then the connection will be dropped.
+    /// Incoming messages will be handled according to the added handlers.
+    ///
+    /// [`main_fn`] is invoked with a [`JsonRpcCx`] that allows you to send requests over the connection
+    /// and receive responses.
+    ///
+    /// Errors if the server terminates before `main_fn` returns.
+    pub async fn with_client(self, main_fn: impl AsyncFnOnce(JsonRpcCx) -> Result<(), Box<dyn std::error::Error>>) -> Result<(), Box<dyn std::error::Error>> {
+        let cx = self.json_rpc_cx();
 
-        while let Some(message) = reply_rx.next().await {
-            match message {
-                ReplyMessage::Subscribe(id, message_tx) => {
-                    // total hack: id's don't implement Eq
-                    let id = serde_json::to_value(&id).unwrap();
-                    map.insert(id, message_tx);
-                }
-                ReplyMessage::Dispatch(id, value) => {
-                    let id = serde_json::to_value(&id).unwrap();
-                    if let Some(message_tx) = map.remove(&id) {
-                        // If the receiver is no longer interested in the reply,
-                        // that's ok with us.
-                        let _: Result<_, _> = message_tx.send(value);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
+        // Run the server + the main function until one terminates.
+        // We EXPECT the main function to be the one to terminate
+        // except in case of error.
+        let result = futures::future::select(
+            self.serve(),
+            main_fn(cx),
+        ).await;
 
-    /// Parsing incoming messages from `incoming_bytes`.
-    /// Each message will be dispatched to the appropriate layer.
-    async fn incoming_actor(
-        json_rpc_cx: &JsonRpcCx,
-        incoming_bytes: Pin<Box<dyn AsyncRead>>,
-        reply_tx: mpsc::UnboundedSender<ReplyMessage>,
-        layers: Vec<Box<dyn JsonRpcReceiver>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let buffered_incoming_bytes = BufReader::new(incoming_bytes);
-        let mut incoming_lines = buffered_incoming_bytes.lines();
-        while let Some(line) = incoming_lines.next().await {
-            let line = line?;
-            let message: Result<jsonrpcmsg::Message, _> = serde_json::from_str(&line);
-            match message {
-                Ok(msg) => match msg {
-                    jsonrpcmsg::Message::Request(request) => {
-                        Self::dispatch_request(json_rpc_cx, request, &layers)
-                            .map_err(|err| err.message)?
-                    }
-                    jsonrpcmsg::Message::Response(response) => {
-                        if let Some(id) = response.id {
-                            if let Some(value) = response.result {
-                                reply_tx.unbounded_send(ReplyMessage::Dispatch(id, Ok(value)))?;
-                            } else if let Some(error) = response.error {
-                                reply_tx.unbounded_send(ReplyMessage::Dispatch(id, Err(error)))?;
-                            }
-                        }
-                    }
-                },
-                Err(_) => {
-                    json_rpc_cx
-                        .send_error_notification(jsonrpcmsg::Error::parse_error())
-                        .map_err(|err| format!("failed to send error: {}", err.message))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Dispatches a JSON-RPC request to the appropriate layer.
-    fn dispatch_request(
-        json_rpc_cx: &JsonRpcCx,
-        request: jsonrpcmsg::Request,
-        layers: &[Box<dyn JsonRpcReceiver>],
-    ) -> Result<(), jsonrpcmsg::Error> {
-        if let Some(id) = request.id {
-            // Create the respond object with the request id
-            let mut request_cx = JsonRpcRequestCx::new(json_rpc_cx.clone(), id);
-
-            // Search for a layer that can handle this kind of request
-            for layer in layers {
-                match layer.try_handle_request(&request.method, &request.params, request_cx) {
-                    Ok(()) => return Ok(()),
-                    Err(t) => request_cx = t,
-                }
+        match result {
+            Either::Left((Ok(()), _)) => {
+                Err(format!("server unexpectedly shut down"))
             }
 
-            // If none found, send an error response
-            request_cx.respond_with_error(jsonrpcmsg::Error::method_not_found())
-        } else {
-            // Search for a layer that can handle this kind of notification
-            for layer in layers {
-                match layer.try_handle_notification(&request.method, &request.params) {
-                    Ok(()) => return Ok(()),
-                    Err(()) => (),
-                }
-            }
-
-            // If none found, ignore.
-            Ok(())
+            Either::Left((result, _)) | Either::Right((result, _)) => result,
         }
     }
 
-    /// Actor processing outgoing messages and serializing them onto the transport.
-    async fn outgoing_actor(
-        mut outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
-        reply_tx: mpsc::UnboundedSender<ReplyMessage>,
-        mut outgoing_bytes: Pin<Box<dyn AsyncWrite>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        while let Some(message) = outgoing_rx.next().await {
-            // Create the message to be sent over the transport
-            let json_rpc_message = match message {
-                OutgoingMessage::Request {
-                    method,
-                    params,
-                    response_tx: response_rx,
-                } => {
-                    // Generate a fresh UUID to use for the request id
-                    let uuid = Uuid::new_v4();
-                    let id = jsonrpcmsg::Id::String(uuid.to_string());
-
-                    // Record where the reply should be sent once it arrives.
-                    reply_tx.unbounded_send(ReplyMessage::Subscribe(id.clone(), response_rx))?;
-
-                    jsonrpcmsg::Message::Request(jsonrpcmsg::Request::new_v2(
-                        method,
-                        params,
-                        Some(id),
-                    ))
-                }
-                OutgoingMessage::Notification { method, params } => {
-                    jsonrpcmsg::Message::Request(jsonrpcmsg::Request::new_v2(method, params, None))
-                }
-                OutgoingMessage::Response {
-                    id,
-                    response: Ok(value),
-                } => {
-                    jsonrpcmsg::Message::Response(jsonrpcmsg::Response::success_v2(value, Some(id)))
-                }
-                OutgoingMessage::Response {
-                    id,
-                    response: Err(error),
-                } => jsonrpcmsg::Message::Response(jsonrpcmsg::Response::error_v2(error, Some(id))),
-                OutgoingMessage::Error { error } => {
-                    jsonrpcmsg::Message::Response(jsonrpcmsg::Response::error_v2(error, None))
-                }
-            };
-
-            match serde_json::to_vec(&json_rpc_message) {
-                Ok(bytes) => {
-                    outgoing_bytes.write_all(&bytes).await?;
-                }
-
-                Err(_) => {
-                    match json_rpc_message {
-                        jsonrpcmsg::Message::Request(_request) => {
-                            // If we failed to serialize a request,
-                            // just ignore it.
-                            //
-                            // Q: (Maybe it'd be nice to "reply" with an error?)
-                        }
-                        jsonrpcmsg::Message::Response(response) => {
-                            // If we failed to serialize a *response*,
-                            // send an error in response.
-                            outgoing_bytes
-                                .write_all(
-                                    &serde_json::to_vec(&jsonrpcmsg::Response::error(
-                                        jsonrpcmsg::Error::internal_error(),
-                                        response.id,
-                                    ))
-                                    .unwrap(),
-                                )
-                                .await?;
-                        }
-                    }
-                }
-            };
-        }
-        Ok(())
-    }
+    /// Runs a server that listens for incoming requests and
+    pub async fn with_client(self, main_fn: impl AsyncFnOnce(JsonRpcCx) -> Result<(), Box<dyn std::error::Error>>) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Message sent to the reply management actor
@@ -288,17 +169,29 @@ enum OutgoingMessage {
 
     /// Send a generalized error message
     Error { error: jsonrpcmsg::Error },
+
+    /// Close down the connection
+    Shutdown,
 }
 
-pub trait JsonRpcReceiver {
-    fn try_handle_request(
+/// Handlers are invoked when new messages arrive at the [`JsonRpcServer`].
+/// They have a chance to inspect the method and parameters and decide whether to "claim" the request
+/// (i.e., handle it). If they do not claim it, the request will be passed to the next handler.
+pub trait JsonRpcHandler {
+    /// Attempt to claim the incoming request (`method`/`params`).
+    /// Returns `Ok(())` if the request was claimed, `Err(cx)` if not.
+    /// If the request was claimed, the handler should send a response using the provided context.
+    /// If the request is not claimed, the handler should return the request context so it can be passed to the next handler.
+    fn claim_request(
         &self,
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
         response: JsonRpcRequestCx<jsonrpcmsg::Response>,
     ) -> Result<(), JsonRpcRequestCx<jsonrpcmsg::Response>>;
 
-    fn try_handle_notification(
+    /// Attempt to claim a notification (`method`/`params`).
+    /// Returns `Ok(())` if the notification was handled, `Err(())` if not.
+    fn claim_notification(
         &self,
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
