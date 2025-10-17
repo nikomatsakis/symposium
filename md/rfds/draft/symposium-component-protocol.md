@@ -9,7 +9,7 @@ This RFD builds on the concepts introduced in [SymmACP: extending Zed's ACP to s
 Key changes:
 * Define a proxy chain architecture where components can transform ACP messages
 * Create an orchestrator that manages the proxy chain and presents as a normal ACP agent to editors
-* Establish the `_symposium/successor/*` protocol for proxies to communicate with downstream components
+* Establish the `_proxy/successor/*` protocol for proxies to communicate with downstream components
 * Enable composition without requiring editors to understand SCP internals
 
 # Status quo
@@ -39,8 +39,8 @@ flowchart LR
         P2[Proxy 2]
         Agent[ACP Agent]
 
-        P1 -->|_scp/successor/*| P2
-        P2 -->|_scp/successor/*| Agent
+        P1 -->|_proxy/successor/*| P2
+        P2 -->|_proxy/successor/*| Agent
     end
 
     Editor <-->|ACP| O
@@ -51,7 +51,7 @@ SCP defines three kinds of actors:
 
 * **Editors** spawn the orchestrator and communicate via standard ACP
 * **Orchestrator** manages the proxy chain, appears as a normal ACP agent to editors
-* **Proxies** intercept and transform messages, communicate with downstream via `_scp/successor/*` protocol
+* **Proxies** intercept and transform messages, communicate with downstream via `_proxy/successor/*` protocol
 * **Agents** provide base AI model behavior using standard ACP
 
 The orchestrator handles message routing, making the proxy chain transparent to editors. Proxies can transform requests, responses, or add side-effects without editors or agents needing SCP awareness.
@@ -63,7 +63,7 @@ SCP introduces an **orchestrator** component that sits between the editor and th
 * Spawns and manages all proxies and the final agent based on command-line configuration
 * Routes messages through the proxy chain transparently
 * Appears as a standard ACP agent to the editor
-* Handles the `_scp/successor/*` protocol messages that proxies use for downstream communication
+* Handles the `_proxy/successor/*` protocol messages that proxies use for downstream communication
 
 **From the editor's perspective**, it simply spawns one orchestrator process and communicates with it using normal ACP over stdio. The editor doesn't need to know about the proxy chain at all.
 
@@ -175,24 +175,24 @@ SCP components advertise their role during ACP initialization:
 **Agent capability:**
 Agents don't need special SCP capabilities - they're just normal ACP agents.
 
-### The `_scp/successor/{send,receive}` protocol
+### The `_proxy/successor/{send,receive}` protocol
 
 Proxies communicate with their downstream component (next proxy or agent) through special extension messages handled by the orchestrator:
 
-**`_scp/successor/send`** - Proxy wants to send a message downstream:
+**`_proxy/successor/send`** - Proxy wants to send a message downstream:
 ```json
 {
-  "method": "_scp/successor/send",
+  "method": "_proxy/successor/send",
   "params": {
     "message": <ACP_MESSAGE>
   }
 }
 ```
 
-**`_scp/successor/receive`** - Orchestrator delivers a response from downstream:
+**`_proxy/successor/receive`** - Orchestrator delivers a response from downstream:
 ```json
 {
-  "method": "_scp/successor/receive",
+  "method": "_proxy/successor/receive",
   "params": {
     "message": <ACP_MESSAGE>
   }
@@ -202,10 +202,10 @@ Proxies communicate with their downstream component (next proxy or agent) throug
 **Message flow example:**
 1. Editor sends ACP `prompt` request to orchestrator
 2. Orchestrator forwards to Proxy1 as normal ACP message
-3. Proxy1 transforms and sends `_scp/successor/send { message: <modified_prompt> }`
+3. Proxy1 transforms and sends `_proxy/successor/send { message: <modified_prompt> }`
 4. Orchestrator routes that to Proxy2 as normal ACP `prompt`
 5. Eventually reaches agent, response flows back through chain
-6. Orchestrator wraps responses in `_scp/successor/receive` going upstream
+6. Orchestrator wraps responses in `_proxy/successor/receive` going upstream
 
 **Transparent proxy pattern:**
 A pass-through proxy is trivial - just forward everything:
@@ -215,17 +215,17 @@ match message {
     AcpRequest(req) => send_to_successor(req),
 
     // Forward from successor to editor
-    ExtNotification("_scp/successor/receive", msg) => respond_to_editor(msg),
+    ExtNotification("_proxy/successor/receive", msg) => respond_to_editor(msg),
 }
 ```
 
 ### Additional Extension Messages
 
-Proxies can define their own extension messages beyond `_scp/successor/*` to provide specific capabilities. Examples might include:
+Proxies can define their own extension messages beyond `_proxy/successor/*` to provide specific capabilities. Examples might include:
 
-* **Logging/observability**: `_scp/log` messages for structured logging
-* **Metrics**: `_scp/metric` messages for tracking usage
-* **Configuration**: `_scp/config` messages for dynamic reconfiguration
+* **Logging/observability**: `_proxy/log` messages for structured logging
+* **Metrics**: `_proxy/metric` messages for tracking usage
+* **Configuration**: `_proxy/config` messages for dynamic reconfiguration
 
 The orchestrator can handle routing these messages appropriately, or they can be handled by specific proxies in the chain.
 
@@ -239,7 +239,7 @@ These extensions are beyond the scope of this initial RFD and will be defined as
 
 **Completed:**
 - ✅ SCP protocol design with orchestrator architecture
-- ✅ `_scp/successor/{send,receive}` message protocol defined
+- ✅ `_proxy/successor/{send,receive}` message protocol defined
 - ✅ Basic `scp` Rust crate with foundational types
 - ✅ Reuse of ACP's `McpServer` for process configuration
 
@@ -258,7 +258,7 @@ These extensions are beyond the scope of this initial RFD and will be defined as
 - Parse CLI arguments for proxy chain configuration
 - Spawn proxy and agent processes using tokio
 - Implement ACP protocol handling (present as agent to editor)
-- Route `_scp/successor/*` messages between proxies
+- Route `_proxy/successor/*` messages between proxies
 - Handle process lifecycle and cleanup
 
 **Key Test:** Echo through chain
