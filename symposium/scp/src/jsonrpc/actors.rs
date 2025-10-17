@@ -198,7 +198,8 @@ pub(super) async fn outgoing_actor(
         };
 
         match serde_json::to_vec(&json_rpc_message) {
-            Ok(bytes) => {
+            Ok(mut bytes) => {
+                bytes.push('\n' as u8);
                 outgoing_bytes.write_all(&bytes).await?;
             }
 

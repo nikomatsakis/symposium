@@ -7,4 +7,4 @@
 pub mod jsonrpc;
 
 pub mod acp;
-mod util;
+pub mod util;

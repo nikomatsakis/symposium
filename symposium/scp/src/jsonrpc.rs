@@ -300,7 +300,7 @@ impl JsonRpcCx {
     }
 
     /// Send an outgoing notification (no reply expected).)
-    pub fn send_notification<R>(
+    pub fn send_notification(
         &self,
         notification: impl JsonRpcNotification,
     ) -> Result<(), jsonrpcmsg::Error> {

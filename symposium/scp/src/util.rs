@@ -1,6 +1,6 @@
 use agent_client_protocol as acp;
 
-pub(crate) fn json_cast<N, M>(params: N) -> Result<M, jsonrpcmsg::Error>
+pub fn json_cast<N, M>(params: N) -> Result<M, jsonrpcmsg::Error>
 where
     N: serde::Serialize,
     M: serde::de::DeserializeOwned,

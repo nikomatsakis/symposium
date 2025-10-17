@@ -350,6 +350,6 @@ impl AcpAgentExt for JsonRpcCx {
     }
 
     fn session_update(&self, notification: SessionNotification) -> Result<(), jsonrpcmsg::Error> {
-        self.send_notification::<SessionNotification>(notification)
+        self.send_notification(notification)
     }
 }

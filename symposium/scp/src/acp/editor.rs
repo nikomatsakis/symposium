@@ -332,7 +332,7 @@ impl AcpEditorExt for JsonRpcCx {
         &self,
         session_id: impl Into<acp::SessionId>,
     ) -> Result<(), jsonrpcmsg::Error> {
-        self.send_notification::<CancelNotification>(CancelNotification {
+        self.send_notification(CancelNotification {
             session_id: session_id.into(),
             meta: None,
         })
