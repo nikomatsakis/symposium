@@ -5,7 +5,7 @@ members = [
     "symposium/scp",
     "setup",
     "md-rfd-preprocessor",
-    "ci",
+    "ci", "symposium/conductor",
 ]
 resolver = "2"
 

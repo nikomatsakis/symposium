@@ -7,6 +7,7 @@
 use scp::jsonrpc::{
     Handled, JsonRpcConnection, JsonRpcCx, JsonRpcHandler, JsonRpcNotification, JsonRpcRequestCx,
 };
+use scp::util::internal_error;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -82,8 +83,7 @@ impl JsonRpcHandler for FooHandler {
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
         response: JsonRpcRequestCx<serde_json::Value>,
-    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error>
-    {
+    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if method == "foo" {
             let request: FooRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
@@ -106,8 +106,7 @@ impl JsonRpcHandler for BarHandler {
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
         response: JsonRpcRequestCx<serde_json::Value>,
-    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error>
-    {
+    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if method == "bar" {
             let request: BarRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
@@ -146,40 +145,38 @@ async fn test_multiple_handlers_different_methods() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {e:?}");
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Test foo request
-                        let foo_response = cx
-                            .send_request(FooRequest {
-                                value: "test1".to_string(),
-                            })
-                            .recv()
-                            .await
-                            .map_err(|e| -> Box<dyn std::error::Error> {
-                                format!("Foo request failed: {:?}", e).into()
-                            })?;
-                        assert_eq!(foo_response.result, "foo: test1");
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Test foo request
+                    let foo_response = cx
+                        .send_request(FooRequest {
+                            value: "test1".to_string(),
+                        })
+                        .recv()
+                        .await
+                        .map_err(|e| -> jsonrpcmsg::Error {
+                            internal_error(format!("Foo request failed: {e:?}"))
+                        })?;
+                    assert_eq!(foo_response.result, "foo: test1");
 
-                        // Test bar request
-                        let bar_response = cx
-                            .send_request(BarRequest {
-                                value: "test2".to_string(),
-                            })
-                            .recv()
-                            .await
-                            .map_err(|e| -> Box<dyn std::error::Error> {
-                                format!("Bar request failed: {:?}", e).into()
-                            })?;
-                        assert_eq!(bar_response.result, "bar: test2");
+                    // Test bar request
+                    let bar_response = cx
+                        .send_request(BarRequest {
+                            value: "test2".to_string(),
+                        })
+                        .recv()
+                        .await
+                        .map_err(|e| -> jsonrpcmsg::Error {
+                            internal_error(format!("Bar request failed: {:?}", e))
+                        })?;
+                    assert_eq!(bar_response.result, "bar: test2");
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -215,8 +212,7 @@ impl JsonRpcHandler for TrackingHandler {
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
         response: JsonRpcRequestCx<serde_json::Value>,
-    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error>
-    {
+    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if method == "track" {
             self.handled.lock().unwrap().push(self.name.clone());
 
@@ -265,29 +261,27 @@ async fn test_handler_priority_ordering() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        let response = cx
-                            .send_request(TrackRequest {
-                                value: "test".to_string(),
-                            })
-                            .recv()
-                            .await
-                            .map_err(|e| -> Box<dyn std::error::Error> {
-                                format!("Track request failed: {:?}", e).into()
-                            })?;
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    let response = cx
+                        .send_request(TrackRequest {
+                            value: "test".to_string(),
+                        })
+                        .recv()
+                        .await
+                        .map_err(|e| {
+                            scp::util::internal_error(format!("Track request failed: {:?}", e))
+                        })?;
 
-                        // First handler should have handled it
-                        assert_eq!(response.result, "handler1: test");
+                    // First handler should have handled it
+                    assert_eq!(response.result, "handler1: test");
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -341,8 +335,7 @@ impl JsonRpcHandler for SelectiveHandler {
         method: &str,
         params: &Option<jsonrpcmsg::Params>,
         response: JsonRpcRequestCx<serde_json::Value>,
-    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error>
-    {
+    ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if method == self.method_to_handle {
             self.handled.lock().unwrap().push(method.to_string());
 
@@ -397,29 +390,27 @@ async fn test_fallthrough_behavior() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Send method2 - should fallthrough handler1 to handler2
-                        let response = cx
-                            .send_request(Method2Request {
-                                value: "fallthrough".to_string(),
-                            })
-                            .recv()
-                            .await
-                            .map_err(|e| -> Box<dyn std::error::Error> {
-                                format!("Method2 request failed: {:?}", e).into()
-                            })?;
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Send method2 - should fallthrough handler1 to handler2
+                    let response = cx
+                        .send_request(Method2Request {
+                            value: "fallthrough".to_string(),
+                        })
+                        .recv()
+                        .await
+                        .map_err(|e| {
+                            scp::util::internal_error(format!("Method2 request failed: {:?}", e))
+                        })?;
 
-                        assert_eq!(response.result, "method2: fallthrough");
+                    assert_eq!(response.result, "method2: fallthrough");
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -459,27 +450,25 @@ async fn test_no_handler_claims() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Send "bar" request which no handler claims
-                        let response_result = cx
-                            .send_request(BarRequest {
-                                value: "unclaimed".to_string(),
-                            })
-                            .recv()
-                            .await;
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Send "bar" request which no handler claims
+                    let response_result = cx
+                        .send_request(BarRequest {
+                            value: "unclaimed".to_string(),
+                        })
+                        .recv()
+                        .await;
 
-                        // Should get an error (method not found)
-                        assert!(response_result.is_err());
+                    // Should get an error (method not found)
+                    assert!(response_result.is_err());
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -567,26 +556,24 @@ async fn test_handler_claims_notification() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        cx.send_notification(EventNotification {
-                            event: "test_event".to_string(),
-                        })
-                        .map_err(|e| -> Box<dyn std::error::Error> {
-                            format!("Failed to send notification: {:?}", e).into()
-                        })?;
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    cx.send_notification(EventNotification {
+                        event: "test_event".to_string(),
+                    })
+                    .map_err(|e| {
+                        scp::util::internal_error(format!("Failed to send notification: {:?}", e))
+                    })?;
 
-                        // Give server time to process
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    // Give server time to process
+                    tokio::time::sleep(Duration::from_millis(100)).await;
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);

@@ -79,7 +79,7 @@ impl<H: JsonRpcHandler> JsonRpcConnection<H> {
     }
 
     /// Runs a server that listens for incoming requests and handles them according to the added handlers.
-    pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn serve(self) -> Result<(), jsonrpcmsg::Error> {
         let (reply_tx, reply_rx) = mpsc::unbounded();
         let json_rpc_cx = JsonRpcCx::new(self.outgoing_tx);
         futures::select!(
@@ -108,8 +108,8 @@ impl<H: JsonRpcHandler> JsonRpcConnection<H> {
     /// Errors if the server terminates before `main_fn` returns.
     pub async fn with_client(
         self,
-        main_fn: impl AsyncFnOnce(JsonRpcCx) -> Result<(), Box<dyn std::error::Error>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        main_fn: impl AsyncFnOnce(JsonRpcCx) -> Result<(), jsonrpcmsg::Error>,
+    ) -> Result<(), jsonrpcmsg::Error> {
         let cx = self.json_rpc_cx();
 
         // Run the server + the main function until one terminates.
@@ -118,7 +118,7 @@ impl<H: JsonRpcHandler> JsonRpcConnection<H> {
         let result = futures::future::select(Box::pin(self.serve()), Box::pin(main_fn(cx))).await;
 
         match result {
-            Either::Left((Ok(()), _)) => Err(format!("server unexpectedly shut down").into()),
+            Either::Left((Ok(()), _)) => Err(jsonrpcmsg::Error::internal_error()),
 
             Either::Left((result, _)) | Either::Right((result, _)) => result,
         }

@@ -116,7 +116,7 @@ async fn test_bidirectional_communication() {
 
             // Use side_b as client
             let result = side_b
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = PingRequest { value: 10 };
                     let response_future = cx.send_request(request).recv();
                     let response: Result<PongResponse, _> = response_future.await;
@@ -153,7 +153,7 @@ async fn test_request_ids() {
             });
 
             let result = client
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     // Send multiple requests and verify responses match
                     let req1 = PingRequest { value: 1 };
                     let req2 = PingRequest { value: 2 };
@@ -226,7 +226,7 @@ async fn test_out_of_order_responses() {
             });
 
             let result = client
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     // Send requests with different delays
                     // Request 1: 100ms delay
                     // Request 2: 50ms delay

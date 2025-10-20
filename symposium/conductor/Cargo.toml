@@ -1,0 +1,18 @@
+[package]
+name = "conductor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+scp = { path = "../scp" }
+agent-client-protocol = "0.4.7"
+anyhow.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3.31"
+jsonrpcmsg = "0.1.2"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util = { version = "0.7.16", features = ["compat"] }
+uuid.workspace = true
+tokio.workspace = true

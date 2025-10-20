@@ -15,13 +15,14 @@ use crate::jsonrpc::JsonRpcHandler;
 use crate::jsonrpc::JsonRpcRequestCx;
 use crate::jsonrpc::OutgoingMessage;
 use crate::jsonrpc::ReplyMessage;
+use crate::util::internal_error;
 
 use super::Handled;
 
 /// The "reply actor" manages a queue of pending replies.
 pub(super) async fn reply_actor(
     mut reply_rx: mpsc::UnboundedReceiver<ReplyMessage>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), jsonrpcmsg::Error> {
     // Map from the `id` to a oneshot sender where we should send the value.
     let mut map = HashMap::new();
 
@@ -56,39 +57,39 @@ pub(super) async fn reply_actor(
 /// - `layers`: The layers.
 ///
 /// # Returns
-/// - `Result<(), Box<dyn std::error::Error>>`: an error if something unrecoverable occurred
+/// - `Result<(), jsonrpcmsg::Error>`: an error if something unrecoverable occurred
 pub(super) async fn incoming_actor(
     json_rpc_cx: &JsonRpcCx,
     incoming_bytes: Pin<Box<dyn AsyncRead>>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
     mut handler: impl JsonRpcHandler,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), jsonrpcmsg::Error> {
     let buffered_incoming_bytes = BufReader::new(incoming_bytes);
     let mut incoming_lines = buffered_incoming_bytes.lines();
     while let Some(line) = incoming_lines.next().await {
-        let line = line?;
+        let line = line.map_err(internal_error)?;
         let message: Result<jsonrpcmsg::Message, _> = serde_json::from_str(&line);
         match message {
             Ok(msg) => match msg {
                 jsonrpcmsg::Message::Request(request) => {
-                    dispatch_request(json_rpc_cx, request, &mut handler)
-                        .await
-                        .map_err(|err| err.message)?
+                    dispatch_request(json_rpc_cx, request, &mut handler).await?
                 }
                 jsonrpcmsg::Message::Response(response) => {
                     if let Some(id) = response.id {
                         if let Some(value) = response.result {
-                            reply_tx.unbounded_send(ReplyMessage::Dispatch(id, Ok(value)))?;
+                            reply_tx
+                                .unbounded_send(ReplyMessage::Dispatch(id, Ok(value)))
+                                .map_err(internal_error)?;
                         } else if let Some(error) = response.error {
-                            reply_tx.unbounded_send(ReplyMessage::Dispatch(id, Err(error)))?;
+                            reply_tx
+                                .unbounded_send(ReplyMessage::Dispatch(id, Err(error)))
+                                .map_err(internal_error)?;
                         }
                     }
                 }
             },
             Err(_) => {
-                json_rpc_cx
-                    .send_error_notification(jsonrpcmsg::Error::parse_error())
-                    .map_err(|err| format!("failed to send error: {}", err.message))?;
+                json_rpc_cx.send_error_notification(jsonrpcmsg::Error::parse_error())?;
             }
         }
     }
@@ -141,7 +142,7 @@ pub(super) async fn outgoing_actor(
     mut outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
     mut outgoing_bytes: Pin<Box<dyn AsyncWrite>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), jsonrpcmsg::Error> {
     while let Some(message) = outgoing_rx.next().await {
         // Create the message to be sent over the transport
         let json_rpc_message = match message {
@@ -155,7 +156,9 @@ pub(super) async fn outgoing_actor(
                 let id = jsonrpcmsg::Id::String(uuid.to_string());
 
                 // Record where the reply should be sent once it arrives.
-                reply_tx.unbounded_send(ReplyMessage::Subscribe(id.clone(), response_rx))?;
+                reply_tx
+                    .unbounded_send(ReplyMessage::Subscribe(id.clone(), response_rx))
+                    .map_err(internal_error)?;
 
                 jsonrpcmsg::Message::Request(jsonrpcmsg::Request::new_v2(method, params, Some(id)))
             }
@@ -178,7 +181,10 @@ pub(super) async fn outgoing_actor(
         match serde_json::to_vec(&json_rpc_message) {
             Ok(mut bytes) => {
                 bytes.push('\n' as u8);
-                outgoing_bytes.write_all(&bytes).await?;
+                outgoing_bytes
+                    .write_all(&bytes)
+                    .await
+                    .map_err(internal_error)?;
             }
 
             Err(_) => {
@@ -200,7 +206,8 @@ pub(super) async fn outgoing_actor(
                                 ))
                                 .unwrap(),
                             )
-                            .await?;
+                            .await
+                            .map_err(internal_error)?;
                     }
                 }
             }

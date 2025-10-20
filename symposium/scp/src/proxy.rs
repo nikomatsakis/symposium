@@ -38,7 +38,7 @@
 //!     // Handle requests and notifications like any ACP component
 //! }
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example() -> Result<(), jsonrpcmsg::Error> {
 //! JsonRpcConnection::new(tokio::io::stdin(), tokio::io::stdout())
 //!     .on_receive_from_successor(MyProxyHandler)
 //!     .serve()
@@ -78,7 +78,7 @@ pub trait JsonRpcConnectionExt<H: JsonRpcHandler> {
     /// # use scp::jsonrpc::{JsonRpcConnection, JsonRpcHandler};
     /// # struct MyHandler;
     /// # impl JsonRpcHandler for MyHandler {}
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example() -> Result<(), jsonrpcmsg::Error> {
     /// JsonRpcConnection::new(tokio::io::stdin(), tokio::io::stdout())
     ///     .on_receive_from_successor(MyHandler)
     ///     .serve()

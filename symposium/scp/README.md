@@ -61,8 +61,8 @@ Handlers use a chain-of-responsibility pattern. When a message arrives, each han
 
 ```rust
 impl JsonRpcHandler for MyHandler {
-    async fn handle_request(&mut self, method: &str, params: &Option<Params>, 
-                           response: JsonRpcRequestCx<Response>) 
+    async fn handle_request(&mut self, method: &str, params: &Option<Params>,
+                           response: JsonRpcRequestCx<Response>)
                            -> Result<Handled<JsonRpcRequestCx<Response>>, Error> {
         if method == "my_method" {
             // Process and respond
@@ -105,8 +105,8 @@ impl JsonRpcHandler for EchoHandler {
                            -> Result<Handled<JsonRpcRequestCx<jsonrpcmsg::Response>>, jsonrpcmsg::Error> {
         if method == "echo" {
             let request: EchoRequest = scp::util::json_cast(params)?;
-            response.cast().respond(EchoResponse { 
-                echo: request.message 
+            response.cast().respond(EchoResponse {
+                echo: request.message
             })?;
             Ok(Handled::Yes)
         } else {
@@ -117,10 +117,10 @@ impl JsonRpcHandler for EchoHandler {
 
 // Run server
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), jsonrpcmsg::Error> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    
+
     JsonRpcConnection::new(stdout, stdin)
         .add_handler(EchoHandler)
         .serve()
@@ -134,16 +134,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 use scp::jsonrpc::{JsonRpcConnection, JsonRpcCx};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), jsonrpcmsg::Error> {
     let (stdin, stdout) = /* your streams */;
-    
+
     JsonRpcConnection::new(stdout, stdin)
         .with_client(|cx: JsonRpcCx| async move {
             // Send a request
-            let response = cx.send_request(EchoRequest { 
-                message: "hello".to_string() 
+            let response = cx.send_request(EchoRequest {
+                message: "hello".to_string()
             }).recv().await?;
-            
+
             println!("Got echo: {}", response.echo);
             Ok(())
         })
@@ -215,16 +215,16 @@ impl AcpAgentCallbacks for MyAgent {
         })?;
         Ok(())
     }
-    
+
     async fn prompt(&mut self, args: acp::PromptRequest,
                    response: JsonRpcRequestCx<acp::PromptResponse>)
                    -> Result<(), acp::Error> {
         // Get the prompt text from the request
         let prompt_text = args.prompt.text;
-        
+
         // Process the prompt (simplified)
         let reply = format!("Echo: {}", prompt_text);
-        
+
         // Send response
         response.respond(acp::PromptResponse {
             text: Some(reply),
@@ -232,7 +232,7 @@ impl AcpAgentCallbacks for MyAgent {
         })?;
         Ok(())
     }
-    
+
     // Implement other required methods...
     async fn authenticate(&mut self, args: acp::AuthenticateRequest,
                          response: JsonRpcRequestCx<acp::AuthenticateResponse>)
@@ -251,10 +251,10 @@ impl AcpAgentCallbacks for MyAgent {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), jsonrpcmsg::Error> {
     let agent = MyAgent;
     let acp_handler = AcpAgent::new(agent);
-    
+
     JsonRpcConnection::new(tokio::io::stdout(), tokio::io::stdin())
         .add_handler(acp_handler)
         .serve()
@@ -312,13 +312,13 @@ use scp::acp::AcpAgentExt;  // Import the extension trait
 
 async fn prompt(&mut self, args: PromptRequest, response: JsonRpcRequestCx<PromptResponse>) {
     let cx = response.json_rpc_cx();
-    
+
     // Extension trait provides convenient methods
-    let content = cx.read_text_file(ReadTextFileRequest { 
+    let content = cx.read_text_file(ReadTextFileRequest {
         path: "src/main.rs".into(),
         ..Default::default()
     }).recv().await?;
-    
+
     cx.session_update(SessionNotification { /* ... */ })?;
 }
 ```
@@ -336,7 +336,7 @@ use scp::acp::AcpEditorExt;  // Import the extension trait
 
 async fn read_text_file(&mut self, args: ReadTextFileRequest, response: JsonRpcRequestCx<ReadTextFileResponse>) {
     let cx = response.json_rpc_cx();
-    
+
     // Extension trait provides convenient methods
     let result = cx.prompt(PromptRequest { /* ... */ }).recv().await?;
 }
@@ -378,7 +378,7 @@ async fn handle_request(&mut self, method: &str, params: &Option<Params>,
                        response: JsonRpcRequestCx<jsonrpcmsg::Response>) {
     if method == "my_method" {
         let request: MyRequest = json_cast(params)?;
-        
+
         // Cast to typed response context
         response.cast::<MyResponse>().respond(MyResponse { ... })?;
     }

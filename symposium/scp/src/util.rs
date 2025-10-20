@@ -17,3 +17,7 @@ pub(crate) fn acp_to_jsonrpc_error(err: acp::Error) -> jsonrpcmsg::Error {
         data: err.data,
     }
 }
+
+pub fn internal_error(err: impl ToString) -> jsonrpcmsg::Error {
+    jsonrpcmsg::Error::new(-32603 /* internal error */, err.to_string())
+}

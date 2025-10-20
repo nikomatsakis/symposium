@@ -94,29 +94,25 @@ async fn test_hello_world() {
             // Spawn the server in the background
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             // Use the client to send a ping and wait for a pong
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        let request = PingRequest {
-                            message: "hello world".to_string(),
-                        };
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    let request = PingRequest {
+                        message: "hello world".to_string(),
+                    };
 
-                        let response = cx.send_request(request).recv().await.map_err(
-                            |e| -> Box<dyn std::error::Error> {
-                                format!("Request failed: {:?}", e).into()
-                            },
-                        )?;
+                    let response = cx.send_request(request).recv().await.map_err(|e| {
+                        scp::util::internal_error(format!("Request failed: {:?}", e))
+                    })?;
 
-                        assert_eq!(response.echo, "pong: hello world");
+                    assert_eq!(response.echo, "pong: hello world");
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -175,34 +171,32 @@ async fn test_notification() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Send a notification (no response expected)
-                        cx.send_notification(LogNotification {
-                            message: "test log 1".to_string(),
-                        })
-                        .map_err(|e| -> Box<dyn std::error::Error> {
-                            format!("Failed to send notification: {:?}", e).into()
-                        })?;
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Send a notification (no response expected)
+                    cx.send_notification(LogNotification {
+                        message: "test log 1".to_string(),
+                    })
+                    .map_err(|e| {
+                        scp::util::internal_error(format!("Failed to send notification: {:?}", e))
+                    })?;
 
-                        cx.send_notification(LogNotification {
-                            message: "test log 2".to_string(),
-                        })
-                        .map_err(|e| -> Box<dyn std::error::Error> {
-                            format!("Failed to send notification: {:?}", e).into()
-                        })?;
+                    cx.send_notification(LogNotification {
+                        message: "test log 2".to_string(),
+                    })
+                    .map_err(|e| {
+                        scp::util::internal_error(format!("Failed to send notification: {:?}", e))
+                    })?;
 
-                        // Give the server time to process notifications
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    // Give the server time to process notifications
+                    tokio::time::sleep(Duration::from_millis(100)).await;
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -227,31 +221,27 @@ async fn test_multiple_sequential_requests() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Send multiple requests sequentially
-                        for i in 1..=5 {
-                            let request = PingRequest {
-                                message: format!("message {}", i),
-                            };
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Send multiple requests sequentially
+                    for i in 1..=5 {
+                        let request = PingRequest {
+                            message: format!("message {}", i),
+                        };
 
-                            let response = cx.send_request(request).recv().await.map_err(
-                                |e| -> Box<dyn std::error::Error> {
-                                    format!("Request {} failed: {:?}", i, e).into()
-                                },
-                            )?;
+                        let response = cx.send_request(request).recv().await.map_err(|e| {
+                            scp::util::internal_error(format!("Request {} failed: {:?}", i, e))
+                        })?;
 
-                            assert_eq!(response.echo, format!("pong: message {}", i));
-                        }
+                        assert_eq!(response.echo, format!("pong: message {}", i));
+                    }
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);
@@ -271,39 +261,35 @@ async fn test_concurrent_requests() {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
-                    eprintln!("Server error: {}", e);
+                    eprintln!("Server error: {:?}", e);
                 }
             });
 
             let result = client
-                .with_client(
-                    async |cx| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                        // Send multiple requests concurrently
-                        let mut responses = Vec::new();
+                .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
+                    // Send multiple requests concurrently
+                    let mut responses = Vec::new();
 
-                        for i in 1..=5 {
-                            let request = PingRequest {
-                                message: format!("concurrent message {}", i),
-                            };
+                    for i in 1..=5 {
+                        let request = PingRequest {
+                            message: format!("concurrent message {}", i),
+                        };
 
-                            // Start all requests without awaiting
-                            responses.push((i, cx.send_request(request)));
-                        }
+                        // Start all requests without awaiting
+                        responses.push((i, cx.send_request(request)));
+                    }
 
-                        // Now await all responses
-                        for (i, response_future) in responses {
-                            let response = response_future.recv().await.map_err(
-                                |e| -> Box<dyn std::error::Error> {
-                                    format!("Request {} failed: {:?}", i, e).into()
-                                },
-                            )?;
+                    // Now await all responses
+                    for (i, response_future) in responses {
+                        let response = response_future.recv().await.map_err(|e| {
+                            scp::util::internal_error(format!("Request {} failed: {:?}", i, e))
+                        })?;
 
-                            assert_eq!(response.echo, format!("pong: concurrent message {}", i));
-                        }
+                        assert_eq!(response.echo, format!("pong: concurrent message {}", i));
+                    }
 
-                        Ok(())
-                    },
-                )
+                    Ok(())
+                })
                 .await;
 
             assert!(result.is_ok(), "Test failed: {:?}", result);

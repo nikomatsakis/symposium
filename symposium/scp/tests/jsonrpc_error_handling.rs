@@ -174,7 +174,7 @@ async fn test_unknown_method() {
 
             // Send request from client
             let result = client
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = SimpleRequest {
                         message: "test".to_string(),
                     };
@@ -250,7 +250,7 @@ async fn test_handler_returns_error() {
             });
 
             let result = client
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = ErrorRequest {
                         value: "trigger error".to_string(),
                     };
@@ -331,7 +331,7 @@ async fn test_missing_required_params() {
             });
 
             let result = client
-                .with_client(async |cx| -> Result<(), Box<dyn std::error::Error>> {
+                .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     // Send request with no params (EmptyRequest has no fields)
                     let request = EmptyRequest;
 
