@@ -28,16 +28,16 @@ This document tracks the test coverage for the JSON-RPC layer.
 
 ## Edge Cases
 
-- [ ] **Empty request** - Request with no parameters
-- [ ] **Null parameters** - Request with explicit null params
-- [ ] **Server shutdown** - What happens to pending requests when server stops?
-- [ ] **Client disconnect** - What happens when client disconnects mid-request?
+- [x] **Empty request** - Request with no parameters
+- [x] **Null parameters** - Request with explicit null params
+- [x] **Server shutdown** - What happens to pending requests when server stops?
+- [x] **Client disconnect** - What happens when client disconnects mid-request?
 
 ## Advanced Features
 
-- [ ] **Bidirectional communication** - Both sides can be server+client simultaneously
-- [ ] **Request IDs** - Verify responses match request IDs correctly
-- [ ] **Out-of-order responses** - Responses can arrive in different order than requests
+- [x] **Bidirectional communication** - Both sides can be server+client simultaneously
+- [x] **Request IDs** - Verify responses match request IDs correctly
+- [x] **Out-of-order responses** - Responses can arrive in different order than requests
 
 ## Notes
 
