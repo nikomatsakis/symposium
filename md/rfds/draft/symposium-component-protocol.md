@@ -10,7 +10,7 @@ Key changes:
 * Define a proxy chain architecture where components can transform ACP messages
 * Create an orchestrator that manages the proxy chain and presents as a normal ACP agent to editors
 * Establish the `_proxy/successor/*` protocol for proxies to communicate with downstream components
-* Enable composition without requiring editors to understand SCP internals
+* Enable composition without requiring editors to understand S/ACP internals
 
 # Status quo
 
@@ -33,16 +33,16 @@ Consider integrating Sparkle (a collaborative AI framework) into a coding sessio
 ```mermaid
 flowchart LR
     Editor[Editor<br/>Zed]
-    
+
     subgraph Fiedler[Fiedler Orchestrator]
         Sparkle[Sparkle Component]
         Agent[Base Agent]
         MCP[Sparkle MCP Server]
-        
+
         Sparkle -->|proxy chain| Agent
         Sparkle -.->|provides tools| MCP
     end
-    
+
     Editor <-->|ACP| Fiedler
 ```
 
@@ -59,15 +59,15 @@ This demonstrates S/ACP's core value: adding capabilities through composition ra
 
 > What are you proposing to improve the situation?
 
-We propose to develop  an [extension to ACP](https://agentclientprotocol.com/protocol/extensibility) called **SCP (Symposium Component Protocol)**.
+We will develop an [extension to ACP](https://agentclientprotocol.com/protocol/extensibility) called **S/ACP** (Symposium extensions to the Agent Client Protocol).
 
-The heart of SCP is a proxy chain where each component adds specific capabilities:
+The heart of S/ACP is a proxy chain where each component adds specific capabilities:
 
 ```mermaid
 flowchart LR
     Editor[ACP Editor]
 
-    subgraph Orchestrator[SCP Orchestrator]
+    subgraph Orchestrator[S/ACP Orchestrator]
         O[Orchestrator Process]
     end
 
@@ -84,14 +84,14 @@ flowchart LR
     O <-->|routes messages| ProxyChain
 ```
 
-SCP defines three kinds of actors:
+S/ACP defines three kinds of actors:
 
 * **Editors** spawn the orchestrator and communicate via standard ACP
 * **Orchestrator** manages the proxy chain, appears as a normal ACP agent to editors
 * **Proxies** intercept and transform messages, communicate with downstream via `_proxy/successor/*` protocol
 * **Agents** provide base AI model behavior using standard ACP
 
-The orchestrator handles message routing, making the proxy chain transparent to editors. Proxies can transform requests, responses, or add side-effects without editors or agents needing SCP awareness.
+The orchestrator handles message routing, making the proxy chain transparent to editors. Proxies can transform requests, responses, or add side-effects without editors or agents needing S/ACP awareness.
 
 ## The Orchestrator: Fiedler
 
@@ -124,7 +124,7 @@ Fiedler advertises an `"orchestrator"` capability during ACP initialization, but
 
 ## Composable Agent Ecosystems
 
-SCP enables a marketplace of reusable proxy components. Developers can:
+S/ACP enables a marketplace of reusable proxy components. Developers can:
 * Compose custom agent pipelines from independently-developed proxies
 * Share proxies across different editors and agents
 * Test and debug proxies in isolation
@@ -169,20 +169,20 @@ Near-term extensions under consideration:
 
 The implementation focuses on building Fiedler and demonstrating the Sparkle integration use case.
 
-## SCP protocol
+## S/ACP protocol
 
 ### Definition: Editor vs Agent of a proxy
 
-For an SCP proxy, the "editor" is defined as the upstream connection and the "agent" is the downstream connection.
+For an S/ACP proxy, the "editor" is defined as the upstream connection and the "agent" is the downstream connection.
 
 ```mermaid
 flowchart LR
     Editor --> Proxy --> Agent
 ```
 
-### SCP editor capabilities
+### S/ACP editor capabilities
 
-An SCP-aware editor provides the following capability during ACP initialization:
+An S/ACP-aware editor provides the following capability during ACP initialization:
 
 ```json
 /// Including the symposium section *at all* means that the editor
@@ -196,11 +196,11 @@ An SCP-aware editor provides the following capability during ACP initialization:
 }
 ```
 
-SCP proxies forward the capabilities they receive from their editor.
+S/ACP proxies forward the capabilities they receive from their editor.
 
-### SCP component capabilities
+### S/ACP component capabilities
 
-SCP components advertise their role during ACP initialization:
+S/ACP components advertise their role during ACP initialization:
 
 **Orchestrator capability:**
 ```json
@@ -223,7 +223,7 @@ SCP components advertise their role during ACP initialization:
 ```
 
 **Agent capability:**
-Agents don't need special SCP capabilities - they're just normal ACP agents.
+Agents don't need special S/ACP capabilities - they're just normal ACP agents.
 
 ### The `_proxy/successor/{send,receive}` protocol
 
@@ -283,7 +283,7 @@ A pass-through proxy is trivial - just forward everything:
 match message {
     // Forward requests from editor to successor
     AcpRequest(req) => send_to_successor_request(req),
-    
+
     // Forward notifications from editor to successor
     AcpNotification(notif) => send_to_successor_notification(notif),
 
@@ -385,11 +385,11 @@ These will validate the protocol design and inform refinements.
 
 We considered extending MCP directly, but MCP is focused on tool provision rather than conversation flow control. We also looked at building everything as VSCode extensions, but that would lock us into a single editor ecosystem.
 
-SCP's proxy chain approach provides the right balance of modularity and compatibility - components can be developed independently while still working together.
+S/ACP's proxy chain approach provides the right balance of modularity and compatibility - components can be developed independently while still working together.
 
 ## How does this relate to other agent protocols like Google's A2A?
 
-SCP is complementary to protocols like A2A. While A2A focuses on agent-to-agent communication for remote services, SCP focuses on composing the user-facing development experience. You could imagine SCP components that use A2A internally to coordinate with remote agents.
+S/ACP is complementary to protocols like A2A. While A2A focuses on agent-to-agent communication for remote services, S/ACP focuses on composing the user-facing development experience. You could imagine S/ACP components that use A2A internally to coordinate with remote agents.
 
 ## What about security concerns with arbitrary proxy chains?
 
@@ -401,13 +401,13 @@ We currently have a minimal chat GUI working in VSCode that can exchange basic m
 
 Continue.dev has solved many of the hard problems for production-quality chat interfaces in VS Code extensions. Their GUI is specifically designed to be reusable - they use the exact same codebase for both VS Code and JetBrains IDEs by implementing different adapter layers.
 
-Their architecture proves that message-passing protocols can cleanly separate GUI concerns from backend logic, which aligns perfectly with SCP's composable design. When we're ready to enhance the chat interface, we can evaluate whether to build on Continue.dev's foundation or develop our own approach based on what we learn from the SCP proxy framework.
+Their architecture proves that message-passing protocols can cleanly separate GUI concerns from backend logic, which aligns perfectly with S/ACP's composable design. When we're ready to enhance the chat interface, we can evaluate whether to build on Continue.dev's foundation or develop our own approach based on what we learn from the S/ACP proxy framework.
 
 The Apache 2.0 license makes this legally straightforward, and their well-documented message protocols provide a clear integration path.
 
 ## Why not just use hooks or plugins?
 
-Hooks are fundamentally limited to what the host application anticipated. SCP proxies can intercept and modify the entire conversation flow, enabling innovations that the original tool designer never envisioned. This is the difference between customization and true composability.
+Hooks are fundamentally limited to what the host application anticipated. S/ACP proxies can intercept and modify the entire conversation flow, enabling innovations that the original tool designer never envisioned. This is the difference between customization and true composability.
 
 ## What about performance implications of the proxy chain?
 
