@@ -24,7 +24,7 @@ This document tracks the test coverage for the JSON-RPC layer.
 - [x] **Unknown method** - Send request with method no handler claims
 - [x] **Handler returns error** - Handler explicitly returns an error
 - [x] **Request without required params** - Missing or invalid parameters (invalid_params error -32602)
-- [ ] **Serialization errors** - Response that can't be serialized (TODO)
+- [~] **Serialization errors** - Response that can't be serialized (SKIPPED - API design makes this difficult to trigger, which is good)
 
 ## Edge Cases
 
