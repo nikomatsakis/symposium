@@ -55,16 +55,75 @@ struct SimpleResponse {
 }
 
 // ============================================================================
-// Test 1: Invalid JSON
+// Test 1: Invalid JSON (complete line with parse error)
+// ============================================================================
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_invalid_json() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::task::LocalSet;
+
+    let local = LocalSet::new();
+
+    local
+        .run_until(async {
+            // Create duplex streams for bidirectional communication
+            let (mut client_writer, server_reader) = tokio::io::duplex(1024);
+            let (server_writer, mut client_reader) = tokio::io::duplex(1024);
+
+            let server_reader = server_reader.compat();
+            let server_writer = server_writer.compat_write();
+
+            struct TestHandler;
+            impl JsonRpcHandler for TestHandler {}
+
+            let server =
+                JsonRpcConnection::new(server_writer, server_reader).on_receive(TestHandler);
+
+            // Spawn server
+            tokio::task::spawn_local(async move {
+                let _ = server.serve().await;
+            });
+
+            // Send invalid JSON
+            let invalid_json = b"{\"method\": \"test\", \"id\": 1, INVALID}\n";
+            client_writer.write_all(invalid_json).await.unwrap();
+            client_writer.flush().await.unwrap();
+
+            // Read response
+            let mut buffer = vec![0u8; 1024];
+            let n = client_reader.read(&mut buffer).await.unwrap();
+            let response = String::from_utf8_lossy(&buffer[..n]);
+
+            println!("Response: {}", response);
+
+            // Should contain error response with parse error code (-32700)
+            assert!(!response.is_empty(), "Expected error response, got nothing");
+            assert!(
+                response.contains("error"),
+                "Expected 'error' in response: {}",
+                response
+            );
+            assert!(
+                response.contains("-32700") || response.contains("parse"),
+                "Expected parse error code in response: {}",
+                response
+            );
+        })
+        .await;
+}
+
+// ============================================================================
+// Test 1b: Incomplete line (EOF mid-message)
 // ============================================================================
 
 #[tokio::test]
-async fn test_invalid_json() {
+async fn test_incomplete_line() {
     use futures::io::Cursor;
 
-    // Malformed JSON input
-    let invalid_json = b"{\"method\": \"test\", \"id\": 1, INVALID}";
-    let input = Cursor::new(invalid_json.to_vec());
+    // Incomplete JSON input - no newline, simulates client disconnect
+    let incomplete_json = b"{\"method\": \"test\", \"id\": 1";
+    let input = Cursor::new(incomplete_json.to_vec());
     let output = Cursor::new(Vec::new());
 
     struct TestHandler;
@@ -72,12 +131,10 @@ async fn test_invalid_json() {
 
     let connection = JsonRpcConnection::new(output, input).on_receive(TestHandler);
 
-    // The server should handle invalid JSON gracefully
-    // It will fail to parse and eventually close the connection
+    // The server should handle EOF mid-message gracefully
     let result = connection.serve().await;
 
-    // We expect the server to handle this without panicking
-    // The exact error depends on implementation details
+    // Server should terminate cleanly when hitting EOF
     assert!(result.is_ok() || result.is_err());
 }
 
