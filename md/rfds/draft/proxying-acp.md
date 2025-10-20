@@ -1,16 +1,18 @@
+# Composable Agents via P/ACP (Proxying ACP)
+
 # Elevator pitch
 
 > What are you proposing to change?
 
-We propose to prototype **S/ACP** (Symposium ACP), an extension to Zed's Agent Client Protocol (ACP) that enables composable agent architectures through proxy chains. Instead of building monolithic AI tools, S/ACP allows developers to create modular components that can intercept and transform messages flowing between editors and agents.
+We propose to prototype **P/ACP** (Proxying ACP), an extension to Zed's Agent Client Protocol (ACP) that enables composable agent architectures through proxy chains. Instead of building monolithic AI tools, P/ACP allows developers to create modular components that can intercept and transform messages flowing between editors and agents.
 
-This RFD builds on the concepts introduced in [SymmACP: extending Zed's ACP to support Composable Agents](https://smallcultfollowing.com/babysteps/blog/2025/10/08/symmacp), with the protocol renamed to S/ACP for this implementation.
+This RFD builds on the concepts introduced in [SymmACP: extending Zed's ACP to support Composable Agents](https://smallcultfollowing.com/babysteps/blog/2025/10/08/symmacp), with the protocol renamed to P/ACP for this implementation.
 
 Key changes:
 * Define a proxy chain architecture where components can transform ACP messages
-* Create an orchestrator that manages the proxy chain and presents as a normal ACP agent to editors
+* Create an orchestrator (Fiedler) that manages the proxy chain and presents as a normal ACP agent to editors
 * Establish the `_proxy/successor/*` protocol for proxies to communicate with downstream components
-* Enable composition without requiring editors to understand S/ACP internals
+* Enable composition without requiring editors to understand P/ACP internals
 
 # Status quo
 
@@ -22,13 +24,13 @@ Today's AI agent ecosystem is dominated by monolithic agents. We want people to 
 
 Consider integrating Sparkle (a collaborative AI framework) into a coding session with Zed and Claude. Sparkle provides an MCP server with tools, but requires an initialization sequence to load patterns and set up collaborative context.
 
-**Without S/ACP:**
+**Without P/ACP:**
 - Users must manually run the initialization sequence each session
 - Or use agent-specific hooks (Claude Code has them, but not standardized across agents)
 - Or modify the agent to handle initialization automatically
 - Result: Manual intervention required, agent-specific configuration, no generic solution
 
-**With S/ACP:**
+**With P/ACP:**
 
 ```mermaid
 flowchart LR
@@ -53,21 +55,21 @@ The Sparkle component:
 
 From the editor's perspective, it talks to a normal ACP agent. From the base agent's perspective, it has Sparkle tools available. No code changes required on either side.
 
-This demonstrates S/ACP's core value: adding capabilities through composition rather than modification.
+This demonstrates P/ACP's core value: adding capabilities through composition rather than modification.
 
 # What we propose to do about it
 
 > What are you proposing to improve the situation?
 
-We will develop an [extension to ACP](https://agentclientprotocol.com/protocol/extensibility) called **S/ACP** (Symposium extensions to the Agent Client Protocol).
+We will develop an [extension to ACP](https://agentclientprotocol.com/protocol/extensibility) called **P/ACP** (Proxying ACP).
 
-The heart of S/ACP is a proxy chain where each component adds specific capabilities:
+The heart of P/ACP is a proxy chain where each component adds specific capabilities:
 
 ```mermaid
 flowchart LR
     Editor[ACP Editor]
 
-    subgraph Orchestrator[S/ACP Orchestrator]
+    subgraph Orchestrator[P/ACP Orchestrator]
         O[Orchestrator Process]
     end
 
@@ -84,18 +86,18 @@ flowchart LR
     O <-->|routes messages| ProxyChain
 ```
 
-S/ACP defines three kinds of actors:
+P/ACP defines three kinds of actors:
 
 * **Editors** spawn the orchestrator and communicate via standard ACP
 * **Orchestrator** manages the proxy chain, appears as a normal ACP agent to editors
 * **Proxies** intercept and transform messages, communicate with downstream via `_proxy/successor/*` protocol
 * **Agents** provide base AI model behavior using standard ACP
 
-The orchestrator handles message routing, making the proxy chain transparent to editors. Proxies can transform requests, responses, or add side-effects without editors or agents needing S/ACP awareness.
+The orchestrator handles message routing, making the proxy chain transparent to editors. Proxies can transform requests, responses, or add side-effects without editors or agents needing P/ACP awareness.
 
 ## The Orchestrator: Fiedler
 
-S/ACP's orchestrator is called **Fiedler** (after Arthur Fiedler, conductor of the Boston Pops). Fiedler has three responsibilities:
+P/ACP's orchestrator is called **Fiedler** (after Arthur Fiedler, conductor of the Boston Pops). Fiedler has three responsibilities:
 
 1. **Process Management** - Creates and manages component processes based on command-line configuration
 2. **Message Routing** - Routes messages between editor, components, and agent through the proxy chain
@@ -115,7 +117,7 @@ Other adaptations include translating streaming support, content types, and tool
 fiedler sparkle-acp claude-code-acp
 ```
 
-To editors, Fiedler is a normal ACP agent - no special capabilities are advertised upstream. However, Fiedler advertises a `"proxy"` capability to its downstream components, and expects them to respond with a `"proxy"` capability to confirm they are S/ACP-aware.
+To editors, Fiedler is a normal ACP agent - no special capabilities are advertised upstream. However, Fiedler advertises a `"proxy"` capability to its downstream components, and expects them to respond with a `"proxy"` capability to confirm they are P/ACP-aware.
 
 
 # Shiny future
@@ -124,7 +126,7 @@ To editors, Fiedler is a normal ACP agent - no special capabilities are advertis
 
 ## Composable Agent Ecosystems
 
-S/ACP enables a marketplace of reusable proxy components. Developers can:
+P/ACP enables a marketplace of reusable proxy components. Developers can:
 * Compose custom agent pipelines from independently-developed proxies
 * Share proxies across different editors and agents
 * Test and debug proxies in isolation
@@ -155,7 +157,7 @@ As the ecosystem matures, successful patterns may be:
 
 Near-term extensions under consideration:
 
-**Tool Interception** - Route MCP tool calls through the proxy chain instead of directly to external servers. Fiedler registers as a dummy MCP server, and tool calls route back through components for handling. This enables components to provide tools without agents needing S/ACP awareness.
+**Tool Interception** - Route MCP tool calls through the proxy chain instead of directly to external servers. Fiedler registers as a dummy MCP server, and tool calls route back through components for handling. This enables components to provide tools without agents needing P/ACP awareness.
 
 **Agent-Initiated Messages** - Allow components to send messages after the agent has sent end-turn, outside the normal request-response cycle. Use cases include background task completion notifications, time-based reminders, or autonomous checkpoint creation.
 
@@ -169,20 +171,20 @@ Near-term extensions under consideration:
 
 The implementation focuses on building Fiedler and demonstrating the Sparkle integration use case.
 
-## S/ACP protocol
+## P/ACP protocol
 
 ### Definition: Editor vs Agent of a proxy
 
-For an S/ACP proxy, the "editor" is defined as the upstream connection and the "agent" is the downstream connection.
+For an P/ACP proxy, the "editor" is defined as the upstream connection and the "agent" is the downstream connection.
 
 ```mermaid
 flowchart LR
     Editor --> Proxy --> Agent
 ```
 
-### S/ACP editor capabilities
+### P/ACP editor capabilities
 
-An S/ACP-aware editor provides the following capability during ACP initialization:
+An P/ACP-aware editor provides the following capability during ACP initialization:
 
 ```json
 /// Including the symposium section *at all* means that the editor
@@ -196,11 +198,11 @@ An S/ACP-aware editor provides the following capability during ACP initializatio
 }
 ```
 
-S/ACP proxies forward the capabilities they receive from their editor.
+P/ACP proxies forward the capabilities they receive from their editor.
 
-### S/ACP component capabilities
+### P/ACP component capabilities
 
-S/ACP components advertise their role during ACP initialization:
+P/ACP components advertise their role during ACP initialization:
 
 **Orchestrator capability:**
 ```json
@@ -223,7 +225,7 @@ S/ACP components advertise their role during ACP initialization:
 ```
 
 **Agent capability:**
-Agents don't need special S/ACP capabilities - they're just normal ACP agents.
+Agents don't need special P/ACP capabilities - they're just normal ACP agents.
 
 ### The `_proxy/successor/{send,receive}` protocol
 
@@ -312,7 +314,7 @@ These extensions are beyond the scope of this initial RFD and will be defined as
 ## Current Status: Implementation Phase
 
 **Completed:**
-- ✅ S/ACP protocol design with Fiedler orchestrator architecture
+- ✅ P/ACP protocol design with Fiedler orchestrator architecture
 - ✅ `_proxy/successor/{send,receive}` message protocol defined
 - ✅ `scp` Rust crate with JSON-RPC layer and ACP message types
 - ✅ Comprehensive JSON-RPC test suite (21 tests)
@@ -320,15 +322,15 @@ These extensions are beyond the scope of this initial RFD and will be defined as
 
 **In Progress:**
 - Fiedler orchestrator implementation
-- Sparkle S/ACP component
+- Sparkle P/ACP component
 
 ## Phase 1: Minimal Sparkle Demo (CURRENT)
 
-**Goal:** Demonstrate Sparkle integration through S/ACP composition.
+**Goal:** Demonstrate Sparkle integration through P/ACP composition.
 
 **Components:**
 1. **Fiedler orchestrator** - Process management, message routing, capability adaptation
-2. **Sparkle S/ACP component** - Injects Sparkle MCP server, handles embodiment sequence
+2. **Sparkle P/ACP component** - Injects Sparkle MCP server, handles embodiment sequence
 3. **Integration test** - Validates end-to-end flow with mock editor/agent
 
 **Demo flow:**
@@ -852,11 +854,11 @@ For the MVP, when Sparkle runs the embodiment sequence before the user's actual 
 
 **Goal:** Route MCP tool calls through the proxy chain.
 
-Fiedler registers as a dummy MCP server. When Claude calls a Sparkle tool, the call routes back through the proxy chain to the Sparkle component for handling. This enables richer component interactions without requiring agents to understand S/ACP.
+Fiedler registers as a dummy MCP server. When Claude calls a Sparkle tool, the call routes back through the proxy chain to the Sparkle component for handling. This enables richer component interactions without requiring agents to understand P/ACP.
 
 ## Phase 3: Additional Components (FUTURE)
 
-Build additional S/ACP components that demonstrate different use cases:
+Build additional P/ACP components that demonstrate different use cases:
 - Session history/context management
 - Logging and observability
 - Rate limiting
@@ -889,11 +891,11 @@ These will validate the protocol design and inform refinements.
 
 We considered extending MCP directly, but MCP is focused on tool provision rather than conversation flow control. We also looked at building everything as VSCode extensions, but that would lock us into a single editor ecosystem.
 
-S/ACP's proxy chain approach provides the right balance of modularity and compatibility - components can be developed independently while still working together.
+P/ACP's proxy chain approach provides the right balance of modularity and compatibility - components can be developed independently while still working together.
 
 ## How does this relate to other agent protocols like Google's A2A?
 
-S/ACP is complementary to protocols like A2A. While A2A focuses on agent-to-agent communication for remote services, S/ACP focuses on composing the user-facing development experience. You could imagine S/ACP components that use A2A internally to coordinate with remote agents.
+P/ACP is complementary to protocols like A2A. While A2A focuses on agent-to-agent communication for remote services, P/ACP focuses on composing the user-facing development experience. You could imagine P/ACP components that use A2A internally to coordinate with remote agents.
 
 ## What about security concerns with arbitrary proxy chains?
 
@@ -905,13 +907,13 @@ We currently have a minimal chat GUI working in VSCode that can exchange basic m
 
 Continue.dev has solved many of the hard problems for production-quality chat interfaces in VS Code extensions. Their GUI is specifically designed to be reusable - they use the exact same codebase for both VS Code and JetBrains IDEs by implementing different adapter layers.
 
-Their architecture proves that message-passing protocols can cleanly separate GUI concerns from backend logic, which aligns perfectly with S/ACP's composable design. When we're ready to enhance the chat interface, we can evaluate whether to build on Continue.dev's foundation or develop our own approach based on what we learn from the S/ACP proxy framework.
+Their architecture proves that message-passing protocols can cleanly separate GUI concerns from backend logic, which aligns perfectly with P/ACP's composable design. When we're ready to enhance the chat interface, we can evaluate whether to build on Continue.dev's foundation or develop our own approach based on what we learn from the P/ACP proxy framework.
 
 The Apache 2.0 license makes this legally straightforward, and their well-documented message protocols provide a clear integration path.
 
 ## Why not just use hooks or plugins?
 
-Hooks are fundamentally limited to what the host application anticipated. S/ACP proxies can intercept and modify the entire conversation flow, enabling innovations that the original tool designer never envisioned. This is the difference between customization and true composability.
+Hooks are fundamentally limited to what the host application anticipated. P/ACP proxies can intercept and modify the entire conversation flow, enabling innovations that the original tool designer never envisioned. This is the difference between customization and true composability.
 
 ## What about performance implications of the proxy chain?
 

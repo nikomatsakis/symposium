@@ -1,0 +1,2 @@
+[output.html.redirect]
+"/rfds/draft/symposium-component-protocol.html" = "proxying-acp.html"
