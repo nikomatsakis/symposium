@@ -7,6 +7,7 @@
 //! - Serialization failures
 //! - Missing/invalid parameters
 
+use expect_test::expect;
 use scp::jsonrpc::{Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcRequest, JsonRpcRequestCx};
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -93,22 +94,22 @@ async fn test_invalid_json() {
             // Read response
             let mut buffer = vec![0u8; 1024];
             let n = client_reader.read(&mut buffer).await.unwrap();
-            let response = String::from_utf8_lossy(&buffer[..n]);
+            let response_str = String::from_utf8_lossy(&buffer[..n]);
 
-            println!("Response: {}", response);
+            // Parse as JSON and verify structure
+            let response: serde_json::Value =
+                serde_json::from_str(response_str.trim()).expect("Response should be valid JSON");
 
-            // Should contain error response with parse error code (-32700)
-            assert!(!response.is_empty(), "Expected error response, got nothing");
-            assert!(
-                response.contains("error"),
-                "Expected 'error' in response: {}",
-                response
-            );
-            assert!(
-                response.contains("-32700") || response.contains("parse"),
-                "Expected parse error code in response: {}",
-                response
-            );
+            // Use expect_test to verify the exact structure
+            expect![[r#"
+                {
+                  "error": {
+                    "code": -32700,
+                    "message": "Parse error"
+                  },
+                  "jsonrpc": "2.0"
+                }"#]]
+            .assert_eq(&serde_json::to_string_pretty(&response).unwrap());
         })
         .await;
 }
