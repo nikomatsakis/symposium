@@ -85,26 +85,39 @@ This allows:
 sequenceDiagram
     participant Editor
     participant Fiedler
-    participant Component1
-    participant Component2
+    participant Sparkle as Component1<br/>(Sparkle)
+    participant Agent as Component2<br/>(Agent)
 
-    Editor->>Fiedler: acp/initialize [P0]
-    Note over Fiedler: Spawn Component1
-    Fiedler->>Component1: acp/initialize (+ _proxy capability) [P0]
-    Note over Component1: Initialize and spawn Component2
-    Component1->>Component2: _proxy/successor/request(acp/initialize) [P1]
-    Component2-->>Component1: acp/initialize response [P1]
-    Note over Component1: Add own capabilities
-    Component1-->>Fiedler: acp/initialize response [P0]
-    Fiedler-->>Editor: acp/initialize response [P0]
+    Note over Fiedler: Spawns both components at startup<br/>from CLI args
+    
+    Editor->>Fiedler: acp/initialize [I0]
+    Fiedler->>Sparkle: acp/initialize (+ proxy capability) [I0]
+    
+    Note over Sparkle: Sees proxy capability,<br/>knows it has a successor
+    
+    Sparkle->>Fiedler: _proxy/successor/request(acp/initialize) [I1]
+    
+    Note over Fiedler: Unwraps request,<br/>knows Agent is last in chain
+    
+    Fiedler->>Agent: acp/initialize (NO proxy capability) [I1]
+    Agent-->>Fiedler: initialize response (capabilities) [I1]
+    Fiedler-->>Sparkle: _proxy/successor response [I1]
+    
+    Note over Sparkle: Sees Agent's capabilities,<br/>adds own capabilities
+    
+    Sparkle-->>Fiedler: initialize response (combined capabilities) [I0]
+    Fiedler-->>Editor: initialize response [I0]
 ```
 
 Key points:
-1. Fiedler doesn't spawn all components upfront—only the first one
-2. Each component is responsible for initializing its successor
-3. Message IDs are preserved when forwarding from editor
-4. Components use new message IDs when talking to successors
-5. Capabilities flow back up the chain, with each component adding its own
+1. **Fiedler spawns ALL components at startup** based on command-line args
+2. **Sequential initialization**: Fiedler → Component1 → Component2 → ... → Agent
+3. **Capability modification by Fiedler**:
+   - Adds `proxy: true` to intermediate components (they have successors)
+   - Omits `proxy: true` from last component (no successor)
+4. **Components use `_proxy/successor/request`** to initialize their successors
+5. **Capabilities flow back up the chain**: Each component sees successor's capabilities before responding
+6. **Message IDs**: Preserved from editor (I0), new IDs for proxy messages (I1, I2, ...)
 
 ## Architecture
 
@@ -112,14 +125,13 @@ Key points:
 
 ```rust
 struct Fiedler {
-    /// The first component in the chain
-    first_component: ComponentProcess,
-    /// Capabilities to advertise when initializing the chain
-    proxy_capability: bool,
+    /// All components in the chain (spawned at startup)
+    components: Vec<ComponentProcess>,
 }
 
 struct ComponentProcess {
     name: String,
+    child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     stderr: BufReader<ChildStderr>,
@@ -128,24 +140,44 @@ struct ComponentProcess {
 
 ### Message Flow
 
-Fiedler operates a simple forwarding loop:
+Fiedler manages message routing between editor and all components:
 
-1. **Read from editor stdin** (blocking)
-2. **Parse JSON-RPC message**
-3. **Special handling for `acp/initialize`:**
-   - Spawn first component
-   - Modify capabilities (add `_proxy/successor/*`)
-   - Forward to first component
-4. **All other messages:** Forward directly to first component
-5. **Read from first component stdout** (blocking)
-6. **Forward responses back to editor stdout**
+**Startup:**
+1. Parse command-line args to get component list: `["sparkle-acp", "agent-acp"]`
+2. Spawn all components, creating stdio pipes for each
+3. Wait for messages
+
+**Message routing:**
+
+1. **Editor → Fiedler messages** (from editor's stdin):
+   - Forward to **first component** (index 0)
+   - Preserve message ID
+   - Special case for `acp/initialize`: Add `proxy: true` capability before forwarding
+
+2. **`_proxy/successor/request` from any component**:
+   - Determine which component sent it (by reading from that component's stdout)
+   - Unwrap the inner message
+   - Forward to **next component in chain**
+   - Special case: If next component is last, omit `proxy: true` capability
+
+3. **Responses** (JSON-RPC responses, not requests):
+   - Match response ID to know which component should receive it
+   - Forward appropriately (back toward editor or back to requesting component)
+
+4. **`_proxy/successor/response`** (wrapping a response):
+   - Unwrap the inner response
+   - Forward back to the component that sent the original `_proxy/successor/request`
 
 ### Concurrency Model
 
-For MVP, use a simple threaded model:
-- Main thread reads from editor stdin, writes to component stdin
-- Reader thread reads from component stdout, writes to editor stdout
-- Error thread reads from component stderr, logs to Fiedler's stderr
+For MVP, use a threaded model with message multiplexing:
+- **Main thread**: Reads from editor stdin, routes to first component
+- **Component reader threads**: One thread per component reading stdout, forwards to appropriate destination
+- **Error threads**: One thread per component reading stderr, logs errors
+
+Fiedler needs to track message IDs to route responses correctly:
+- When forwarding editor message to Component1: Track `(message_id → editor)`
+- When forwarding `_proxy/successor/request`: Track `(message_id → component_index)`
 
 Later optimization: async I/O with tokio for better performance.
 
@@ -179,9 +211,17 @@ If component fails to initialize:
 ### Phase 1: Basic Routing (MVP)
 - [x] Design documented
 - [ ] Parse command-line arguments (component list)
-- [ ] Spawn first component on `acp/initialize`
-- [ ] Forward messages editor ↔ component
-- [ ] Capability modification (add/remove `_proxy/successor/*`)
+- [ ] Spawn ALL components at startup
+- [ ] Set up stdio pipes for all components
+- [ ] Message routing logic:
+  - [ ] Editor → Component1 forwarding
+  - [ ] `_proxy/successor/request` unwrapping and forwarding
+  - [ ] Response routing by message ID
+  - [ ] `_proxy/successor/response` unwrapping
+- [ ] Capability modification:
+  - [ ] Add `proxy: true` for intermediate components during `acp/initialize`
+  - [ ] Omit `proxy: true` for last component
+- [ ] Message ID tracking for routing
 - [ ] Simple error handling (crash-on-error)
 
 ### Phase 2: Robust Error Handling

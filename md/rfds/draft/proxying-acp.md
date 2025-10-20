@@ -391,15 +391,18 @@ sequenceDiagram
     Note over Editor,Agent: === Initialization Phase ===
     
     Editor->>Fiedler: initialize (id: I0)
+    Fiedler->>Sparkle: initialize (id: I0)<br/>(with PROXY capability)
     
-    par Concurrent initialization
-        Fiedler->>Sparkle: initialize (id: I0)<br/>(with PROXY capability)
-        Sparkle-->>Fiedler: initialize response (id: I0)<br/>(no extra capabilities)
-    and
-        Fiedler->>Agent: initialize (id: I0)<br/>(without PROXY capability)
-        Agent-->>Fiedler: initialize response (id: I0)<br/>(no extra capabilities)
-    end
+    Note over Sparkle: Sees proxy capability,<br/>initializes successor
     
+    Sparkle->>Fiedler: _proxy/successor/request (id: I1)<br/>payload: initialize
+    Fiedler->>Agent: initialize (id: I1)<br/>(without PROXY capability)
+    Agent-->>Fiedler: initialize response (id: I1)
+    Fiedler-->>Sparkle: _proxy/successor response (id: I1)
+    
+    Note over Sparkle: Sees Agent capabilities,<br/>adds own capabilities
+    
+    Sparkle-->>Fiedler: initialize response (id: I0)
     Fiedler-->>Editor: initialize response (id: I0)
     
     Note over Editor,Agent: === Session Creation ===
@@ -460,21 +463,79 @@ sequenceDiagram
    }
    ```
 
-3. **Fiedler → Agent: initialize** (id: I0, without PROXY capability)
+3. **Sparkle → Fiedler: _proxy/successor/request** (id: I1, wrapping initialize)
    ```json
    {
      "jsonrpc": "2.0",
-     "id": "I0",
+     "id": "I1",
+     "method": "_proxy/successor/request",
+     "params": {
+       "message": {
+         "method": "initialize",
+         "params": {
+           "protocolVersion": "0.1.0",
+           "capabilities": {},
+           "clientInfo": {"name": "Sparkle", "version": "0.1.0"}
+         }
+       }
+     }
+   }
+   ```
+
+4. **Fiedler → Agent: initialize** (id: I1, unwrapped, without PROXY capability)
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": "I1",
      "method": "initialize",
      "params": {
        "protocolVersion": "0.1.0",
        "capabilities": {},
-       "clientInfo": {"name": "Fiedler", "version": "0.1.0"}
+       "clientInfo": {"name": "Sparkle", "version": "0.1.0"}
      }
    }
    ```
 
-4. **Editor → Fiedler: session/new** (id: U0)
+5. **Agent → Fiedler: initialize response** (id: I1)
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": "I1",
+     "result": {
+       "protocolVersion": "0.1.0",
+       "capabilities": {},
+       "serverInfo": {"name": "claude-code-acp", "version": "0.1.0"}
+     }
+   }
+   ```
+
+6. **Fiedler → Sparkle: _proxy/successor response** (id: I1, wrapping Agent's response)
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": "I1",
+     "result": {
+       "protocolVersion": "0.1.0",
+       "capabilities": {},
+       "serverInfo": {"name": "claude-code-acp", "version": "0.1.0"}
+     }
+   }
+   ```
+
+7. **Sparkle → Fiedler: initialize response** (id: I0, with combined capabilities)
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": "I0",
+     "result": {
+       "protocolVersion": "0.1.0",
+       "capabilities": {},
+       "serverInfo": {"name": "Sparkle + claude-code-acp", "version": "0.1.0"}
+     }
+   }
+   ```
+
+8. **Editor → Fiedler: session/new** (id: U0)
    ```json
    {
      "jsonrpc": "2.0",
@@ -490,7 +551,7 @@ sequenceDiagram
    }
    ```
 
-5. **Fiedler → Sparkle: session/new** (id: U0, forwarded as-is)
+9. **Fiedler → Sparkle: session/new** (id: U0, forwarded as-is)
    ```json
    {
      "jsonrpc": "2.0",
@@ -506,7 +567,7 @@ sequenceDiagram
    }
    ```
 
-6. **Sparkle → Fiedler: _proxy/successor/request** (id: U1, with injected Sparkle MCP)
+10. **Sparkle → Fiedler: _proxy/successor/request** (id: U1, with injected Sparkle MCP)
    ```json
    {
      "jsonrpc": "2.0",
@@ -528,7 +589,7 @@ sequenceDiagram
    }
    ```
 
-7. **Fiedler → Agent: session/new** (id: U1, unwrapped from _proxy message)
+11. **Fiedler → Agent: session/new** (id: U1, unwrapped from _proxy message)
    ```json
    {
      "jsonrpc": "2.0",
@@ -545,7 +606,7 @@ sequenceDiagram
    }
    ```
 
-8. **Agent → Fiedler: response** (id: U1, with new session S1)
+12. **Agent → Fiedler: response** (id: U1, with new session S1)
    ```json
    {
      "jsonrpc": "2.0",
@@ -557,7 +618,19 @@ sequenceDiagram
    }
    ```
 
-9. **Sparkle → Fiedler: response** (id: U0, with session S1)
+13. **Fiedler → Sparkle: _proxy/successor response** (id: U1)
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": "U1",
+     "result": {
+       "sessionId": "S1",
+       "serverInfo": {"name": "claude-code-acp", "version": "0.1.0"}
+     }
+   }
+   ```
+
+14. **Sparkle → Fiedler: response** (id: U0, with session S1)
    ```json
    {
      "jsonrpc": "2.0",
