@@ -287,12 +287,17 @@ impl JsonRpcHandler for StrictParamHandler {
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if method == "strict_method" {
             // Try to parse params - should fail if missing/invalid
-            let request: SimpleRequest =
-                scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
-
-            response.cast::<SimpleResponse>().respond(SimpleResponse {
-                result: format!("Got: {}", request.message),
-            })?;
+            match scp::util::json_cast::<_, SimpleRequest>(params) {
+                Ok(request) => {
+                    response.cast::<SimpleResponse>().respond(SimpleResponse {
+                        result: format!("Got: {}", request.message),
+                    })?;
+                }
+                Err(_) => {
+                    // Send error response instead of returning Err from handler
+                    response.respond_with_error(jsonrpcmsg::Error::invalid_params())?;
+                }
+            }
             Ok(Handled::Yes)
         } else {
             Ok(Handled::No(response))
@@ -312,7 +317,6 @@ impl JsonRpcRequest for EmptyRequest {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore] // TODO: This test hangs - needs investigation
 async fn test_missing_required_params() {
     use tokio::task::LocalSet;
 
