@@ -2,5 +2,5 @@ pub mod agent;
 pub mod editor;
 mod enum_impls;
 
-pub use agent::{AcpAgent, AcpAgentCallbacks, AcpAgentExt};
-pub use editor::{AcpEditor, AcpEditorCallbacks, AcpEditorExt};
+pub use agent::{AcpAgentCallbacks, AcpAgentExt, AcpAgentMessages};
+pub use editor::{AcpEditorCallbacks, AcpEditorExt, AcpEditorMessages};

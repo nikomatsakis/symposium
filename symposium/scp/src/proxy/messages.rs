@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest};
+use crate::jsonrpc::{JsonRpcMessage, JsonRpcNotification, JsonRpcRequest};
 
 // ============================================================================
 // Requests and notifications send TO successor (and the response we receieve)
@@ -23,7 +23,7 @@ pub struct ToSuccessorRequest<Req> {
 }
 
 impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
-    type Response = ToSuccessorResponse<Req>;
+    type Response = ToSuccessorResponse<Req::Response>;
 
     fn method(&self) -> &str {
         "_proxy/successor/send/request"
@@ -35,9 +35,9 @@ impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
 /// Returned as the response to a `ToSuccessorRequest`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ToSuccessorResponse<Req: JsonRpcRequest> {
+pub enum ToSuccessorResponse<Response> {
     /// Result of the method invocation (on success)
-    Result(Req::Response),
+    Result(Response),
 
     /// Error object (on failure)
     Error(jsonrpcmsg::Error),

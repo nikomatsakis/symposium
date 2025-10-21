@@ -23,17 +23,17 @@ mod requests;
 /// This implements `JsonRpcHandler` to route incoming ACP requests to your callback
 /// implementation. These are the messages an agent receives: initialize, prompt,
 /// new_session, etc.
-pub struct AcpAgent<CB: AcpAgentCallbacks> {
+pub struct AcpAgentMessages<CB: AcpAgentCallbacks> {
     callbacks: CB,
 }
 
-impl<CB: AcpAgentCallbacks> AcpAgent<CB> {
+impl<CB: AcpAgentCallbacks> AcpAgentMessages<CB> {
     pub fn new(callbacks: CB) -> Self {
         Self { callbacks }
     }
 }
 
-impl<CB: AcpAgentCallbacks> JsonRpcHandler for AcpAgent<CB> {
+impl<CB: AcpAgentCallbacks> JsonRpcHandler for AcpAgentMessages<CB> {
     async fn handle_request(
         &mut self,
         method: &str,

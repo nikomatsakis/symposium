@@ -1,13 +1,15 @@
+use std::error::Error;
+
 use agent_client_protocol::{
-    self as acp, AuthenticateRequest, AuthenticateResponse, CancelNotification,
-    CreateTerminalRequest, CreateTerminalResponse, InitializeRequest, InitializeResponse,
-    KillTerminalCommandRequest, KillTerminalCommandResponse, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
-    RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
-    SetSessionModeRequest, SetSessionModeResponse, TerminalOutputRequest, TerminalOutputResponse,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
-    WriteTextFileResponse,
+    self as acp, AuthenticateRequest, AuthenticateResponse, CancelNotification, Client,
+    ClientResponse, CreateTerminalRequest, CreateTerminalResponse, InitializeRequest,
+    InitializeResponse, KillTerminalCommandRequest, KillTerminalCommandResponse,
+    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
+    ReleaseTerminalResponse, RequestPermissionRequest, RequestPermissionResponse,
+    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, TerminalOutputRequest,
+    TerminalOutputResponse, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 
 use crate::{
@@ -23,17 +25,17 @@ mod requests;
 /// This implements `JsonRpcHandler` to route incoming ACP requests to your callback
 /// implementation. These are the messages an editor receives from agents: request_permission,
 /// read_text_file, write_text_file, terminal operations, and session notifications.
-pub struct AcpEditor<CB: AcpEditorCallbacks> {
+pub struct AcpEditorMessages<CB: AcpEditorCallbacks> {
     callbacks: CB,
 }
 
-impl<CB: AcpEditorCallbacks> AcpEditor<CB> {
-    pub fn new(callbacks: CB) -> Self {
+impl<CB: AcpEditorCallbacks> AcpEditorMessages<CB> {
+    pub fn callback(callbacks: CB) -> Self {
         Self { callbacks }
     }
 }
 
-impl<CB: AcpEditorCallbacks> JsonRpcHandler for AcpEditor<CB> {
+impl<CB: AcpEditorCallbacks> JsonRpcHandler for AcpEditorMessages<CB> {
     async fn handle_request(
         &mut self,
         method: &str,
@@ -334,5 +336,110 @@ impl AcpEditorExt for JsonRpcCx {
             session_id: session_id.into(),
             meta: None,
         })
+    }
+}
+
+pub struct AcpEditorSendTo<TX, E>
+where
+    TX: AsyncFnMut(acp::AgentRequest, JsonRpcRequestCx<ClientResponse>) -> Result<(), E>,
+    E: Error,
+{
+    tx: TX,
+}
+
+impl<TX> AcpEditorSendTo<TX, E> where
+    TX: AsyncFnMut(acp::AgentRequest, JsonRpcRequestCx<ClientResponse>) -> Result<(), E>
+    E: Error,
+{
+}
+
+impl<TX, E> AcpEditorCallbacks for AcpEditorSendTo<TX>
+where
+    TX: AsyncFnMut(acp::AgentRequest, JsonRpcRequestCx<ClientResponse>) -> Result<(), E>,
+    E: Error,
+{
+    async fn request_permission(
+        &mut self,
+        args: RequestPermissionRequest,
+        response: jsonrpc::JsonRpcRequestCx<RequestPermissionResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        (self.tx)(
+            acp::AgentRequest::RequestPermissionRequest(args),
+            response.map(
+                move |client_response: ClientResponse| match client_response {
+                    ClientResponse::RequestPermissionResponse(request_permission_response) => {
+                        Ok(request_permission_response)
+                    }
+                    _ => Err(agent_client_protocol::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        )
+        .await
+        .map_err(crate::util::internal_error)
+    }
+
+    async fn write_text_file(
+        &mut self,
+        args: WriteTextFileRequest,
+        response: jsonrpc::JsonRpcRequestCx<WriteTextFileResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn read_text_file(
+        &mut self,
+        args: ReadTextFileRequest,
+        response: jsonrpc::JsonRpcRequestCx<ReadTextFileResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn create_terminal(
+        &mut self,
+        args: CreateTerminalRequest,
+        response: jsonrpc::JsonRpcRequestCx<CreateTerminalResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn terminal_output(
+        &mut self,
+        args: TerminalOutputRequest,
+        response: jsonrpc::JsonRpcRequestCx<TerminalOutputResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn release_terminal(
+        &mut self,
+        args: ReleaseTerminalRequest,
+        response: jsonrpc::JsonRpcRequestCx<ReleaseTerminalResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn wait_for_terminal_exit(
+        &mut self,
+        args: WaitForTerminalExitRequest,
+        response: jsonrpc::JsonRpcRequestCx<WaitForTerminalExitResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn kill_terminal_command(
+        &mut self,
+        args: KillTerminalCommandRequest,
+        response: jsonrpc::JsonRpcRequestCx<KillTerminalCommandResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn session_notification(
+        &mut self,
+        args: SessionNotification,
+        cx: &JsonRpcCx,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
     }
 }
