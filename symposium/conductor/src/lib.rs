@@ -3,6 +3,9 @@ use crate::conductor::Conductor;
 mod component;
 mod conductor;
 
+#[cfg(test)]
+mod conductor_tests;
+
 use clap::Parser;
 use component::ComponentProvider;
 use tokio::io::{stdin, stdout};
