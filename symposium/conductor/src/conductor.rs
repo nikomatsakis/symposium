@@ -72,7 +72,7 @@ use serde_json::json;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, error, info, warn};
 
-use crate::component::Component;
+use crate::component::{Component, ComponentProvider};
 
 /// Manages the P/ACP proxy capability based on component position in the chain.
 ///
@@ -151,19 +151,18 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     pub async fn run(
         outgoing_bytes: OB,
         incoming_bytes: IB,
-        mut proxies: Vec<String>,
+        mut providers: Vec<ComponentProvider>,
     ) -> anyhow::Result<()> {
-        if proxies.len() == 0 {
+        if providers.len() == 0 {
             anyhow::bail!("must have at least one component")
         }
 
         info!(
-            component_count = proxies.len(),
-            components = ?proxies,
+            component_count = providers.len(),
             "Starting conductor with component chain"
         );
 
-        proxies.reverse();
+        providers.reverse();
         let (conductor_tx, conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
 
         tokio::task::LocalSet::new()
@@ -174,7 +173,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                     components: Default::default(),
                     conductor_rx,
                 }
-                .launch_proxy(proxies, conductor_tx)
+                .launch_proxy(providers, conductor_tx)
                 .await
             })
             .await
@@ -183,8 +182,8 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     /// Recursively spawns components and builds the proxy chain.
     ///
     /// This function implements the recursive chain building pattern:
-    /// 1. Pop the next component from the `proxies` list
-    /// 2. Spawn it as a subprocess with stdio communication
+    /// 1. Pop the next component from the `providers` list
+    /// 2. Create the component (either spawn subprocess or use mock)
     /// 3. Set up JSON-RPC connection and message handlers
     /// 4. Recursively call itself to spawn the next component
     /// 5. When no components remain, start the message routing loop via `serve()`
@@ -194,45 +193,62 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     ///
     /// # Arguments
     ///
-    /// - `proxies`: Stack of component commands to spawn (reversed, so we pop from the end)
+    /// - `providers`: Stack of component providers (reversed, so we pop from the end)
     /// - `conductor_tx`: Channel for components to send messages back to conductor
     fn launch_proxy(
         mut self,
-        mut proxies: Vec<String>,
+        mut providers: Vec<ComponentProvider>,
         conductor_tx: mpsc::Sender<ConductorMessage>,
     ) -> Pin<Box<impl Future<Output = anyhow::Result<()>>>> {
         Box::pin(async move {
-            let Some(next_proxy) = proxies.pop() else {
+            let Some(next_provider) = providers.pop() else {
                 info!("All components spawned, starting message routing");
                 return self.serve(conductor_tx).await;
             };
 
             let component_index = self.components.len();
-            let remaining = proxies.len();
+            let remaining = providers.len();
 
             info!(
                 component_index,
-                component_name = %next_proxy,
                 remaining_components = remaining,
-                "Spawning component"
+                "Creating component"
             );
 
-            let mut child = tokio::process::Command::new(&next_proxy)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()?;
+            // Create the component streams based on the provider type
+            let (child, stdin, stdout) = match next_provider {
+                ComponentProvider::Command(command) => {
+                    debug!(component_index, command = %command, "Spawning command");
 
-            // Take ownership of the streams (can only do this once!)
-            let stdin = child.stdin.take().expect("Failed to open stdin");
-            let stdout = child.stdout.take().expect("Failed to open stdout");
+                    let mut child = tokio::process::Command::new(&command)
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::piped())
+                        .spawn()?;
+
+                    // Take ownership of the streams (can only do this once!)
+                    let stdin = child.stdin.take().expect("Failed to open stdin");
+                    let stdout = child.stdout.take().expect("Failed to open stdout");
+
+                    // Convert tokio streams to futures streams using compat
+                    (
+                        Some(child),
+                        Box::new(stdin.compat_write()) as Box<dyn AsyncWrite + Unpin + Send>,
+                        Box::new(stdout.compat()) as Box<dyn AsyncRead + Unpin + Send>,
+                    )
+                }
+                ComponentProvider::Mock(mock) => {
+                    debug!(component_index, "Creating mock component");
+                    let (outgoing, incoming) = mock.create().await?;
+                    (None, outgoing, incoming)
+                }
+            };
 
             debug!(
                 component_index,
-                component_name = %next_proxy,
-                "Component process spawned, setting up JSON-RPC connection"
+                "Component created, setting up JSON-RPC connection"
             );
 
-            JsonRpcConnection::new(stdin.compat_write(), stdout.compat())
+            JsonRpcConnection::new(stdin, stdout)
                 // The proxy can send *editor* messages to use
                 .on_receive(AcpAgentToClientMessages::send_to({
                     let mut conductor_tx = conductor_tx.clone();
@@ -251,7 +267,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                 }))
                 .with_client(async move |jsonrpccx| {
                     self.components.push(Component { child, jsonrpccx });
-                    self.launch_proxy(proxies, conductor_tx)
+                    self.launch_proxy(providers, conductor_tx)
                         .await
                         .map_err(scp::util::internal_error)
                 })
