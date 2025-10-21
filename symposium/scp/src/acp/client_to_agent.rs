@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use agent_client_protocol::{
     self as acp, AuthenticateRequest, AuthenticateResponse, CancelNotification,
     CreateTerminalRequest, CreateTerminalResponse, InitializeRequest, InitializeResponse,
@@ -17,6 +19,15 @@ use crate::{
 
 mod notifications;
 mod requests;
+
+/// Messages that editors receive from agents via the ACP protocol.
+/// Unifies both requests (which expect responses) and notifications (fire-and-forget).
+pub enum AcpClientToAgentMessage {
+    /// A request from the agent that expects a response.
+    Request(acp::ClientRequest, JsonRpcRequestCx<acp::AgentResponse>),
+    /// A notification from the agent (no response expected).
+    Notification(acp::ClientNotification, JsonRpcCx),
+}
 
 /// ACP handler for agent-side messages (requests that agents receive from clients).
 ///
@@ -96,6 +107,86 @@ impl<CB: AcpClientToAgentCallbacks> JsonRpcHandler for AcpClientToAgentMessages<
             }
             _ => Ok(jsonrpc::Handled::No(())),
         }
+    }
+}
+
+impl<TX, E> AcpClientToAgentMessages<AcpClientToAgentSentTo<TX, E>>
+where
+    TX: AsyncFnMut(AcpClientToAgentMessage) -> Result<(), E>,
+    E: Error,
+{
+    pub fn send_to(tx: TX) -> Self {
+        Self::callback(AcpClientToAgentSentTo { tx })
+    }
+}
+
+pub struct AcpClientToAgentSentTo<TX, E>
+where
+    TX: AsyncFnMut(AcpClientToAgentMessage) -> Result<(), E>,
+    E: Error,
+{
+    tx: TX,
+}
+
+impl<TX, E> AcpClientToAgentCallbacks for AcpClientToAgentSentTo<TX, E>
+where
+    TX: AsyncFnMut(AcpClientToAgentMessage) -> Result<(), E>,
+    E: Error,
+{
+    async fn initialize(
+        &mut self,
+        args: InitializeRequest,
+        response: jsonrpc::JsonRpcRequestCx<InitializeResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn authenticate(
+        &mut self,
+        args: AuthenticateRequest,
+        response: jsonrpc::JsonRpcRequestCx<AuthenticateResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn session_cancel(
+        &mut self,
+        args: CancelNotification,
+        cx: &JsonRpcCx,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn new_session(
+        &mut self,
+        args: NewSessionRequest,
+        response: jsonrpc::JsonRpcRequestCx<NewSessionResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn load_session(
+        &mut self,
+        args: LoadSessionRequest,
+        response: jsonrpc::JsonRpcRequestCx<LoadSessionResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn prompt(
+        &mut self,
+        args: PromptRequest,
+        response: jsonrpc::JsonRpcRequestCx<PromptResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
+    }
+
+    async fn set_session_mode(
+        &mut self,
+        args: SetSessionModeRequest,
+        response: jsonrpc::JsonRpcRequestCx<SetSessionModeResponse>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        todo!()
     }
 }
 

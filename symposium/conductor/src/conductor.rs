@@ -1,10 +1,10 @@
 use std::pin::Pin;
 
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 use scp::{
-    AcpAgentToClientMessages, JsonRpcConnection, JsonRpcCx, JsonRpcRequestCx, ProxyToConductorMessages,
+    AcpAgentToClientMessages, AcpClientToAgentMessages, JsonRpcConnection, JsonRpcCx,
+    JsonRpcRequest, JsonRpcRequestCx, ProxyToConductorMessages,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::component::Component;
@@ -22,16 +22,25 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         incoming_bytes: IB,
         mut proxies: Vec<String>,
     ) -> anyhow::Result<()> {
+        if proxies.len() == 0 {
+            anyhow::bail!("must have at least one component")
+        }
+
         proxies.reverse();
         let (conductor_tx, conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
-        Conductor {
-            outgoing_bytes,
-            incoming_bytes,
-            components: Default::default(),
-            conductor_rx,
-        }
-        .launch_proxy(proxies, conductor_tx)
-        .await
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                Conductor {
+                    outgoing_bytes,
+                    incoming_bytes,
+                    components: Default::default(),
+                    conductor_rx,
+                }
+                .launch_proxy(proxies, conductor_tx)
+                .await
+            })
+            .await
     }
 
     fn launch_proxy(
@@ -41,8 +50,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     ) -> Pin<Box<impl Future<Output = anyhow::Result<()>>>> {
         Box::pin(async move {
             let Some(next_proxy) = proxies.pop() else {
-                drop(conductor_tx);
-                return self.serve().await;
+                return self.serve(conductor_tx).await;
             };
 
             let mut child = tokio::process::Command::new(next_proxy)
@@ -57,12 +65,12 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
             let component_index = self.components.len();
 
             JsonRpcConnection::new(stdin.compat_write(), stdout.compat())
-                // The proxy can send *editor* messages to us
+                // The proxy can send *editor* messages to use
                 .on_receive(AcpAgentToClientMessages::send_to({
                     let mut conductor_tx = conductor_tx.clone();
                     async move |message| {
                         conductor_tx
-                            .send(ConductorMessage::ToEditorMessage {
+                            .send(ConductorMessage::ComnponentToItsClientMessage {
                                 component_index,
                                 message,
                             })
@@ -84,25 +92,127 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         })
     }
 
-    async fn serve(self) -> anyhow::Result<()> {
+    async fn serve(mut self, conductor_tx: mpsc::Sender<ConductorMessage>) -> anyhow::Result<()> {
         JsonRpcConnection::new(self.outgoing_bytes, self.incoming_bytes)
-            .on_receive(handler)
-        while let Some(message) = self.conductor_rx.next().await {
-            match message {
-                ConductorMessage::Initialize { args, response } => todo!(),
-                ConductorMessage::ToEditorMessage {
-                    component_index,
-                    message,
-                } => todo!(),
-                ConductorMessage::ToSuccessorSendRequest {
-                    component_index,
-                    args,
-                    response,
-                } => todo!(),
-                ConductorMessage::ToSuccessorSendNotification { index, args, cx } => todo!(),
-            }
-        }
+            .on_receive(AcpClientToAgentMessages::send_to(async move |message| {
+                conductor_tx
+                    .send(ConductorMessage::ClientToAgentViaProxyChain { message })
+                    .await
+            }))
+            .with_client(async |client| {
+                while let Some(message) = self.conductor_rx.next().await {
+                    match message {
+                        // When we receive messages from the client, forward to the first item
+                        // the proxy chain.
+                        ConductorMessage::ClientToAgentViaProxyChain { message } => match message {
+                            scp::AcpClientToAgentMessage::Request(
+                                client_request,
+                                json_rpc_request_cx,
+                            ) => {
+                                send_request_and_forward_response(
+                                    &self.components[0].jsonrpccx,
+                                    client_request,
+                                    json_rpc_request_cx,
+                                );
+                            }
+
+                            scp::AcpClientToAgentMessage::Notification(
+                                client_notification,
+                                json_rpc_cx,
+                            ) => self.components[0]
+                                .jsonrpccx
+                                .send_notification(client_notification)?,
+                        },
+
+                        ConductorMessage::ComnponentToItsClientMessage {
+                            component_index,
+                            message,
+                        } => {
+                            let its_client: &JsonRpcCx = if component_index == 0 {
+                                &client
+                            } else {
+                                &self.components[component_index - 1].jsonrpccx
+                            };
+
+                            match message {
+                                scp::AcpAgentToClientMessage::Request(
+                                    agent_request,
+                                    json_rpc_request_cx,
+                                ) => {
+                                    send_request_and_forward_response(
+                                        its_client,
+                                        agent_request,
+                                        json_rpc_request_cx,
+                                    );
+                                }
+                                scp::AcpAgentToClientMessage::Notification(
+                                    agent_notification,
+                                    _json_rpc_cx,
+                                ) => {
+                                    its_client.send_notification(agent_notification)?;
+                                }
+                            }
+                        }
+
+                        ConductorMessage::ComponentToItsSuccessorSendRequest {
+                            component_index,
+                            args: scp::ToSuccessorRequest { method, params },
+                            component_response_cx,
+                        } => {
+                            let successor_index = component_index + 1;
+                            if let Some(successor_component) = self.components.get(successor_index)
+                            {
+                                let successor_response = successor_component
+                                    .jsonrpccx
+                                    .send_json_request(method, params);
+
+                                tokio::task::spawn_local(async move {
+                                    let v = successor_response.recv().await;
+                                    component_response_cx
+                                        .respond(scp::ToSuccessorResponse::from(v));
+                                });
+                            } else {
+                                component_response_cx
+                                    .respond_with_error(jsonrpcmsg::Error::internal_error());
+                            }
+                        }
+
+                        ConductorMessage::ComponentToItsSuccessorSendNotification {
+                            component_index,
+                            args: scp::ToSuccessorNotification { method, params },
+                            component_cx,
+                        } => {
+                            let successor_index = component_index + 1;
+                            if let Some(successor_component) = self.components.get(successor_index)
+                            {
+                                successor_component
+                                    .jsonrpccx
+                                    .send_json_notification(method, params)?
+                            } else {
+                                component_cx
+                                    .send_error_notification(jsonrpcmsg::Error::internal_error());
+                            }
+                        }
+                    };
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))
     }
+}
+
+fn ignore_err(_err: Result<(), jsonrpcmsg::Error>) {}
+
+async fn send_request_and_forward_response<Req: JsonRpcRequest>(
+    to_cx: &JsonRpcCx,
+    req: Req,
+    response_cx: JsonRpcRequestCx<Req::Response>,
+) {
+    let response = to_cx.send_request(req);
+    tokio::task::spawn_local(async move {
+        ignore_err(response_cx.respond_with_result(response.recv().await));
+    });
 }
 
 struct SuccessorSendCallbacks {
@@ -117,10 +227,10 @@ impl scp::ConductorCallbacks for SuccessorSendCallbacks {
         response: JsonRpcRequestCx<scp::ToSuccessorResponse<serde_json::Value>>,
     ) -> Result<(), agent_client_protocol::Error> {
         self.conductor_tx
-            .send(ConductorMessage::ToSuccessorSendRequest {
+            .send(ConductorMessage::ComponentToItsSuccessorSendRequest {
                 component_index: self.component_index,
                 args,
-                response,
+                component_response_cx: response,
             })
             .await
             .map_err(agent_client_protocol::Error::into_internal_error)
@@ -132,10 +242,10 @@ impl scp::ConductorCallbacks for SuccessorSendCallbacks {
         cx: &scp::JsonRpcCx,
     ) -> Result<(), agent_client_protocol::Error> {
         self.conductor_tx
-            .send(ConductorMessage::ToSuccessorSendNotification {
-                index: self.component_index,
+            .send(ConductorMessage::ComponentToItsSuccessorSendNotification {
+                component_index: self.component_index,
                 args,
-                cx: cx.clone(),
+                component_cx: cx.clone(),
             })
             .await
             .map_err(agent_client_protocol::Error::into_internal_error)
@@ -143,25 +253,24 @@ impl scp::ConductorCallbacks for SuccessorSendCallbacks {
 }
 
 pub enum ConductorMessage {
-    Initialize {
-        args: agent_client_protocol::InitializeRequest,
-        response: JsonRpcRequestCx<agent_client_protocol::InitializeResponse>,
+    ClientToAgentViaProxyChain {
+        message: scp::AcpClientToAgentMessage,
     },
 
-    ToEditorMessage {
+    ComnponentToItsClientMessage {
         component_index: usize,
         message: scp::AcpAgentToClientMessage,
     },
 
-    ToSuccessorSendRequest {
+    ComponentToItsSuccessorSendRequest {
         component_index: usize,
         args: scp::ToSuccessorRequest<serde_json::Value>,
-        response: JsonRpcRequestCx<scp::ToSuccessorResponse<serde_json::Value>>,
+        component_response_cx: JsonRpcRequestCx<scp::ToSuccessorResponse<serde_json::Value>>,
     },
 
-    ToSuccessorSendNotification {
-        index: usize,
+    ComponentToItsSuccessorSendNotification {
+        component_index: usize,
         args: scp::ToSuccessorNotification<serde_json::Value>,
-        cx: JsonRpcCx,
+        component_cx: JsonRpcCx,
     },
 }

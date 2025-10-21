@@ -5,6 +5,7 @@
 //! - Request ID tracking and matching
 //! - Out-of-order response handling
 
+use futures::{AsyncRead, AsyncWrite};
 use scp::{Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcRequest, JsonRpcRequestCx};
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -13,8 +14,8 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 fn setup_test_connections(
     server_handler: impl JsonRpcHandler + 'static,
 ) -> (
-    JsonRpcConnection<impl JsonRpcHandler>,
-    JsonRpcConnection<impl JsonRpcHandler>,
+    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
+    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
 ) {
     let (client_writer, server_reader) = tokio::io::duplex(1024);
     let (server_writer, client_reader) = tokio::io::duplex(1024);

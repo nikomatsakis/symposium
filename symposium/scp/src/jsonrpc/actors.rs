@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::pin::pin;
 
 use futures::AsyncBufReadExt as _;
 use futures::AsyncRead;
@@ -60,10 +61,11 @@ pub(super) async fn reply_actor(
 /// - `Result<(), jsonrpcmsg::Error>`: an error if something unrecoverable occurred
 pub(super) async fn incoming_actor(
     json_rpc_cx: &JsonRpcCx,
-    incoming_bytes: Pin<Box<dyn AsyncRead>>,
+    incoming_bytes: impl AsyncRead,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
     mut handler: impl JsonRpcHandler,
 ) -> Result<(), jsonrpcmsg::Error> {
+    let incoming_bytes = pin!(incoming_bytes);
     let buffered_incoming_bytes = BufReader::new(incoming_bytes);
     let mut incoming_lines = buffered_incoming_bytes.lines();
     while let Some(line) = incoming_lines.next().await {
@@ -141,8 +143,10 @@ async fn dispatch_request(
 pub(super) async fn outgoing_actor(
     mut outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
-    mut outgoing_bytes: Pin<Box<dyn AsyncWrite>>,
+    outgoing_bytes: impl AsyncWrite,
 ) -> Result<(), jsonrpcmsg::Error> {
+    let mut outgoing_bytes = pin!(outgoing_bytes);
+
     while let Some(message) = outgoing_rx.next().await {
         // Create the message to be sent over the transport
         let json_rpc_message = match message {

@@ -4,6 +4,8 @@ mod component;
 mod conductor;
 
 use clap::Parser;
+use tokio::io::{stdin, stdout};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -14,6 +16,6 @@ pub struct ConductorArgs {
 
 impl ConductorArgs {
     pub async fn run(self) -> anyhow::Result<()> {
-        Conductor::run(self.proxies).await
+        Conductor::run(stdout().compat_write(), stdin().compat(), self.proxies).await
     }
 }

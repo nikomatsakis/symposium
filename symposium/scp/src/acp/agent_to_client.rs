@@ -348,17 +348,17 @@ impl AcpClientToAgentExt for JsonRpcCx {
     }
 }
 
-impl<TX, E> AcpAgentToClientMessages<AcpClientSendTo<TX, E>>
+impl<TX, E> AcpAgentToClientMessages<AcpAgentToClientSendTo<TX, E>>
 where
     TX: AsyncFnMut(AcpAgentToClientMessage) -> Result<(), E>,
     E: Error,
 {
     pub fn send_to(tx: TX) -> Self {
-        Self::callback(AcpClientSendTo { tx })
+        Self::callback(AcpAgentToClientSendTo { tx })
     }
 }
 
-pub struct AcpClientSendTo<TX, E>
+pub struct AcpAgentToClientSendTo<TX, E>
 where
     TX: AsyncFnMut(AcpAgentToClientMessage) -> Result<(), E>,
     E: Error,
@@ -366,14 +366,14 @@ where
     tx: TX,
 }
 
-impl<TX, E> AcpClientSendTo<TX, E>
+impl<TX, E> AcpAgentToClientSendTo<TX, E>
 where
     TX: AsyncFnMut(AcpAgentToClientMessage) -> Result<(), E>,
     E: Error,
 {
 }
 
-impl<TX, E> AcpAgentToClientCallbacks for AcpClientSendTo<TX, E>
+impl<TX, E> AcpAgentToClientCallbacks for AcpAgentToClientSendTo<TX, E>
 where
     TX: AsyncFnMut(AcpAgentToClientMessage) -> Result<(), E>,
     E: Error,

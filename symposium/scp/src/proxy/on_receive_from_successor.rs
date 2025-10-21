@@ -1,3 +1,5 @@
+use futures::{AsyncRead, AsyncWrite};
+
 use crate::{
     jsonrpc::{
         ChainHandler, Handled, JsonRpcConnection, JsonRpcCx, JsonRpcHandler, JsonRpcRequestCx,
@@ -10,7 +12,7 @@ use crate::{
 ///
 /// This trait provides the [`on_receive_from_successor`](JsonRpcConnectionExt::on_receive_from_successor)
 /// method for handling messages from downstream components (successors) in the proxy chain.
-pub trait JsonRpcConnectionExt<H: JsonRpcHandler> {
+pub trait JsonRpcConnectionExt<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     /// Adds a handler for messages received from the successor component.
     ///
     /// The provided handler will receive unwrapped ACP messages - the
@@ -36,16 +38,18 @@ pub trait JsonRpcConnectionExt<H: JsonRpcHandler> {
     fn on_receive_from_successor<H1>(
         self,
         handler: H1,
-    ) -> JsonRpcConnection<ChainHandler<H, FromProxyHandler<H1>>>
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, FromProxyHandler<H1>>>
     where
         H1: JsonRpcHandler;
 }
 
-impl<H: JsonRpcHandler> JsonRpcConnectionExt<H> for JsonRpcConnection<H> {
+impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnectionExt<OB, IB, H>
+    for JsonRpcConnection<OB, IB, H>
+{
     fn on_receive_from_successor<H1>(
         self,
         handler: H1,
-    ) -> JsonRpcConnection<ChainHandler<H, FromProxyHandler<H1>>>
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, FromProxyHandler<H1>>>
     where
         H1: JsonRpcHandler,
     {

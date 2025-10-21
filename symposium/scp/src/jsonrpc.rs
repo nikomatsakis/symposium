@@ -6,6 +6,7 @@ use std::sync::Arc;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Either;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
+use serde::Serialize;
 
 use crate::util::json_cast;
 
@@ -15,12 +16,12 @@ pub use handlers::*;
 
 /// Create a JsonRpcConnection. This can be the basis for either a server or a client.
 #[must_use]
-pub struct JsonRpcConnection<H: JsonRpcHandler> {
+pub struct JsonRpcConnection<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     /// Where to send bytes to communicate to the other side
-    outgoing_bytes: Pin<Box<dyn AsyncWrite>>,
+    outgoing_bytes: OB,
 
     /// Where to read bytes from the other side
-    incoming_bytes: Pin<Box<dyn AsyncRead>>,
+    incoming_bytes: IB,
 
     /// Where the "outgoing messages" actor will receive messages.
     outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
@@ -32,18 +33,15 @@ pub struct JsonRpcConnection<H: JsonRpcHandler> {
     handler: H,
 }
 
-impl JsonRpcConnection<NullHandler> {
+impl<OB: AsyncWrite, IB: AsyncRead> JsonRpcConnection<OB, IB, NullHandler> {
     /// Create a new JsonRpcConnection that will read and write from the given streams.
     /// This type follows a builder pattern; use other methods to configure and then invoke
     /// [`Self:serve`] (to use as a server) or [`Self::with_client`] to use as a client.
-    pub fn new(
-        outgoing_bytes: impl AsyncWrite + 'static,
-        incoming_bytes: impl AsyncRead + 'static,
-    ) -> Self {
+    pub fn new(outgoing_bytes: OB, incoming_bytes: IB) -> Self {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
         Self {
-            outgoing_bytes: Box::pin(outgoing_bytes),
-            incoming_bytes: Box::pin(incoming_bytes),
+            outgoing_bytes,
+            incoming_bytes,
             outgoing_rx,
             outgoing_tx,
             handler: NullHandler::default(),
@@ -51,11 +49,11 @@ impl JsonRpcConnection<NullHandler> {
     }
 }
 
-impl<H: JsonRpcHandler> JsonRpcConnection<H> {
+impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB, H> {
     /// Adds a message handler that will have the opportunity to process incoming messages.
     /// When a new message arrives, handlers are tried in the order they were added, and
     /// the first to "claim" the message "wins".
-    pub fn on_receive<H1>(self, handler: H1) -> JsonRpcConnection<ChainHandler<H, H1>>
+    pub fn on_receive<H1>(self, handler: H1) -> JsonRpcConnection<OB, IB, ChainHandler<H, H1>>
     where
         H1: JsonRpcHandler,
     {
@@ -247,9 +245,22 @@ impl JsonRpcCx {
         &self,
         request: Req,
     ) -> JsonRpcResponse<Req::Response> {
-        let (response_tx, response_rx) = oneshot::channel();
         let method = request.method().to_string();
-        match json_cast::<Req, Option<jsonrpcmsg::Params>>(request) {
+        self.send_json_request(method, request).map(move |json| {
+            serde_json::from_value(json).map_err(|_err| jsonrpcmsg::Error::parse_error())
+        })
+    }
+
+    /// Sends an untyped request with the given name + parameters.
+    /// Prefer to use [`Self::send_request`].
+    pub fn send_json_request(
+        &self,
+        method: String,
+        params: impl Serialize,
+    ) -> JsonRpcResponse<serde_json::Value> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        match json_cast::<_, Option<jsonrpcmsg::Params>>(params) {
             Ok(params) => {
                 let message = OutgoingMessage::Request {
                     method,
@@ -287,9 +298,7 @@ impl JsonRpcCx {
             }
         }
 
-        JsonRpcResponse::new(response_rx).map(move |json| {
-            serde_json::from_value(json).map_err(|_err| jsonrpcmsg::Error::parse_error())
-        })
+        JsonRpcResponse::new(response_rx)
     }
 
     /// Send an outgoing notification (no reply expected).)
@@ -298,10 +307,16 @@ impl JsonRpcCx {
         notification: N,
     ) -> Result<(), jsonrpcmsg::Error> {
         let method = notification.method().to_string();
-        let params: Option<jsonrpcmsg::Params> = serde_json::to_value(notification)
-            .and_then(|json| serde_json::from_value(json))
-            .map_err(|err| jsonrpcmsg::Error::new(JSONRPC_INVALID_PARAMS, err.to_string()))?;
+        self.send_json_notification(method, notification)
+    }
 
+    /// Untyped variant of [`Self::send_notification`]; prefer to use the typed version.
+    pub fn send_json_notification(
+        &self,
+        method: String,
+        params: impl Serialize,
+    ) -> Result<(), jsonrpcmsg::Error> {
+        let params: Option<jsonrpcmsg::Params> = json_cast(params)?;
         self.send_raw_message(OutgoingMessage::Notification { method, params })
     }
 
@@ -396,6 +411,17 @@ impl<T: JsonRpcMessage> JsonRpcRequestCx<T> {
     /// Get the underlying JSON RPC context.
     pub fn json_rpc_cx(&self) -> JsonRpcCx {
         self.cx.clone()
+    }
+
+    /// Respond to the JSON-RPC request with a value.
+    pub fn respond_with_result(
+        self,
+        response: Result<T, jsonrpcmsg::Error>,
+    ) -> Result<(), jsonrpcmsg::Error> {
+        match response {
+            Ok(r) => self.respond(r),
+            Err(e) => self.respond_with_error(e),
+        }
     }
 
     /// Respond to the JSON-RPC request with a value.

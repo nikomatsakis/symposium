@@ -43,6 +43,15 @@ pub enum ToSuccessorResponse<Response> {
     Error(jsonrpcmsg::Error),
 }
 
+impl<R> From<Result<R, jsonrpcmsg::Error>> for ToSuccessorResponse<R> {
+    fn from(value: Result<R, jsonrpcmsg::Error>) -> Self {
+        match value {
+            Ok(v) => ToSuccessorResponse::Result(v),
+            Err(e) => ToSuccessorResponse::Error(e),
+        }
+    }
+}
+
 /// A notification being sent to the successor component.
 ///
 /// Used in `_proxy/successor/send` when the proxy wants to forward a notification downstream.
