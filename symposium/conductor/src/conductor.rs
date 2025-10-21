@@ -3,9 +3,10 @@ use std::pin::Pin;
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 use scp::{
     AcpAgentToClientMessages, AcpClientToAgentMessages, JsonRpcConnection, JsonRpcCx,
-    JsonRpcRequest, JsonRpcRequestCx, ProxyToConductorMessages,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcRequestCx, ProxyToConductorMessages,
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tracing::{debug, error, info, warn};
 
 use crate::component::Component;
 
@@ -25,6 +26,12 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         if proxies.len() == 0 {
             anyhow::bail!("must have at least one component")
         }
+
+        info!(
+            component_count = proxies.len(),
+            components = ?proxies,
+            "Starting conductor with component chain"
+        );
 
         proxies.reverse();
         let (conductor_tx, conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
@@ -50,10 +57,21 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     ) -> Pin<Box<impl Future<Output = anyhow::Result<()>>>> {
         Box::pin(async move {
             let Some(next_proxy) = proxies.pop() else {
+                info!("All components spawned, starting message routing");
                 return self.serve(conductor_tx).await;
             };
 
-            let mut child = tokio::process::Command::new(next_proxy)
+            let component_index = self.components.len();
+            let remaining = proxies.len();
+
+            info!(
+                component_index,
+                component_name = %next_proxy,
+                remaining_components = remaining,
+                "Spawning component"
+            );
+
+            let mut child = tokio::process::Command::new(&next_proxy)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .spawn()?;
@@ -62,7 +80,11 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
             let stdin = child.stdin.take().expect("Failed to open stdin");
             let stdout = child.stdout.take().expect("Failed to open stdout");
 
-            let component_index = self.components.len();
+            debug!(
+                component_index,
+                component_name = %next_proxy,
+                "Component process spawned, setting up JSON-RPC connection"
+            );
 
             JsonRpcConnection::new(stdin.compat_write(), stdout.compat())
                 // The proxy can send *editor* messages to use
@@ -112,6 +134,11 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                 client_request,
                                 json_rpc_request_cx,
                             ) => {
+                                debug!(
+                                    method = client_request.method(),
+                                    target = "component_0",
+                                    "Routing editor request to first component"
+                                );
                                 send_request_and_forward_response(
                                     &self.components[0].jsonrpccx,
                                     client_request,
@@ -124,9 +151,16 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                             scp::AcpClientToAgentMessage::Notification(
                                 client_notification,
                                 _json_rpc_cx,
-                            ) => self.components[0]
-                                .jsonrpccx
-                                .send_notification(client_notification)?,
+                            ) => {
+                                debug!(
+                                    method = client_notification.method(),
+                                    target = "component_0",
+                                    "Routing editor notification to first component"
+                                );
+                                self.components[0]
+                                    .jsonrpccx
+                                    .send_notification(client_notification)?
+                            }
                         },
 
                         ConductorMessage::ComponentToItsClientMessage {
@@ -139,11 +173,23 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                 &self.components[component_index - 1].jsonrpccx
                             };
 
+                            let target = if component_index == 0 {
+                                "editor"
+                            } else {
+                                "predecessor_component"
+                            };
+
                             match message {
                                 scp::AcpAgentToClientMessage::Request(
                                     agent_request,
                                     json_rpc_request_cx,
                                 ) => {
+                                    debug!(
+                                        component_index,
+                                        method = agent_request.method(),
+                                        target,
+                                        "Routing component request to its client"
+                                    );
                                     send_request_and_forward_response(
                                         its_client,
                                         agent_request,
@@ -156,6 +202,12 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                     agent_notification,
                                     _json_rpc_cx,
                                 ) => {
+                                    debug!(
+                                        component_index,
+                                        method = agent_notification.method(),
+                                        target,
+                                        "Routing component notification to its client"
+                                    );
                                     its_client.send_notification(agent_notification)?;
                                 }
                             }
@@ -169,6 +221,13 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                             let successor_index = component_index + 1;
                             if let Some(successor_component) = self.components.get(successor_index)
                             {
+                                debug!(
+                                    component_index,
+                                    successor_index,
+                                    method = %method,
+                                    "Routing _proxy/successor/request to successor component"
+                                );
+
                                 let successor_response = successor_component
                                     .jsonrpccx
                                     .send_json_request(method, params);
@@ -187,6 +246,10 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                     }
                                 });
                             } else {
+                                warn!(
+                                    component_index,
+                                    "Component requested successor but it's the last in chain"
+                                );
                                 component_response_cx
                                     .respond_with_error(jsonrpcmsg::Error::internal_error())?;
                             }
@@ -200,17 +263,31 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                             let successor_index = component_index + 1;
                             if let Some(successor_component) = self.components.get(successor_index)
                             {
+                                debug!(
+                                    component_index,
+                                    successor_index,
+                                    method = %method,
+                                    "Routing _proxy/successor/notification to successor component"
+                                );
                                 successor_component
                                     .jsonrpccx
                                     .send_json_notification(method, params)?
                             } else {
+                                warn!(
+                                    component_index,
+                                    "Component sent successor notification but it's the last in chain"
+                                );
                                 component_cx
                                     .send_error_notification(jsonrpcmsg::Error::internal_error())?;
                             }
                         }
 
                         ConductorMessage::Error { error } => {
-                            eprintln!("Error in spawned task: {:?}", error);
+                            error!(
+                                error_code = error.code,
+                                error_message = %error.message,
+                                "Error in spawned task"
+                            );
                         }
                     };
                 }
