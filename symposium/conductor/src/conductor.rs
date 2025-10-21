@@ -92,7 +92,10 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         })
     }
 
-    async fn serve(mut self, conductor_tx: mpsc::Sender<ConductorMessage>) -> anyhow::Result<()> {
+    async fn serve(
+        mut self,
+        mut conductor_tx: mpsc::Sender<ConductorMessage>,
+    ) -> anyhow::Result<()> {
         JsonRpcConnection::new(self.outgoing_bytes, self.incoming_bytes)
             .on_receive(AcpClientToAgentMessages::send_to(async move |message| {
                 conductor_tx
@@ -108,17 +111,18 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                             scp::AcpClientToAgentMessage::Request(
                                 client_request,
                                 json_rpc_request_cx,
-                            ) => {
+                            ) => {cleart
                                 send_request_and_forward_response(
                                     &self.components[0].jsonrpccx,
                                     client_request,
                                     json_rpc_request_cx,
-                                );
+                                )
+                                .await;
                             }
 
                             scp::AcpClientToAgentMessage::Notification(
                                 client_notification,
-                                json_rpc_cx,
+                                _json_rpc_cx,
                             ) => self.components[0]
                                 .jsonrpccx
                                 .send_notification(client_notification)?,
@@ -143,7 +147,8 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                         its_client,
                                         agent_request,
                                         json_rpc_request_cx,
-                                    );
+                                    )
+                                    .await;
                                 }
                                 scp::AcpAgentToClientMessage::Notification(
                                     agent_notification,
@@ -168,12 +173,14 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
 
                                 tokio::task::spawn_local(async move {
                                     let v = successor_response.recv().await;
-                                    component_response_cx
-                                        .respond(scp::ToSuccessorResponse::from(v));
+                                    ignore_err(
+                                        component_response_cx
+                                            .respond(scp::ToSuccessorResponse::from(v)),
+                                    );
                                 });
                             } else {
                                 component_response_cx
-                                    .respond_with_error(jsonrpcmsg::Error::internal_error());
+                                    .respond_with_error(jsonrpcmsg::Error::internal_error())?;
                             }
                         }
 
@@ -190,7 +197,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                     .send_json_notification(method, params)?
                             } else {
                                 component_cx
-                                    .send_error_notification(jsonrpcmsg::Error::internal_error());
+                                    .send_error_notification(jsonrpcmsg::Error::internal_error())?;
                             }
                         }
                     };

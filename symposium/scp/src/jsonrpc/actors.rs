@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::pin::pin;
 
 use futures::AsyncBufReadExt as _;

@@ -138,7 +138,20 @@ where
         args: InitializeRequest,
         response: jsonrpc::JsonRpcRequestCx<InitializeResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::InitializeRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::InitializeResponse(initialize_response) => {
+                        Ok(initialize_response)
+                    }
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn authenticate(
@@ -146,7 +159,20 @@ where
         args: AuthenticateRequest,
         response: jsonrpc::JsonRpcRequestCx<AuthenticateResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::AuthenticateRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::AuthenticateResponse(authenticate_response) => {
+                        Ok(authenticate_response)
+                    }
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn session_cancel(
@@ -154,7 +180,12 @@ where
         args: CancelNotification,
         cx: &JsonRpcCx,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Notification(
+            acp::ClientNotification::CancelNotification(args),
+            cx.clone(),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn new_session(
@@ -162,7 +193,20 @@ where
         args: NewSessionRequest,
         response: jsonrpc::JsonRpcRequestCx<NewSessionResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::NewSessionRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::NewSessionResponse(new_session_response) => {
+                        Ok(new_session_response)
+                    }
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn load_session(
@@ -170,7 +214,20 @@ where
         args: LoadSessionRequest,
         response: jsonrpc::JsonRpcRequestCx<LoadSessionResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::LoadSessionRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::LoadSessionResponse(load_session_response) => {
+                        Ok(load_session_response)
+                    }
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn prompt(
@@ -178,7 +235,18 @@ where
         args: PromptRequest,
         response: jsonrpc::JsonRpcRequestCx<PromptResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::PromptRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::PromptResponse(prompt_response) => Ok(prompt_response),
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 
     async fn set_session_mode(
@@ -186,7 +254,20 @@ where
         args: SetSessionModeRequest,
         response: jsonrpc::JsonRpcRequestCx<SetSessionModeResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        todo!()
+        (self.tx)(AcpClientToAgentMessage::Request(
+            acp::ClientRequest::SetSessionModeRequest(args),
+            response.map(
+                move |agent_response: acp::AgentResponse| match agent_response {
+                    acp::AgentResponse::SetSessionModeResponse(set_session_mode_response) => {
+                        Ok(set_session_mode_response)
+                    }
+                    _ => Err(jsonrpcmsg::Error::internal_error()),
+                },
+                move |error| Err(error),
+            ),
+        ))
+        .await
+        .map_err(acp::Error::into_internal_error)
     }
 }
 

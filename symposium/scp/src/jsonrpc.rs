@@ -1,6 +1,5 @@
 //! Core JSON-RPC server support.
 
-use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::channel::{mpsc, oneshot};
