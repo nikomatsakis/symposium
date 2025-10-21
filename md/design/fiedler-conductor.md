@@ -210,28 +210,35 @@ If component fails to initialize:
 
 ### Phase 1: Basic Routing (MVP)
 - [x] Design documented
-- [ ] Parse command-line arguments (component list)
-- [ ] Spawn ALL components at startup
-- [ ] Set up stdio pipes for all components
-- [ ] Message routing logic:
-  - [ ] Editor → Component1 forwarding
-  - [ ] `_proxy/successor/request` unwrapping and forwarding
-  - [ ] Response routing by message ID
-  - [ ] `_proxy/successor/response` unwrapping
-- [ ] Capability modification:
-  - [ ] Add `proxy: true` for intermediate components during `acp/initialize`
-  - [ ] Omit `proxy: true` for last component
-- [ ] Message ID tracking for routing
-- [ ] Simple error handling (crash-on-error)
+- [x] Parse command-line arguments (component list)
+- [x] Spawn components recursively (alternative to "spawn all at startup")
+- [x] Set up stdio pipes for all components
+- [x] Message routing logic:
+  - [x] Editor → Component1 forwarding
+  - [x] `_proxy/successor/request` unwrapping and forwarding
+  - [x] Response routing via context passing (alternative to explicit ID tracking)
+  - [x] Component → Editor message routing
+- [x] Actor-based message passing architecture with `ConductorMessage` enum
+- [x] Error reporting from spawned tasks to conductor
+- [ ] **PUNCH LIST - Remaining MVP items:**
+  - [ ] Fix typo: `ComnponentToItsClientMessage` → `ComponentToItsClientMessage`
+  - [ ] Capability modification during initialization:
+    - [ ] Add `_proxy/successor/*` for intermediate components during `acp/initialize`
+    - [ ] Omit `_proxy/successor/*` for last component
+  - [ ] Add documentation/comments explaining recursive chain building
+  - [ ] Add logging (message routing, component startup, errors)
+  - [ ] Write tests (basic routing, initialization, error handling)
+  - [ ] Component crash detection and chain shutdown
 
 ### Phase 2: Robust Error Handling
+- [x] Basic error reporting from async tasks
 - [ ] Graceful component shutdown
-- [ ] Better error propagation
 - [ ] Retry logic for transient failures
 - [ ] Health checks
+- [ ] Timeout handling for hung requests
 
 ### Phase 3: Observability
-- [ ] Message logging/tracing
+- [ ] Structured logging/tracing
 - [ ] Performance metrics
 - [ ] Debug mode with message inspection
 
