@@ -92,15 +92,15 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         })
     }
 
-    async fn serve(
-        mut self,
-        mut conductor_tx: mpsc::Sender<ConductorMessage>,
-    ) -> anyhow::Result<()> {
+    async fn serve(mut self, conductor_tx: mpsc::Sender<ConductorMessage>) -> anyhow::Result<()> {
         JsonRpcConnection::new(self.outgoing_bytes, self.incoming_bytes)
-            .on_receive(AcpClientToAgentMessages::send_to(async move |message| {
-                conductor_tx
-                    .send(ConductorMessage::ClientToAgentViaProxyChain { message })
-                    .await
+            .on_receive(AcpClientToAgentMessages::send_to({
+                let mut conductor_tx_clone = conductor_tx.clone();
+                async move |message| {
+                    conductor_tx_clone
+                        .send(ConductorMessage::ClientToAgentViaProxyChain { message })
+                        .await
+                }
             }))
             .with_client(async |client| {
                 while let Some(message) = self.conductor_rx.next().await {
@@ -111,11 +111,12 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                             scp::AcpClientToAgentMessage::Request(
                                 client_request,
                                 json_rpc_request_cx,
-                            ) => {cleart
+                            ) => {
                                 send_request_and_forward_response(
                                     &self.components[0].jsonrpccx,
                                     client_request,
                                     json_rpc_request_cx,
+                                    conductor_tx.clone(),
                                 )
                                 .await;
                             }
@@ -147,6 +148,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                         its_client,
                                         agent_request,
                                         json_rpc_request_cx,
+                                        conductor_tx.clone(),
                                     )
                                     .await;
                                 }
@@ -171,12 +173,18 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                     .jsonrpccx
                                     .send_json_request(method, params);
 
+                                let mut conductor_tx = conductor_tx.clone();
                                 tokio::task::spawn_local(async move {
                                     let v = successor_response.recv().await;
-                                    ignore_err(
-                                        component_response_cx
-                                            .respond(scp::ToSuccessorResponse::from(v)),
-                                    );
+                                    if let Err(error) = component_response_cx
+                                        .respond(scp::ToSuccessorResponse::from(v))
+                                    {
+                                        ignore_send_err(
+                                            conductor_tx
+                                                .send(ConductorMessage::Error { error })
+                                                .await,
+                                        );
+                                    }
                                 });
                             } else {
                                 component_response_cx
@@ -200,6 +208,10 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                     .send_error_notification(jsonrpcmsg::Error::internal_error())?;
                             }
                         }
+
+                        ConductorMessage::Error { error } => {
+                            eprintln!("Error in spawned task: {:?}", error);
+                        }
                     };
                 }
                 Ok(())
@@ -209,16 +221,19 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
     }
 }
 
-fn ignore_err(_err: Result<(), jsonrpcmsg::Error>) {}
+fn ignore_send_err<T>(_: Result<T, mpsc::SendError>) {}
 
 async fn send_request_and_forward_response<Req: JsonRpcRequest>(
     to_cx: &JsonRpcCx,
     req: Req,
     response_cx: JsonRpcRequestCx<Req::Response>,
+    mut conductor_tx: mpsc::Sender<ConductorMessage>,
 ) {
     let response = to_cx.send_request(req);
     tokio::task::spawn_local(async move {
-        ignore_err(response_cx.respond_with_result(response.recv().await));
+        if let Err(error) = response_cx.respond_with_result(response.recv().await) {
+            ignore_send_err(conductor_tx.send(ConductorMessage::Error { error }).await);
+        }
     });
 }
 
@@ -279,5 +294,9 @@ pub enum ConductorMessage {
         component_index: usize,
         args: scp::ToSuccessorNotification<serde_json::Value>,
         component_cx: JsonRpcCx,
+    },
+
+    Error {
+        error: jsonrpcmsg::Error,
     },
 }
