@@ -1,3 +1,65 @@
+//! # Conductor: P/ACP Proxy Chain Orchestrator
+//!
+//! This module implements the Fiedler conductor, which orchestrates a chain of
+//! proxy components that sit between an editor and an agent, transforming the
+//! Agent-Client Protocol (ACP) stream bidirectionally.
+//!
+//! ## Architecture Overview
+//!
+//! The conductor builds and manages a chain of components:
+//!
+//! ```text
+//! Editor <-ACP-> [Component 0] <-ACP-> [Component 1] <-ACP-> ... <-ACP-> Agent
+//! ```
+//!
+//! Each component receives ACP messages, can transform them, and forwards them
+//! to the next component in the chain. The conductor:
+//!
+//! 1. Spawns each component as a subprocess
+//! 2. Establishes bidirectional JSON-RPC connections with each component
+//! 3. Routes messages between editor, components, and agent
+//! 4. Manages the `_meta.symposium.proxy` capability to signal chain position
+//!
+//! ## Recursive Chain Building
+//!
+//! The chain is built recursively through the `_proxy/successor/*` protocol:
+//!
+//! 1. Editor connects to Component 0 via the conductor
+//! 2. When Component 0 wants to communicate with its successor, it sends
+//!    requests/notifications with method prefix `_proxy/successor/`
+//! 3. The conductor intercepts these messages, strips the prefix, and forwards
+//!    to Component 1
+//! 4. Component 1 does the same for Component 2, and so on
+//! 5. The last component talks directly to the agent (no `_proxy/successor/` prefix)
+//!
+//! This allows each component to be written as if it's talking to a single successor,
+//! without knowing about the full chain.
+//!
+//! ## Capability Management
+//!
+//! Components discover their position in the chain via the `_meta.symposium.proxy`
+//! capability in `initialize` requests:
+//!
+//! - **First component** (from editor): Receives proxy capability if chain has >1 components
+//! - **Middle components**: Receive proxy capability to indicate they have a successor
+//! - **Last component**: Does NOT receive proxy capability (talks directly to agent)
+//!
+//! The conductor manages this by:
+//! - Adding proxy capability when editor sends initialize to first component (if chain has >1 components)
+//! - Adding proxy capability when component sends initialize to successor (if successor is not last)
+//! - Removing proxy capability when component sends initialize to last component
+//!
+//! ## Message Routing
+//!
+//! The conductor runs an event loop processing messages from:
+//!
+//! - **Editor to first component**: Standard ACP messages
+//! - **Component to successor**: Via `_proxy/successor/*` prefix
+//! - **Component responses**: Via futures channels back to requesters
+//!
+//! The message flow ensures bidirectional communication while maintaining the
+//! abstraction that each component only knows about its immediate successor.
+
 use std::pin::Pin;
 
 use agent_client_protocol::InitializeRequest;
@@ -46,10 +108,23 @@ fn remove_proxy_capability(mut request: InitializeRequest) -> InitializeRequest 
     request
 }
 
+/// The conductor manages the proxy chain lifecycle and message routing.
+///
+/// It maintains connections to all components in the chain and routes messages
+/// bidirectionally between the editor, components, and agent.
+///
+/// # Type Parameters
+///
+/// - `OB`: Outgoing byte stream (to editor)
+/// - `IB`: Incoming byte stream (from editor)
 pub struct Conductor<OB: AsyncWrite, IB: AsyncRead> {
+    /// Stream for sending messages back to the editor
     outgoing_bytes: OB,
+    /// Stream for receiving messages from the editor
     incoming_bytes: IB,
+    /// Channel for receiving internal conductor messages from spawned tasks
     conductor_rx: mpsc::Receiver<ConductorMessage>,
+    /// The chain of spawned components, ordered from first (index 0) to last
     components: Vec<Component>,
 }
 
@@ -86,6 +161,22 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
             .await
     }
 
+    /// Recursively spawns components and builds the proxy chain.
+    ///
+    /// This function implements the recursive chain building pattern:
+    /// 1. Pop the next component from the `proxies` list
+    /// 2. Spawn it as a subprocess with stdio communication
+    /// 3. Set up JSON-RPC connection and message handlers
+    /// 4. Recursively call itself to spawn the next component
+    /// 5. When no components remain, start the message routing loop via `serve()`
+    ///
+    /// Each component is given a channel to send messages back to the conductor,
+    /// enabling the bidirectional message routing.
+    ///
+    /// # Arguments
+    ///
+    /// - `proxies`: Stack of component commands to spawn (reversed, so we pop from the end)
+    /// - `conductor_tx`: Channel for components to send messages back to conductor
     fn launch_proxy(
         mut self,
         mut proxies: Vec<String>,
@@ -150,6 +241,24 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
         })
     }
 
+    /// Runs the main message routing loop after all components are spawned.
+    ///
+    /// This function processes messages from three sources:
+    ///
+    /// 1. **Editor → Component 0**: Messages from the editor go to the first component
+    /// 2. **Component → Successor**: Messages prefixed with `_proxy/successor/*` are
+    ///    routed to the next component in the chain
+    /// 3. **Component → Client**: Responses and notifications flow backward to the
+    ///    component's client (either editor or predecessor component)
+    ///
+    /// The routing ensures:
+    /// - Capability management for `initialize` requests based on chain position
+    /// - Proper prefix stripping for `_proxy/successor/*` messages
+    /// - Bidirectional communication between all parts of the chain
+    ///
+    /// # Arguments
+    ///
+    /// - `conductor_tx`: Channel for spawned tasks to send messages back to this loop
     async fn serve(mut self, conductor_tx: mpsc::Sender<ConductorMessage>) -> anyhow::Result<()> {
         JsonRpcConnection::new(self.outgoing_bytes, self.incoming_bytes)
             .on_receive(AcpClientToAgentMessages::send_to({
@@ -443,29 +552,59 @@ impl scp::ConductorCallbacks for SuccessorSendCallbacks {
     }
 }
 
+/// Messages sent to the conductor's main event loop for routing.
+///
+/// These messages enable the conductor to route communication between:
+/// - The editor and the first component
+/// - Components and their successors in the chain
+/// - Components and their clients (editor or predecessor)
+///
+/// All spawned tasks send messages via this enum through a shared channel,
+/// allowing centralized routing logic in the `serve()` loop.
 pub enum ConductorMessage {
+    /// Message from the editor to be routed through the proxy chain.
+    ///
+    /// Always sent to component 0, which then uses `_proxy/successor/*`
+    /// to forward to subsequent components if needed.
     ClientToAgentViaProxyChain {
         message: scp::AcpClientToAgentMessage,
     },
 
+    /// Message from a component back to its client.
+    ///
+    /// The client is either:
+    /// - The editor (if `component_index == 0`)
+    /// - The predecessor component (if `component_index > 0`)
+    ///
+    /// This handles responses and notifications flowing backward through the chain.
     ComponentToItsClientMessage {
         component_index: usize,
         message: scp::AcpAgentToClientMessage,
     },
 
+    /// Request from a component to its successor via `_proxy/successor/request`.
+    ///
+    /// The conductor strips the `_proxy/successor/` prefix and routes to
+    /// `components[component_index + 1]`, managing capability modifications
+    /// for `initialize` requests based on chain position.
     ComponentToItsSuccessorSendRequest {
         component_index: usize,
         args: scp::ToSuccessorRequest<serde_json::Value>,
         component_response_cx: JsonRpcRequestCx<scp::ToSuccessorResponse<serde_json::Value>>,
     },
 
+    /// Notification from a component to its successor via `_proxy/successor/notification`.
+    ///
+    /// Similar to requests, but no response is expected. The conductor strips
+    /// the prefix and forwards to the next component.
     ComponentToItsSuccessorSendNotification {
         component_index: usize,
         args: scp::ToSuccessorNotification<serde_json::Value>,
         component_cx: JsonRpcCx,
     },
 
-    Error {
-        error: jsonrpcmsg::Error,
-    },
+    /// Error from a spawned task that couldn't be handled locally.
+    ///
+    /// Currently logged as a warning. Future versions may trigger chain shutdown.
+    Error { error: jsonrpcmsg::Error },
 }
