@@ -41,8 +41,8 @@ pub trait MockComponent: Send {
         Box<
             dyn Future<
                     Output = anyhow::Result<(
-                        Box<dyn AsyncWrite + Unpin + Send>,
-                        Box<dyn AsyncRead + Unpin + Send>,
+                        Pin<Box<dyn AsyncWrite + Send>>,
+                        Pin<Box<dyn AsyncRead + Send>>,
                     )>,
                 > + Send,
         >,

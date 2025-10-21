@@ -232,8 +232,8 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                     // Convert tokio streams to futures streams using compat
                     (
                         Some(child),
-                        Box::new(stdin.compat_write()) as Box<dyn AsyncWrite + Unpin + Send>,
-                        Box::new(stdout.compat()) as Box<dyn AsyncRead + Unpin + Send>,
+                        Box::pin(stdin.compat_write()) as Pin<Box<dyn AsyncWrite + Send>>,
+                        Box::pin(stdout.compat()) as Pin<Box<dyn AsyncRead + Send>>,
                     )
                 }
                 ComponentProvider::Mock(mock) => {
