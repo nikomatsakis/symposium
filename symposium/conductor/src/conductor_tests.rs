@@ -261,9 +261,13 @@ mod tests {
                 });
 
                 // Editor-side test
+                let editor_collected_updates = Arc::new(std::sync::Mutex::new(String::new()));
+                let editor_collected_updates_clone = editor_collected_updates.clone();
                 let editor_task = tokio::task::spawn_local(async move {
                     JsonRpcConnection::new(editor_out.compat_write(), editor_in.compat())
-                        .on_receive(AcpAgentToClientMessages::callback(EditorCallbacks))
+                        .on_receive(AcpAgentToClientMessages::callback(EditorCallbacks {
+                            collected_updates: editor_collected_updates_clone,
+                        }))
                         .with_client(async move |client| {
                             // 1. Initialize
                             let init_request = InitializeRequest {
@@ -382,6 +386,14 @@ mod tests {
                 } else {
                     panic!("Component 2 should receive text content");
                 }
+
+                // Verify editor received the session update modified by C1
+                // C2 sends "OK from C2", C1 intercepts and modifies to "OK from C2 + C1"
+                let collected = editor_collected_updates.lock().unwrap();
+                assert_eq!(
+                    *collected, "OK from C2 + C1",
+                    "Editor should receive the session update modified by C1"
+                );
 
                 conductor_handle.abort();
             })
@@ -685,15 +697,27 @@ impl AcpClientToAgentCallbacks for Component2Callbacks {
 }
 
 /// Callbacks for the editor (receives notifications from components)
-struct EditorCallbacks;
+struct EditorCallbacks {
+    collected_updates: Arc<std::sync::Mutex<String>>,
+}
 
 impl AcpAgentToClientCallbacks for EditorCallbacks {
     async fn session_notification(
         &mut self,
-        _args: agent_client_protocol::SessionNotification,
+        args: agent_client_protocol::SessionNotification,
         _cx: &JsonRpcCx,
     ) -> Result<(), agent_client_protocol::Error> {
-        // Just receive the notification - we verify the content in the test assertions
+        use agent_client_protocol::{ContentBlock, SessionUpdate, TextContent};
+
+        // Collect text content from session updates
+        if let SessionUpdate::AgentMessageChunk { content } = &args.update {
+            if let ContentBlock::Text(TextContent { text, .. }) = content {
+                self.collected_updates
+                    .lock()
+                    .unwrap()
+                    .push_str(text.as_str());
+            }
+        }
         Ok(())
     }
 
