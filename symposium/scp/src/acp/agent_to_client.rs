@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use agent_client_protocol::{
-    self as acp, AuthenticateRequest, AuthenticateResponse, CancelNotification, ClientResponse,
+    self as acp, AuthenticateRequest, AuthenticateResponse, CancelNotification,
     CreateTerminalRequest, CreateTerminalResponse, InitializeRequest, InitializeResponse,
     KillTerminalCommandRequest, KillTerminalCommandResponse, LoadSessionRequest,
     LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
@@ -24,7 +24,7 @@ mod requests;
 /// Unifies both requests (which expect responses) and notifications (fire-and-forget).
 pub enum AcpAgentToClientMessage {
     /// A request from the agent that expects a response.
-    Request(acp::AgentRequest, JsonRpcRequestCx<acp::ClientResponse>),
+    Request(acp::AgentRequest, JsonRpcRequestCx<serde_json::Value>),
     /// A notification from the agent (no response expected).
     Notification(acp::AgentNotification, JsonRpcCx),
 }
@@ -385,15 +385,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::RequestPermissionRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::RequestPermissionResponse(request_permission_response) => {
-                        Ok(request_permission_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -406,15 +398,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::WriteTextFileRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::WriteTextFileResponse(write_text_file_response) => {
-                        Ok(write_text_file_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -427,15 +411,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::ReadTextFileRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::ReadTextFileResponse(read_text_file_response) => {
-                        Ok(read_text_file_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -448,15 +424,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::CreateTerminalRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::CreateTerminalResponse(create_terminal_response) => {
-                        Ok(create_terminal_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -469,15 +437,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::TerminalOutputRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::TerminalOutputResponse(terminal_output_response) => {
-                        Ok(terminal_output_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -490,15 +450,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::ReleaseTerminalRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::ReleaseTerminalResponse(release_terminal_response) => {
-                        Ok(release_terminal_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -511,15 +463,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpAgentToClientMessage::Request(
             acp::AgentRequest::WaitForTerminalExitRequest(args),
-            response.map(
-                move |client_response: ClientResponse| match client_response {
-                    ClientResponse::WaitForTerminalExitResponse(
-                        wait_for_terminal_exit_response,
-                    ) => Ok(wait_for_terminal_exit_response),
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)

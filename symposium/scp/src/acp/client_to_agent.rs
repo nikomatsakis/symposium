@@ -24,7 +24,7 @@ mod requests;
 /// Unifies both requests (which expect responses) and notifications (fire-and-forget).
 pub enum AcpClientToAgentMessage {
     /// A request from the agent that expects a response.
-    Request(acp::ClientRequest, JsonRpcRequestCx<acp::AgentResponse>),
+    Request(acp::ClientRequest, JsonRpcRequestCx<serde_json::Value>),
     /// A notification from the agent (no response expected).
     Notification(acp::ClientNotification, JsonRpcCx),
 }
@@ -140,15 +140,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::InitializeRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::InitializeResponse(initialize_response) => {
-                        Ok(initialize_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -161,15 +153,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::AuthenticateRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::AuthenticateResponse(authenticate_response) => {
-                        Ok(authenticate_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -195,15 +179,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::NewSessionRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::NewSessionResponse(new_session_response) => {
-                        Ok(new_session_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -216,15 +192,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::LoadSessionRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::LoadSessionResponse(load_session_response) => {
-                        Ok(load_session_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -237,13 +205,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::PromptRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::PromptResponse(prompt_response) => Ok(prompt_response),
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)
@@ -256,15 +218,7 @@ where
     ) -> Result<(), agent_client_protocol::Error> {
         (self.tx)(AcpClientToAgentMessage::Request(
             acp::ClientRequest::SetSessionModeRequest(args),
-            response.map(
-                move |agent_response: acp::AgentResponse| match agent_response {
-                    acp::AgentResponse::SetSessionModeResponse(set_session_mode_response) => {
-                        Ok(set_session_mode_response)
-                    }
-                    _ => Err(jsonrpcmsg::Error::internal_error()),
-                },
-                move |error| Err(error),
-            ),
+            response.cast(),
         ))
         .await
         .map_err(acp::Error::into_internal_error)

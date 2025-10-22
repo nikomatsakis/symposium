@@ -339,7 +339,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                                 send_request_and_forward_response(
                                     &self.components[0].jsonrpccx,
                                     ClientRequest::InitializeRequest(modified_req),
-                                    json_rpc_request_cx,
+                                    json_rpc_request_cx.cast(),
                                     conductor_tx.clone(),
                                 )
                                 .await;

@@ -560,7 +560,7 @@ impl AcpAgentToClientCallbacks for Component1Callbacks {
         args: agent_client_protocol::SessionNotification,
         cx: &JsonRpcCx,
     ) -> Result<(), agent_client_protocol::Error> {
-        use agent_client_protocol::{ContentBlock, SessionUpdate, TextContent};
+        use agent_client_protocol::{ContentBlock, SessionUpdate};
 
         // Modify the notification to show it passed through C1
         let mut modified_notification = args.clone();

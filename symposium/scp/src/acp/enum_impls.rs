@@ -7,10 +7,7 @@
 //! - AgentRequest/ClientResponse (messages clients receive/send)
 //! - AgentNotification (notifications clients receive)
 
-use agent_client_protocol::{
-    AgentNotification, AgentRequest, AgentResponse, ClientNotification, ClientRequest,
-    ClientResponse,
-};
+use agent_client_protocol::{AgentNotification, AgentRequest, ClientNotification, ClientRequest};
 
 use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest};
 
@@ -19,7 +16,7 @@ use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest};
 // ============================================================================
 
 impl JsonRpcRequest for ClientRequest {
-    type Response = AgentResponse;
+    type Response = serde_json::Value;
 
     fn method(&self) -> &str {
         match self {
@@ -48,7 +45,7 @@ impl JsonRpcNotification for ClientNotification {
 // ============================================================================
 
 impl JsonRpcRequest for AgentRequest {
-    type Response = ClientResponse;
+    type Response = serde_json::Value;
 
     fn method(&self) -> &str {
         match self {
