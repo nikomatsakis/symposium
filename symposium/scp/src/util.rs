@@ -10,8 +10,16 @@ where
     Ok(m)
 }
 
-pub(crate) fn acp_to_jsonrpc_error(err: acp::Error) -> jsonrpcmsg::Error {
+pub fn acp_to_jsonrpc_error(err: acp::Error) -> jsonrpcmsg::Error {
     jsonrpcmsg::Error {
+        code: err.code,
+        message: err.message,
+        data: err.data,
+    }
+}
+
+pub fn jsonrpc_to_acp_error(err: jsonrpcmsg::Error) -> acp::Error {
+    acp::Error {
         code: err.code,
         message: err.message,
         data: err.data,

@@ -69,13 +69,16 @@ pub(super) async fn incoming_actor(
     let mut incoming_lines = buffered_incoming_bytes.lines();
     while let Some(line) = incoming_lines.next().await {
         let line = line.map_err(internal_error)?;
+        tracing::trace!(message = %line, "Received JSON-RPC message");
         let message: Result<jsonrpcmsg::Message, _> = serde_json::from_str(&line);
         match message {
             Ok(msg) => match msg {
                 jsonrpcmsg::Message::Request(request) => {
+                    tracing::trace!(method = %request.method, id = ?request.id, "Handling request");
                     dispatch_request(json_rpc_cx, request, &mut handler).await?
                 }
                 jsonrpcmsg::Message::Response(response) => {
+                    tracing::trace!(id = ?response.id, has_result = response.result.is_some(), has_error = response.error.is_some(), "Handling response");
                     if let Some(id) = response.id {
                         if let Some(value) = response.result {
                             reply_tx
@@ -183,6 +186,9 @@ pub(super) async fn outgoing_actor(
 
         match serde_json::to_vec(&json_rpc_message) {
             Ok(mut bytes) => {
+                if let Ok(msg_str) = std::str::from_utf8(&bytes) {
+                    tracing::trace!(message = %msg_str, "Sending JSON-RPC message");
+                }
                 bytes.push('\n' as u8);
                 outgoing_bytes
                     .write_all(&bytes)

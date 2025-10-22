@@ -6,6 +6,9 @@ mod conductor;
 #[cfg(test)]
 mod conductor_tests;
 
+#[cfg(test)]
+mod test_util;
+
 use clap::Parser;
 use component::ComponentProvider;
 use tokio::io::{stdin, stdout};

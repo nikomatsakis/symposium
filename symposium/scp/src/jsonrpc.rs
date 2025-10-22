@@ -513,7 +513,6 @@ impl<R: JsonRpcMessage> JsonRpcResponse<R> {
     }
 }
 
-const JSONRPC_INVALID_PARAMS: i32 = -32602;
 const COMMUNICATION_FAILURE: i32 = -32000;
 
 fn communication_failure(err: impl ToString) -> jsonrpcmsg::Error {

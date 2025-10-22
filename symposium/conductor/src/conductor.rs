@@ -236,8 +236,10 @@ impl<OB: AsyncWrite, IB: AsyncRead> Conductor<OB, IB> {
                         Box::pin(stdout.compat()) as Pin<Box<dyn AsyncRead + Send>>,
                     )
                 }
+                #[cfg(test)]
                 ComponentProvider::Mock(mock) => {
                     debug!(component_index, "Creating mock component");
+                    // mock is Box<dyn MockComponent>, create() takes Box<Self>
                     let (outgoing, incoming) = mock.create().await?;
                     (None, outgoing, incoming)
                 }
