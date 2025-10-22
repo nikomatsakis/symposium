@@ -528,8 +528,53 @@ These extensions are beyond the scope of this initial RFD and will be defined as
 **In Progress:**
 - Fiedler orchestrator implementation
 - Sparkle P/ACP component
+- MCP Bridge implementation (see checklist below)
 
-## Phase 1: Minimal Sparkle Demo (CURRENT)
+### MCP Bridge Implementation Checklist
+
+**Phase 1: Conductor MCP Mode (COMPLETE ✅)**
+- [x] Implement `conductor mcp $port` CLI parsing
+- [x] TCP connection to `localhost:$port`
+- [x] Stdio → TCP bridging (read from stdin, send via TCP)
+- [x] TCP → Stdio bridging (read from TCP, write to stdout)
+- [x] Newline-delimited JSON framing
+- [x] Error handling (connection failures, parse errors, reconnection logic)
+- [x] Unit tests for message bridging
+- [x] Integration test: standalone MCP bridge with mock MCP client/server
+
+**Phase 2: Conductor Agent Mode - MCP Detection & Bridging**
+- [ ] Detect `"transport": "http", "url": "acp:$UUID"` MCP servers in initialization
+- [ ] Check final agent for `mcp_acp_transport` capability
+- [ ] Bind ephemeral TCP ports when bridging needed
+- [ ] Transform MCP server specs to use `conductor mcp $port`
+- [ ] Spawn `conductor mcp $port` subprocess per ACP-transport MCP server
+- [ ] Store mapping: `UUID → TCP port → bridge process`
+- [ ] Always advertise `mcp_acp_transport: true` to intermediate components
+- [ ] Integration test: full chain with MCP bridging
+
+**Phase 3: `_mcp/*` Message Routing**
+- [ ] Route `_mcp/client_to_server/request` (TCP → ACP, backward up chain)
+- [ ] Route `_mcp/client_to_server/notification` (TCP → ACP, backward)
+- [ ] Route `_mcp/server_to_client/request` (ACP → TCP, forward down chain)
+- [ ] Route `_mcp/server_to_client/notification` (ACP → TCP, forward)
+- [ ] URL matching for component routing (`params.url` matches UUID)
+- [ ] Response routing back through bridge
+- [ ] Integration test: full `_mcp/*` message flow
+
+**Phase 4: Bridge Lifecycle Management**
+- [ ] Clean up bridge processes on session end
+- [ ] Handle bridge process crashes
+- [ ] Handle component crashes (clean up associated bridges)
+- [ ] TCP connection cleanup on errors
+- [ ] Port cleanup and reuse
+
+**Phase 5: Component-Side MCP Integration**
+- [ ] Sparkle component declares ACP-transport MCP server
+- [ ] Sparkle handles `_mcp/client_to_server/*` messages
+- [ ] Sparkle initiates `_mcp/server_to_client/*` callbacks
+- [ ] End-to-end test: Sparkle embodiment via MCP bridge
+
+## Phase 1: Minimal Sparkle Demo
 
 **Goal:** Demonstrate Sparkle integration through P/ACP composition.
 
