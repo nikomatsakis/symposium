@@ -3,6 +3,9 @@ name = "conductor"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+test-support = []
+
 [dependencies]
 scp = { path = "../scp" }
 agent-client-protocol = "0.5.0"

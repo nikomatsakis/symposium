@@ -1,7 +1,7 @@
 use crate::conductor::Conductor;
 
-mod component;
-mod conductor;
+pub mod component;
+pub mod conductor;
 mod mcp_bridge;
 
 #[cfg(test)]
