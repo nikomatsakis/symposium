@@ -79,12 +79,14 @@ use crate::component::{Component, ComponentProvider};
 /// When a component provides an MCP server with ACP transport (`acp:$UUID`),
 /// and the agent lacks native `mcp_acp_transport` support, the conductor
 /// spawns a TCP listener and transforms the server spec to use stdio transport.
-#[derive(Debug)]
+#[derive(Clone)]
 struct McpBridgeInfo {
     /// The original acp:$UUID URL from the MCP server specification
     acp_url: String,
     /// The TCP port we bound for this bridge
     tcp_port: u16,
+    /// The JSON-RPC connection to the bridge process (once connected)
+    bridge_cx: Option<JsonRpcCx>,
 }
 
 /// Arguments for the serve method, containing I/O streams.
@@ -365,7 +367,7 @@ impl Conductor {
                                         client_request
                                     {
                                         info!("Intercepted new session request from editor, transforming MCP servers");
-                                        let transformed = self.transform_mcp_servers(new_session_req).await;
+                                        let transformed = self.transform_mcp_servers(new_session_req, conductor_tx.clone()).await;
                                         client_request = ClientRequest::NewSessionRequest(transformed);
                                     }
                                 }
@@ -426,21 +428,45 @@ impl Conductor {
                                     json_rpc_request_cx,
                                 ) => {
                                     let method = agent_request.method().to_string();
-                                    debug!(
-                                        component_index,
-                                        method,
-                                        target,
-                                        "Routing component request to its client"
-                                    );
-                                    send_request_and_forward_response(
-                                        its_client,
-                                        agent_request,
-                                        json_rpc_request_cx,
-                                        conductor_tx.clone(),
-                                        method,
-                                        false, // Not from last component
-                                    )
-                                    .await;
+
+                                    // Phase 3: Check for _mcp/$UUID/* pattern
+                                    if method.starts_with("_mcp/") {
+                                        if self.route_to_mcp_bridge_request(
+                                            &method,
+                                            agent_request,
+                                            json_rpc_request_cx,
+                                        ).is_some() {
+                                            debug!(
+                                                component_index,
+                                                method,
+                                                "Routed MCP request to bridge"
+                                            );
+                                            // Message was routed to bridge, done
+                                        } else {
+                                            warn!(
+                                                component_index,
+                                                method,
+                                                "Failed to route MCP request - bridge not found or not connected"
+                                            );
+                                            // TODO: Send error response back
+                                        }
+                                    } else {
+                                        debug!(
+                                            component_index,
+                                            method,
+                                            target,
+                                            "Routing component request to its client"
+                                        );
+                                        send_request_and_forward_response(
+                                            its_client,
+                                            agent_request,
+                                            json_rpc_request_cx,
+                                            conductor_tx.clone(),
+                                            method,
+                                            false, // Not from last component
+                                        )
+                                        .await;
+                                    }
                                 }
                                 scp::AcpAgentToClientMessage::Notification(
                                     agent_notification,
@@ -522,7 +548,7 @@ impl Conductor {
                                         successor_index,
                                         "Intercepted new session request from component, transforming MCP servers"
                                     );
-                                    let transformed = self.transform_mcp_servers(new_session_req).await;
+                                    let transformed = self.transform_mcp_servers(new_session_req, conductor_tx.clone()).await;
                                     let modified_params = serde_json::to_value(transformed)
                                         .unwrap_or(params.clone());
                                     (method, modified_params)
@@ -701,6 +727,28 @@ impl Conductor {
                             }
                         }
 
+                        ConductorMessage::BridgeConnected { acp_url, bridge_cx } => {
+                            info!(
+                                acp_url = acp_url,
+                                "Bridge connected, updating bridge info"
+                            );
+
+                            // Update the bridge info with the connection
+                            if let Some(bridge_info) = self.mcp_bridges.get_mut(&acp_url) {
+                                bridge_info.bridge_cx = Some(bridge_cx);
+                                info!(
+                                    acp_url = acp_url,
+                                    tcp_port = bridge_info.tcp_port,
+                                    "Bridge connection stored for message routing"
+                                );
+                            } else {
+                                warn!(
+                                    acp_url = acp_url,
+                                    "Received bridge connection for unknown acp_url"
+                                );
+                            }
+                        }
+
                         ConductorMessage::Error { error } => {
                             error!(
                                 error_code = error.code,
@@ -724,7 +772,11 @@ impl Conductor {
     /// 3. Transforms the server to use stdio transport pointing to `conductor mcp $PORT`
     ///
     /// Returns the modified NewSessionRequest with transformed MCP servers.
-    async fn transform_mcp_servers(&mut self, mut request: NewSessionRequest) -> NewSessionRequest {
+    async fn transform_mcp_servers(
+        &mut self,
+        mut request: NewSessionRequest,
+        conductor_tx: mpsc::Sender<ConductorMessage>,
+    ) -> NewSessionRequest {
         use agent_client_protocol::McpServer;
 
         let mut transformed_servers = Vec::new();
@@ -739,7 +791,10 @@ impl Conductor {
                     );
 
                     // Spawn TCP listener on ephemeral port
-                    match self.spawn_tcp_listener(url.clone()).await {
+                    match self
+                        .spawn_tcp_listener(url.clone(), conductor_tx.clone())
+                        .await
+                    {
                         Ok(tcp_port) => {
                             info!(
                                 server_name = name,
@@ -780,13 +835,64 @@ impl Conductor {
         request
     }
 
+    /// Routes an MCP request from agent to the appropriate bridge.
+    ///
+    /// Extracts the UUID from `_mcp/$UUID/$method` pattern, looks up the bridge,
+    /// strips the `_mcp/$UUID/` prefix, and forwards to the bridge.
+    ///
+    /// Returns Some(()) if routing succeeded, None if bridge not found/connected.
+    fn route_to_mcp_bridge_request(
+        &self,
+        method: &str,
+        request: impl serde::Serialize,
+        _response_cx: JsonRpcRequestCx<serde_json::Value>,
+    ) -> Option<()> {
+        // Parse _mcp/$UUID/$actual_method
+        let parts: Vec<&str> = method.splitn(4, '/').collect();
+        if parts.len() < 3 || parts[0] != "" || parts[1] != "_mcp" {
+            warn!(
+                method = method,
+                "Invalid _mcp/ method format, expected _mcp/$UUID/$method"
+            );
+            return None;
+        }
+
+        let uuid = parts[2];
+        let actual_method = parts.get(3).copied().unwrap_or("");
+        let acp_url = format!("acp:{}", uuid);
+
+        // Look up bridge
+        let bridge_info = self.mcp_bridges.get(&acp_url)?;
+        let bridge_cx = bridge_info.bridge_cx.as_ref()?;
+
+        info!(
+            acp_url = acp_url,
+            actual_method = actual_method,
+            "Routing MCP request to bridge"
+        );
+
+        // Forward request with stripped method
+        // TODO: Handle response routing back to agent
+        let params = serde_json::to_value(&request).ok()?;
+        let _response = bridge_cx.send_json_request(actual_method.to_string(), params);
+
+        // TODO Phase 3: Route response back to agent
+        warn!("MCP bridge response routing not yet implemented");
+
+        Some(())
+    }
+
     /// Spawns a TCP listener for an MCP bridge and stores the mapping.
     ///
     /// Binds to `localhost:0` to get an ephemeral port, then stores the
     /// `acp_url → tcp_port` mapping in `self.mcp_bridges`.
     ///
     /// Returns the bound port number.
-    async fn spawn_tcp_listener(&mut self, acp_url: String) -> anyhow::Result<u16> {
+    async fn spawn_tcp_listener(
+        &mut self,
+        acp_url: String,
+        conductor_tx: mpsc::Sender<ConductorMessage>,
+    ) -> anyhow::Result<u16> {
         use tokio::net::TcpListener;
 
         // Bind to ephemeral port
@@ -798,18 +904,66 @@ impl Conductor {
             tcp_port, "Bound TCP listener for MCP bridge"
         );
 
-        // Store mapping for message routing (Phase 3)
+        // Store mapping for message routing (Phase 2b/3)
         self.mcp_bridges.insert(
             acp_url.clone(),
             McpBridgeInfo {
                 acp_url: acp_url.clone(),
                 tcp_port,
+                bridge_cx: None, // Will be set when bridge connects
             },
         );
 
-        // TODO Phase 2b: Accept connections from `conductor mcp $PORT`
-        // For now, just drop the listener - we'll implement connection handling later
-        drop(listener);
+        // Phase 2b: Accept connections from `conductor mcp $PORT`
+        let acp_url_for_task = acp_url.clone();
+
+        tokio::task::spawn_local(async move {
+            info!(
+                acp_url = acp_url_for_task,
+                tcp_port, "Waiting for bridge connection"
+            );
+
+            // Accept a single connection (bridge processes connect once)
+            match listener.accept().await {
+                Ok((stream, addr)) => {
+                    info!(
+                        acp_url = acp_url_for_task,
+                        bridge_addr = ?addr,
+                        "Bridge connected"
+                    );
+
+                    let (read_half, write_half) = stream.into_split();
+
+                    // Establish JSON-RPC connection
+                    JsonRpcConnection::new(write_half.compat_write(), read_half.compat())
+                        .with_client(async move |bridge_cx| {
+                            // Notify conductor that bridge is connected
+                            let _ = conductor_tx
+                                .clone()
+                                .send(ConductorMessage::BridgeConnected {
+                                    acp_url: acp_url_for_task.clone(),
+                                    bridge_cx: bridge_cx.clone(),
+                                })
+                                .await;
+
+                            // Keep connection alive - messages will be routed via ConductorMessage
+                            // The connection stays open until bridge disconnects
+                            futures::future::pending::<()>().await;
+
+                            Ok::<_, jsonrpcmsg::Error>(())
+                        })
+                        .await
+                }
+                Err(e) => {
+                    warn!(
+                        acp_url = acp_url_for_task,
+                        error = ?e,
+                        "Failed to accept bridge connection"
+                    );
+                    Ok(())
+                }
+            }
+        });
 
         Ok(tcp_port)
     }
@@ -974,4 +1128,15 @@ pub enum ConductorMessage {
     ///
     /// Currently logged as a warning. Future versions may trigger chain shutdown.
     Error { error: jsonrpcmsg::Error },
+
+    /// MCP bridge connected and ready for message routing.
+    ///
+    /// Sent when a bridge process connects to the TCP listener. The conductor
+    /// stores the bridge's JsonRpcCx to enable routing of `_mcp/$UUID/*` messages.
+    BridgeConnected {
+        /// The acp:$UUID URL identifying this bridge
+        acp_url: String,
+        /// The JSON-RPC connection to the bridge
+        bridge_cx: JsonRpcCx,
+    },
 }
