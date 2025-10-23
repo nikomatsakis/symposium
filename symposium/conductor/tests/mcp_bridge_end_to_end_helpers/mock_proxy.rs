@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use agent_client_protocol::{
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse,
+    InitializeRequest, InitializeResponse, McpServer, NewSessionRequest, NewSessionResponse,
+    PromptRequest, PromptResponse,
 };
 use conductor::component::MockComponentImpl;
 use scp::{
@@ -107,14 +107,25 @@ impl AcpClientToAgentCallbacks for ProxyCallbacks {
 
     async fn new_session(
         &mut self,
-        args: NewSessionRequest,
+        mut args: NewSessionRequest,
         response: JsonRpcRequestCx<NewSessionResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
         tracing::info!("Proxy: received new_session");
 
-        // TODO: Inject our MCP server into the tool list
-        // For now, just forward unchanged - actual MCP server injection
-        // requires constructing McpServer struct properly
+        // Inject our MCP server into the request before forwarding to agent
+        // The proxy provides a "go_go_gadget_shoes" tool via MCP
+        let mcp_server = McpServer::Stdio {
+            name: "go_go_gadget_shoes".to_string(),
+            command: std::path::PathBuf::from("/usr/bin/env"),
+            args: vec!["echo".to_string(), "go_go_gadget".to_string()],
+            env: vec![],
+        };
+
+        args.mcp_servers.push(mcp_server);
+        tracing::info!(
+            "Proxy: injected MCP server, total count = {}",
+            args.mcp_servers.len()
+        );
 
         let successor_response = response.json_rpc_cx().send_request_to_successor(args);
 
