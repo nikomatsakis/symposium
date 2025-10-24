@@ -4,7 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest};
+use crate::jsonrpc::{
+    JsonRpcIncomingMessage, JsonRpcNotification, JsonRpcOutgoingMessage, JsonRpcRequest,
+};
+use crate::util::json_cast;
 
 // ============================================================================
 // Requests and notifications send TO successor (and the response we receieve)
@@ -22,12 +25,18 @@ pub struct ToSuccessorRequest<Req> {
     pub params: Req,
 }
 
-impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
-    type Response = ToSuccessorResponse<Req::Response>;
-
+impl<Req: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for ToSuccessorRequest<Req> {
     fn method(&self) -> &str {
         "_proxy/successor/send/request"
     }
+
+    fn params(&self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        json_cast(self)
+    }
+}
+
+impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
+    type Response = ToSuccessorResponse<Req::Response>;
 }
 
 /// A response received from a [`ToSuccessorRequest`].
@@ -41,6 +50,12 @@ pub enum ToSuccessorResponse<Response> {
 
     /// Error object (on failure)
     Error(jsonrpcmsg::Error),
+}
+
+impl<Response: JsonRpcIncomingMessage> JsonRpcIncomingMessage for ToSuccessorResponse<Response> {
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        json_cast(&value)
+    }
 }
 
 impl<R> From<Result<R, jsonrpcmsg::Error>> for ToSuccessorResponse<R> {
@@ -64,11 +79,17 @@ pub struct ToSuccessorNotification<Req> {
     pub params: Req,
 }
 
-impl<Req: JsonRpcNotification> JsonRpcNotification for ToSuccessorNotification<Req> {
+impl<Req: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for ToSuccessorNotification<Req> {
     fn method(&self) -> &str {
         "_proxy/successor/send/notification"
     }
+
+    fn params(&self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        json_cast(self)
+    }
 }
+
+impl<Req: JsonRpcNotification> JsonRpcNotification for ToSuccessorNotification<Req> {}
 
 // ============================================================================
 // Messages FROM successor
@@ -88,12 +109,18 @@ pub struct ReceiveFromSuccessorRequest {
     pub params: Option<jsonrpcmsg::Params>,
 }
 
-impl JsonRpcRequest for ReceiveFromSuccessorRequest {
-    type Response = FromSuccessorResponse;
-
+impl JsonRpcOutgoingMessage for ReceiveFromSuccessorRequest {
     fn method(&self) -> &str {
         "_proxy/successor/receive/request"
     }
+
+    fn params(&self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        json_cast(self)
+    }
+}
+
+impl JsonRpcRequest for ReceiveFromSuccessorRequest {
+    type Response = FromSuccessorResponse;
 }
 
 /// Response sent when we receive a [`FromSuccessorRequest`]
@@ -107,6 +134,12 @@ pub enum FromSuccessorResponse {
     Error(jsonrpcmsg::Error),
 }
 
+impl JsonRpcIncomingMessage for FromSuccessorResponse {
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        json_cast(&value)
+    }
+}
+
 /// A notification received from the successor component.
 ///
 /// Delivered via `_proxy/successor/receive` when the successor sends a notification upstream.
@@ -115,8 +148,14 @@ pub struct FromSuccessorNotification {
     pub message: jsonrpcmsg::Request,
 }
 
-impl JsonRpcNotification for FromSuccessorNotification {
+impl JsonRpcOutgoingMessage for FromSuccessorNotification {
     fn method(&self) -> &str {
         "_proxy/successor/receive/notification"
     }
+
+    fn params(&self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        json_cast(self)
+    }
 }
+
+impl JsonRpcNotification for FromSuccessorNotification {}

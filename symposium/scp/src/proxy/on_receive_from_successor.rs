@@ -111,8 +111,8 @@ where
         //    "id": $outer_id,
         //    "params": {
         //        "message": {
-        //            "id": $inner_id,
-        //            ...
+        //            "method": $inner_method,
+        //            "params": $inner_params,
         //        }
         //    }
         // }

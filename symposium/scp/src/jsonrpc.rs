@@ -1,5 +1,6 @@
 //! Core JSON-RPC server support.
 
+use std::f64::consts::E;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -246,21 +247,8 @@ impl JsonRpcCx {
         request: Req,
     ) -> JsonRpcResponse<Req::Response> {
         let method = request.method().to_string();
-        self.send_json_request(method, request).map(move |json| {
-            serde_json::from_value(json).map_err(|_err| jsonrpcmsg::Error::parse_error())
-        })
-    }
-
-    /// Sends an untyped request with the given name + parameters.
-    /// Prefer to use [`Self::send_request`].
-    pub fn send_json_request(
-        &self,
-        method: String,
-        params: impl Serialize,
-    ) -> JsonRpcResponse<serde_json::Value> {
         let (response_tx, response_rx) = oneshot::channel();
-
-        match json_cast::<_, Option<jsonrpcmsg::Params>>(params) {
+        match request.params() {
             Ok(params) => {
                 let message = OutgoingMessage::Request {
                     method,
@@ -307,16 +295,7 @@ impl JsonRpcCx {
         notification: N,
     ) -> Result<(), jsonrpcmsg::Error> {
         let method = notification.method().to_string();
-        self.send_json_notification(method, notification)
-    }
-
-    /// Untyped variant of [`Self::send_notification`]; prefer to use the typed version.
-    pub fn send_json_notification(
-        &self,
-        method: String,
-        params: impl Serialize,
-    ) -> Result<(), jsonrpcmsg::Error> {
-        let params: Option<jsonrpcmsg::Params> = json_cast(params)?;
+        let params = notification.params()?;
         self.send_raw_message(OutgoingMessage::Notification { method, params })
     }
 
@@ -345,25 +324,30 @@ impl JsonRpcCx {
 /// The context to respond to an incoming request.
 /// Derefs to a [`JsonRpcCx`] which can be used to send other requests and notification.
 #[must_use]
-pub struct JsonRpcRequestCx<T: JsonRpcMessage> {
+pub struct JsonRpcRequestCx<T: JsonRpcIncomingMessage> {
     /// The context to use to send outgoing messages and replies.
     cx: JsonRpcCx,
+
+    /// The method of the request.
+    method: String,
 
     /// The `id` of the message we are replying to.
     id: jsonrpcmsg::Id,
 
-    /// Maps from a T to the value we will send in response.
+    /// Maps from the (method, T) to the value we will send in response.
+    ///
     /// If this function returns `Ok`, a successful response will be sent.
     /// If this function returns `Err`, an error response will be sent.
-    on_success: Arc<dyn Fn(T) -> Result<serde_json::Value, jsonrpcmsg::Error>>,
+    on_success: Arc<dyn Fn(&str, T) -> Result<serde_json::Value, jsonrpcmsg::Error>>,
 
-    /// Maps from an error E to the value we will send in response.
+    /// Maps from the (method, error E) to the value we will send in response.
+    ///
     /// If this function returns `Ok`, a successful response will be sent.
     /// If this function returns `Err`, an error response will be sent.
-    on_error: Arc<dyn Fn(jsonrpcmsg::Error) -> Result<serde_json::Value, jsonrpcmsg::Error>>,
+    on_error: Arc<dyn Fn(&str, jsonrpcmsg::Error) -> Result<serde_json::Value, jsonrpcmsg::Error>>,
 }
 
-impl<T: JsonRpcMessage> std::ops::Deref for JsonRpcRequestCx<T> {
+impl<T: JsonRpcIncomingMessage> std::ops::Deref for JsonRpcRequestCx<T> {
     type Target = JsonRpcCx;
 
     fn deref(&self) -> &Self::Target {
@@ -372,9 +356,10 @@ impl<T: JsonRpcMessage> std::ops::Deref for JsonRpcRequestCx<T> {
 }
 
 impl JsonRpcRequestCx<serde_json::Value> {
-    fn new(cx: JsonRpcCx, id: jsonrpcmsg::Id) -> Self {
+    fn new(cx: JsonRpcCx, method: String, id: jsonrpcmsg::Id) -> Self {
         Self {
             cx,
+            method,
             id,
             on_success: Arc::new(move |v| Ok(v)),
             on_error: Arc::new(move |e| Err(e)),
@@ -382,34 +367,34 @@ impl JsonRpcRequestCx<serde_json::Value> {
     }
 }
 
-impl<T: JsonRpcMessage> JsonRpcRequestCx<T> {
-    /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
-    pub fn cast<U: JsonRpcMessage>(self) -> JsonRpcRequestCx<U> {
-        self.map(json_cast, move |e| Err(e))
+impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
+    pub fn erase_to_json(self) -> JsonRpcRequestCx<serde_json::Value> {
+        self.map(T::from_value, |_, err| Err(err))
     }
 
     /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
-    pub fn map<U: JsonRpcMessage>(
+    pub fn map<U: JsonRpcIncomingMessage>(
         self,
-        map_success: impl Fn(U) -> Result<T, jsonrpcmsg::Error> + 'static,
-        map_error: impl Fn(jsonrpcmsg::Error) -> Result<T, jsonrpcmsg::Error> + 'static,
+        map_success: impl Fn(&str, U) -> Result<T, jsonrpcmsg::Error> + 'static,
+        map_error: impl Fn(&str, jsonrpcmsg::Error) -> Result<T, jsonrpcmsg::Error> + 'static,
     ) -> JsonRpcRequestCx<U> {
         JsonRpcRequestCx::<U> {
             id: self.id,
+            method: self.method,
             cx: self.cx,
             on_success: Arc::new({
                 let on_success = self.on_success.clone();
-                move |u: U| {
-                    let t_value: T = map_success(u)?;
-                    on_success(t_value)
+                move |method, u: U| {
+                    let t_value: T = map_success(method, u)?;
+                    on_success(method, t_value)
                 }
             }),
             on_error: Arc::new({
                 let on_success = self.on_success;
                 let on_error = self.on_error;
-                move |err: jsonrpcmsg::Error| match map_error(err) {
-                    Ok(t_value) => on_success(t_value),
-                    Err(e) => on_error(e),
+                move |method, err: jsonrpcmsg::Error| match map_error(method, err) {
+                    Ok(t_value) => on_success(method, t_value),
+                    Err(e) => on_error(method, e),
                 }
             }),
         }
@@ -447,7 +432,7 @@ impl<T: JsonRpcMessage> JsonRpcRequestCx<T> {
         tracing::debug!(id = ?self.id, "respond called");
         self.cx.send_raw_message(OutgoingMessage::Response {
             id: self.id,
-            response: (self.on_success)(response),
+            response: (self.on_success)(&self.method, response),
         })
     }
 
@@ -461,28 +446,41 @@ impl<T: JsonRpcMessage> JsonRpcRequestCx<T> {
         tracing::debug!(id = ?self.id, ?error, "respond_with_error called");
         self.cx.send_raw_message(OutgoingMessage::Response {
             id: self.id,
-            response: (self.on_error)(error),
+            response: (self.on_error)(&self.method, error),
         })
     }
 }
 
-/// Alias for "serialize + deserialize + 'static".
-pub trait JsonRpcMessage: serde::de::DeserializeOwned + serde::Serialize + 'static + Debug {}
-impl<T: serde::de::DeserializeOwned + serde::Serialize + Debug + 'static> JsonRpcMessage for T {}
+/// Common bounds for any JSON-RPC message.
+pub trait JsonRpcMessage: 'static + Debug {}
+impl<T: Debug + 'static> JsonRpcMessage for T {}
 
-/// A struct that serializes to the paramcontaining the parameters
-pub trait JsonRpcNotification: JsonRpcMessage {
-    /// The method name for the notification.
-    fn method(&self) -> &str;
+pub trait JsonRpcIncomingMessage: JsonRpcMessage {
+    /// Parse a JSON value into the response type.
+    fn from_value(method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error>;
 }
 
-/// A struct that serializes to the paramcontaining the parameters
-pub trait JsonRpcRequest: JsonRpcMessage {
-    /// The type of data expected in response.
-    type Response: JsonRpcMessage;
+impl JsonRpcIncomingMessage for serde_json::Value {
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        Ok(value)
+    }
+}
 
+pub trait JsonRpcOutgoingMessage: JsonRpcMessage {
     /// The method name for the request.
     fn method(&self) -> &str;
+
+    /// The parameters for the request.
+    fn params(&self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error>;
+}
+
+/// A struct that represents a notification (JSON-RPC message that does not expect a response).
+pub trait JsonRpcNotification: JsonRpcOutgoingMessage {}
+
+/// A struct that represents a request (JSON-RPC message expecting a response).
+pub trait JsonRpcRequest: JsonRpcOutgoingMessage {
+    /// The type of data expected in response.
+    type Response: JsonRpcIncomingMessage;
 }
 
 /// Represents a pending response of type `R` from an outgoing request.

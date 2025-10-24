@@ -98,36 +98,6 @@ struct ServeArgs<OB: AsyncWrite, IB: AsyncRead> {
     incoming_bytes: IB,
 }
 
-/// Manages the P/ACP proxy capability based on component position in the chain.
-///
-/// The proxy capability (`_meta.symposium.proxy`) signals to a component whether
-/// it has a successor in the proxy chain:
-/// - **Has successor**: Add the proxy capability
-/// - **No successor (last component)**: Remove/omit the proxy capability
-///
-/// # Arguments
-///
-/// - `request`: The InitializeRequest to modify
-/// - `component_index`: The index of the component receiving this request (0-based)
-/// - `total_components`: Total number of components in the chain
-///
-/// # Returns
-///
-/// The modified InitializeRequest with capability added or removed as appropriate
-fn manage_proxy_capability(
-    request: InitializeRequest,
-    component_index: usize,
-    total_components: usize,
-) -> InitializeRequest {
-    let is_last_component = component_index == total_components - 1;
-
-    if is_last_component {
-        request.remove_meta_capability(Proxy)
-    } else {
-        request.add_meta_capability(Proxy)
-    }
-}
-
 /// The conductor manages the proxy chain lifecycle and message routing.
 ///
 /// It maintains connections to all components in the chain and routes messages
@@ -324,35 +294,7 @@ impl Conductor {
                                 ClientRequest::InitializeRequest(init_req),
                                 json_rpc_request_cx,
                             ) => {
-                                let total_components = self.components.len();
-                                let has_successor = total_components > 1;
-                                let is_last_component = total_components == 1;
-                                let method = "initialize";
-
-                                debug!(
-                                    method,
-                                    target = "component_0",
-                                    has_successor,
-                                    total_components,
-                                    "Routing initialization request to first component"
-                                );
-
-                                let modified_req = manage_proxy_capability(init_req, 0, total_components);
-                                info!(
-                                    target = "component_0",
-                                    has_successor,
-                                    "Managed proxy capability for first component"
-                                );
-
-                                send_request_and_forward_response(
-                                    &self.components[0].jsonrpccx,
-                                    ClientRequest::InitializeRequest(modified_req),
-                                    json_rpc_request_cx.cast(),
-                                    conductor_tx.clone(),
-                                    method.to_string(),
-                                    is_last_component,
-                                )
-                                .await;
+                                self.send_initialize_request(0, init_req, json_rpc_request_cx);
                             }
 
                             scp::AcpClientToAgentMessage::Request(
@@ -361,17 +303,6 @@ impl Conductor {
                             ) => {
                                 let method = client_request.method().to_string();
 
-                                // Special handling for NewSessionRequest: transform MCP servers if needed
-                                if method == "newSession" && self.agent_needs_mcp_bridging == Some(true) {
-                                    if let ClientRequest::NewSessionRequest(new_session_req) =
-                                        client_request
-                                    {
-                                        info!("Intercepted new session request from editor, transforming MCP servers");
-                                        let transformed = self.transform_mcp_servers(new_session_req, conductor_tx.clone()).await;
-                                        client_request = ClientRequest::NewSessionRequest(transformed);
-                                    }
-                                }
-
                                 debug!(
                                     method,
                                     target = "component_0",
@@ -379,14 +310,12 @@ impl Conductor {
                                     "Routing editor request to first component"
                                 );
 
-
-                                send_request_and_forward_response(
-                                    &self.components[0].jsonrpccx,
+                                self.send_request_to_component(
+                                    0,
                                     client_request,
                                     json_rpc_request_cx,
                                     conductor_tx.clone(),
                                     method,
-                                    false, // Not from last component
                                 )
                                 .await;
                             }
@@ -429,46 +358,24 @@ impl Conductor {
                                 ) => {
                                     let method = agent_request.method().to_string();
 
-                                    // Phase 3: Check for _mcp/$UUID/* pattern
-                                    if method.starts_with("_mcp/") {
-                                        if self.route_to_mcp_bridge_request(
-                                            &method,
-                                            agent_request,
-                                            json_rpc_request_cx,
-                                            conductor_tx.clone(),
-                                        ).is_some() {
-                                            debug!(
-                                                component_index,
-                                                method,
-                                                "Routed MCP request to bridge"
-                                            );
-                                            // Message was routed to bridge, done
-                                        } else {
-                                            warn!(
-                                                component_index,
-                                                method,
-                                                "Failed to route MCP request - bridge not found or not connected"
-                                            );
-                                            // TODO: Send error response back
-                                        }
-                                    } else {
-                                        debug!(
-                                            component_index,
-                                            method,
-                                            target,
-                                            "Routing component request to its client"
-                                        );
-                                        send_request_and_forward_response(
-                                            its_client,
-                                            agent_request,
-                                            json_rpc_request_cx,
-                                            conductor_tx.clone(),
-                                            method,
-                                            false, // Not from last component
-                                        )
-                                        .await;
-                                    }
+                                    debug!(
+                                        component_index,
+                                        method,
+                                        target,
+                                        "Routing component request to its client"
+                                    );
+
+                                    send_request_and_forward_response(
+                                        its_client,
+                                        agent_request,
+                                        json_rpc_request_cx,
+                                        conductor_tx.clone(),
+                                        method,
+                                        false, // Not from last component
+                                    )
+                                    .await;
                                 }
+
                                 scp::AcpAgentToClientMessage::Notification(
                                     agent_notification,
                                     _json_rpc_cx,
@@ -510,112 +417,77 @@ impl Conductor {
 
                         ConductorMessage::ComponentToItsSuccessorSendRequest {
                             component_index,
-                            args: scp::ToSuccessorRequest { method, params },
+                            args: scp::ToSuccessorRequest { method, mut params },
                             component_response_cx,
-                        } => {
-                            let successor_index = component_index + 1;
+                        } => if method == "initialize" {
+                            // When forwarding "initialize", we either add or remove the proxy capability,
+                            // depending on whether we are sending this message to the final component.
+                            self.send_initialize_request(
+                                component_index,
+                                serde_json::from_value(params),
+                                component_response_cx,
+                            );
+                        } else if (
+                            method == "session/new" &&
+                            self.is_last_proxy(component_index)
+                        ) {
+                            // Intercept `session/new` send to the final agent
+                            // to (maybe) adjust ACP bridging.
 
-                            // Do transformations that require &mut self BEFORE borrowing from self.components
-                            let (final_method, final_params) = if method == "initialize" {
-                                // Try to parse params as InitializeRequest
-                                if let Ok(init_req) = serde_json::from_value::<InitializeRequest>(params.clone()) {
-                                    let total_components = self.components.len();
-                                    let is_last_component = successor_index == total_components - 1;
-                                    let modified_req = manage_proxy_capability(
-                                        init_req,
-                                        successor_index,
-                                        total_components
-                                    );
-
-                                    info!(
-                                        successor_index,
-                                        is_last_component,
-                                        total_components,
-                                        "Managed proxy capability for successor component"
-                                    );
-
-                                    // Serialize back to params
-                                    let modified_params = serde_json::to_value(modified_req)
-                                        .unwrap_or(params.clone());
-                                    (method, modified_params)
-                                } else {
-                                    (method, params)
-                                }
-                            } else if method == "newSession" && self.agent_needs_mcp_bridging == Some(true) {
-                                // Try to parse params as NewSessionRequest
-                                if let Ok(new_session_req) = serde_json::from_value::<NewSessionRequest>(params.clone()) {
-                                    info!(
-                                        component_index,
-                                        successor_index,
-                                        "Intercepted new session request from component, transforming MCP servers"
-                                    );
-                                    let transformed = self.transform_mcp_servers(new_session_req, conductor_tx.clone()).await;
-                                    let modified_params = serde_json::to_value(transformed)
-                                        .unwrap_or(params.clone());
-                                    (method, modified_params)
-                                } else {
-                                    (method, params)
-                                }
-                            } else {
-                                (method, params)
+                            let Ok(mut new_session_req) = serde_json::from_value::<NewSessionRequest>(params.clone()) else {
+                                component_response_cx.respond_with_error(jsonrpcmsg::Error::invalid_params());
+                                continue;
                             };
 
-                            // Now we can safely borrow from self.components
-                            if let Some(successor_component) = self.components.get(successor_index)
-                            {
-                                let is_last_component = successor_index == self.components.len() - 1;
-
-                                debug!(
-                                    component_index,
-                                    successor_index,
-                                    method = %final_method,
-                                    is_last_component,
-                                    "Routing _proxy/successor/request to successor component"
-                                );
-
-                                let successor_response = successor_component
-                                    .jsonrpccx
-                                    .send_json_request(final_method.clone(), final_params);
-
-                                let component_request_id = component_response_cx.id().clone();
-                                let mut conductor_tx_clone = conductor_tx.clone();
-                                let current_span = tracing::Span::current();
-                                let method_clone = final_method.to_string();
-                                tokio::task::spawn_local(
-                                    async move {
-                                        debug!("Waiting for successor response");
-                                        let result = successor_response.recv().await;
-                                        let is_ok = result.is_ok();
-                                        debug!(is_ok, "Received successor response, sending to conductor");
-
-                                        if let Err(error) = conductor_tx_clone
-                                            .send(ConductorMessage::SuccessorResponseReceived {
-                                                result,
-                                                component_response_cx,
-                                                method: method_clone,
-                                                from_last_component: is_last_component,
-                                            })
-                                            .await
-                                        {
-                                            error!(?error, "Failed to send successor response to conductor");
-                                        } else {
-                                            debug!("Sent successor response to conductor for forwarding");
-                                        }
-                                    }
-                                    .instrument(tracing::info_span!(
-                                        "receive_successor_response",
-                                        component_request_id = ?component_request_id
-                                    ))
-                                    .instrument(current_span),
-                                );
-                            } else {
-                                warn!(
-                                    component_index,
-                                    "Component requested successor but it's the last in chain"
-                                );
-                                component_response_cx
-                                    .respond_with_error(jsonrpcmsg::Error::internal_error())?;
+                            if self.agent_needs_mcp_bridging.unwrap_or(false) {
+                                new_session_req = self.transform_mcp_servers(new_session_req, conductor_tx.clone()).await;
                             }
+
+
+                        } else {
+                            // Now we can safely borrow from self.components
+                            let successor_index = component_index + 1;
+
+                            debug!(
+                                component_index,
+                                successor_index,
+                                method = %method,
+                                "Routing _proxy/successor/request to successor component"
+                            );
+
+                            let successor_response = successor_component
+                                .jsonrpccx
+                                .send_json_request(method, params);
+
+                            let component_request_id = component_response_cx.id().clone();
+                            let current_span = tracing::Span::current();
+                            tokio::task::spawn_local(
+                                async move {
+                                    debug!("Waiting for successor response");
+                                    let result = successor_response.recv().await;
+                                    let is_ok = result.is_ok();
+                                    debug!(is_ok, "Received successor response, sending to conductor");
+
+                                    if let Err(error) = conductor_tx
+                                        .send(ConductorMessage::ResponseReceived {
+                                            result,
+                                            component_response_cx,
+                                            method,
+                                            target_component_index: successor_index,
+                                        })
+                                        .await
+                                    {
+                                        error!(?error, "Failed to send successor response to conductor");
+                                    } else {
+                                        debug!("Sent successor response to conductor for forwarding");
+                                    }
+                                }
+                                .instrument(tracing::info_span!(
+                                    "receive_successor_response",
+                                    component_request_id = ?component_request_id
+                                ))
+                                .instrument(current_span),
+                            );
                         }
 
                         ConductorMessage::ComponentToItsSuccessorSendNotification {
@@ -689,13 +561,12 @@ impl Conductor {
                             mut result,
                             component_response_cx,
                             method,
-                            from_last_component,
-                        } => {
-                            debug!(method, from_last_component, "Processing successor response");
+                            component_index,
+                        } => if method == "initialize" && self.is_last_proxy(component_index) {
+                            // If this is the reponse to "initialize" sent by the agent
+                        } else {
+                            debug!(method, component_index, "Processing successor response");
 
-                            // If this is an InitializeResponse from the last component (agent),
-                            // check for mcp_acp_transport capability
-                            if from_last_component && method == "initialize" {
                                 if let Ok(ref mut response_value) = result {
                                     if let Ok(mut init_response) = serde_json::from_value::<agent_client_protocol::InitializeResponse>(response_value.clone()) {
                                         // Check if agent has mcp_acp_transport capability
@@ -797,6 +668,50 @@ impl Conductor {
             })
             .await
             .map_err(|err| anyhow::anyhow!("{err:?}"))
+    }
+
+    /// Checks if the given component index is the agent (final component).
+    fn is_agent_component(&self, component_index: usize) -> bool {
+        component_index == self.components.len() - 1
+    }
+
+    /// Checks if the given component index is the last proxy before the agent.
+    fn is_last_proxy_component(&self, component_index: usize) -> bool {
+        self.components.len() > 1 && component_index == self.components.len() - 2
+    }
+
+    async fn send_initialize_request<E>(&self, to_component: usize, initialize_req: Result<InitializeRequest, E>,
+        json_rpc_request_cx: JsonRpcRequestCx<serde_json::Value>) {
+        let total_components = self.components.len();
+        let to_last_component = to_component == total_components - 1;
+
+        let Ok(mut initialize_req) = initialize_req else {
+            json_rpc_request_cx.respond_with_error(jsonrpcmsg::Error::parse_error());
+            return;
+        }
+
+        // Either add or remove proxy, depending on whether this component has a successor.
+        let modified_req = if to_last_component {
+            initialize_req = initialize_req.remove_meta_capability(Proxy);
+        } else {
+            initialize_req = initialize_req.add_meta_capability(Proxy);
+        };
+
+        info!(
+            target = "component_0",
+            has_successor,
+            "Managed proxy capability for first component"
+        );
+
+        send_request_and_forward_response(
+            &self.components[0].jsonrpccx,
+            ClientRequest::InitializeRequest(initialize_req),
+            json_rpc_request_cx.cast(),
+            conductor_tx.clone(),
+            method.to_string(),
+            is_last_component,
+        )
+        .await;
     }
 
     /// Transforms MCP servers with `acp:$UUID` URLs for agents that need bridging.
@@ -1077,45 +992,47 @@ impl Conductor {
 
         Ok(tcp_port)
     }
+
+    /// Send `req`
+    async fn send_request_to_component<Req: JsonRpcRequest<Response = serde_json::Value>>(
+        &self,
+        target_component_index: usize,
+        req: Req,
+        response_cx: JsonRpcRequestCx<serde_json::Value>,
+        mut conductor_tx: mpsc::Sender<ConductorMessage>,
+    ) {
+        let method = req.method();
+        let response = to_cx.send_request(req);
+        let request_id = response_cx.id().clone();
+        let current_span = tracing::Span::current();
+        tokio::task::spawn_local(
+            async move {
+                debug!("Waiting for response");
+                let result = response.recv().await;
+                let is_ok = result.is_ok();
+                debug!(is_ok, ?result, "Received response, sending to conductor");
+                if let Err(error) = conductor_tx
+                    .send(ConductorMessage::ResponseReceived {
+                        result,
+                        response_cx,
+                        method,
+                        target_component_index,
+                    })
+                    .await
+                {
+                    error!(?error, "Failed to send response to conductor");
+                } else {
+                    debug!("Sent response to conductor for forwarding");
+                }
+            }
+            .instrument(tracing::info_span!("receive_response", request_id = ?request_id))
+            .instrument(current_span),
+        );
+    }
+
 }
 
 fn ignore_send_err<T>(_: Result<T, mpsc::SendError>) {}
-
-async fn send_request_and_forward_response<Req: JsonRpcRequest<Response = serde_json::Value>>(
-    to_cx: &JsonRpcCx,
-    req: Req,
-    response_cx: JsonRpcRequestCx<serde_json::Value>,
-    mut conductor_tx: mpsc::Sender<ConductorMessage>,
-    method: String,
-    from_last_component: bool,
-) {
-    let response = to_cx.send_request(req);
-    let request_id = response_cx.id().clone();
-    let current_span = tracing::Span::current();
-    tokio::task::spawn_local(
-        async move {
-            debug!("Waiting for response");
-            let result = response.recv().await;
-            let is_ok = result.is_ok();
-            debug!(is_ok, ?result, "Received response, sending to conductor");
-            if let Err(error) = conductor_tx
-                .send(ConductorMessage::ResponseReceived {
-                    result,
-                    response_cx,
-                    method,
-                    from_last_component,
-                })
-                .await
-            {
-                error!(?error, "Failed to send response to conductor");
-            } else {
-                debug!("Sent response to conductor for forwarding");
-            }
-        }
-        .instrument(tracing::info_span!("receive_response", request_id = ?request_id))
-        .instrument(current_span),
-    );
-}
 
 struct SuccessorSendCallbacks {
     component_index: usize,
@@ -1216,22 +1133,8 @@ pub enum ConductorMessage {
         response_cx: JsonRpcRequestCx<serde_json::Value>,
         /// The method that was called (e.g., "initialize")
         method: String,
-        /// Whether this response is from the last component (the agent)
-        from_last_component: bool,
-    },
-
-    /// Response received from a successor component that needs to be forwarded.
-    ///
-    /// Similar to ResponseReceived but for responses from _proxy/successor/* requests.
-    SuccessorResponseReceived {
-        /// The response result (Ok with JSON value or Err with error)
-        result: Result<serde_json::Value, jsonrpcmsg::Error>,
-        /// Context to send the response to (wrapped in ToSuccessorResponse)
-        component_response_cx: JsonRpcRequestCx<scp::ToSuccessorResponse<serde_json::Value>>,
-        /// The method that was called (e.g., "initialize")
-        method: String,
-        /// Whether this response is from the last component (the agent)
-        from_last_component: bool,
+        /// Index of the component that sent the request
+        target_component_index: usize,
     },
 
     /// Error from a spawned task that couldn't be handled locally.
