@@ -7,7 +7,10 @@
 //! - Client disconnect handling
 
 use futures::{AsyncRead, AsyncWrite};
-use scp::{Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcRequest, JsonRpcRequestCx};
+use scp::{
+    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+};
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -39,12 +42,20 @@ fn setup_test_connections<H: JsonRpcHandler + 'static>(
 #[derive(Debug, Serialize, Deserialize)]
 struct EmptyRequest;
 
-impl JsonRpcRequest for EmptyRequest {
-    type Response = SimpleResponse;
+impl JsonRpcMessage for EmptyRequest {}
+
+impl JsonRpcOutgoingMessage for EmptyRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "empty_method"
     }
+}
+
+impl JsonRpcRequest for EmptyRequest {
+    type Response = SimpleResponse;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,17 +64,37 @@ struct OptionalParamsRequest {
     value: Option<String>,
 }
 
-impl JsonRpcRequest for OptionalParamsRequest {
-    type Response = SimpleResponse;
+impl JsonRpcMessage for OptionalParamsRequest {}
+
+impl JsonRpcOutgoingMessage for OptionalParamsRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "optional_params_method"
     }
 }
 
+impl JsonRpcRequest for OptionalParamsRequest {
+    type Response = SimpleResponse;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SimpleResponse {
     result: String,
+}
+
+impl JsonRpcMessage for SimpleResponse {}
+
+impl JsonRpcIncomingMessage for SimpleResponse {
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error> {
+        serde_json::to_value(self).map_err(scp::util::internal_error)
+    }
+
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        scp::util::json_cast(&value)
+    }
 }
 
 // ============================================================================
@@ -75,18 +106,17 @@ struct EmptyParamsHandler;
 impl JsonRpcHandler for EmptyParamsHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         _params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "empty_method" {
+        if cx.method() == "empty_method" {
             // Accept request with no params
-            response.cast::<SimpleResponse>().respond(SimpleResponse {
+            cx.parse_from_json().respond(SimpleResponse {
                 result: "Got empty request".to_string(),
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -134,20 +164,19 @@ struct NullParamsHandler;
 impl JsonRpcHandler for NullParamsHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "optional_params_method" {
+        if cx.method() == "optional_params_method" {
             // Check if params is None or contains null
             let has_params = params.is_some();
 
-            response.cast::<SimpleResponse>().respond(SimpleResponse {
+            cx.parse_from_json().respond(SimpleResponse {
                 result: format!("Has params: {}", has_params),
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }

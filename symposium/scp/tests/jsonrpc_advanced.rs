@@ -6,7 +6,10 @@
 //! - Out-of-order response handling
 
 use futures::{AsyncRead, AsyncWrite};
-use scp::{Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcRequest, JsonRpcRequestCx};
+use scp::{
+    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+};
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -40,17 +43,37 @@ struct PingRequest {
     value: u32,
 }
 
-impl JsonRpcRequest for PingRequest {
-    type Response = PongResponse;
+impl JsonRpcMessage for PingRequest {}
+
+impl JsonRpcOutgoingMessage for PingRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "ping"
     }
 }
 
+impl JsonRpcRequest for PingRequest {
+    type Response = PongResponse;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct PongResponse {
     value: u32,
+}
+
+impl JsonRpcMessage for PongResponse {}
+
+impl JsonRpcIncomingMessage for PongResponse {
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error> {
+        serde_json::to_value(self).map_err(scp::util::internal_error)
+    }
+
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        scp::util::json_cast(&value)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,17 +82,37 @@ struct SlowRequest {
     id: u32,
 }
 
-impl JsonRpcRequest for SlowRequest {
-    type Response = SlowResponse;
+impl JsonRpcMessage for SlowRequest {}
+
+impl JsonRpcOutgoingMessage for SlowRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "slow"
     }
 }
 
+impl JsonRpcRequest for SlowRequest {
+    type Response = SlowResponse;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SlowResponse {
     id: u32,
+}
+
+impl JsonRpcMessage for SlowResponse {}
+
+impl JsonRpcIncomingMessage for SlowResponse {
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error> {
+        serde_json::to_value(self).map_err(scp::util::internal_error)
+    }
+
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        scp::util::json_cast(&value)
+    }
 }
 
 // ============================================================================
@@ -81,20 +124,19 @@ struct PingHandler;
 impl JsonRpcHandler for PingHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "ping" {
+        if cx.method() == "ping" {
             let request: PingRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            response.cast::<PongResponse>().respond(PongResponse {
+            cx.parse_from_json().respond(PongResponse {
                 value: request.value + 1,
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -191,23 +233,21 @@ struct SlowHandler;
 impl JsonRpcHandler for SlowHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "slow" {
+        if cx.method() == "slow" {
             let request: SlowRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
             // Simulate delay
             tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
 
-            response
-                .cast::<SlowResponse>()
+            cx.parse_from_json()
                 .respond(SlowResponse { id: request.id })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }

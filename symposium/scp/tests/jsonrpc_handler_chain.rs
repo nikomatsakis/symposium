@@ -6,8 +6,9 @@
 
 use scp::util::internal_error;
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcNotification,
-    JsonRpcRequestCx,
+    Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcIncomingMessage,
+    JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage,
+    JsonRpcRequest, JsonRpcRequestCx,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -23,12 +24,20 @@ struct FooRequest {
     value: String,
 }
 
-impl scp::JsonRpcRequest for FooRequest {
-    type Response = FooResponse;
+impl JsonRpcMessage for FooRequest {}
+
+impl JsonRpcOutgoingMessage for FooRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "foo"
     }
+}
+
+impl JsonRpcRequest for FooRequest {
+    type Response = FooResponse;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,17 +45,37 @@ struct FooResponse {
     result: String,
 }
 
+impl JsonRpcMessage for FooResponse {}
+
+impl JsonRpcIncomingMessage for FooResponse {
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error> {
+        serde_json::to_value(self).map_err(scp::util::internal_error)
+    }
+
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        scp::util::json_cast(&value)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct BarRequest {
     value: String,
 }
 
-impl scp::JsonRpcRequest for BarRequest {
-    type Response = BarResponse;
+impl JsonRpcMessage for BarRequest {}
+
+impl JsonRpcOutgoingMessage for BarRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "bar"
     }
+}
+
+impl JsonRpcRequest for BarRequest {
+    type Response = BarResponse;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,25 +83,36 @@ struct BarResponse {
     result: String,
 }
 
+impl JsonRpcMessage for BarResponse {}
+
+impl JsonRpcIncomingMessage for BarResponse {
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error> {
+        serde_json::to_value(self).map_err(scp::util::internal_error)
+    }
+
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error> {
+        scp::util::json_cast(&value)
+    }
+}
+
 struct FooHandler;
 
 impl JsonRpcHandler for FooHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "foo" {
+        if cx.method() == "foo" {
             let request: FooRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            response.cast::<FooResponse>().respond(FooResponse {
+            cx.parse_from_json().respond(FooResponse {
                 result: format!("foo: {}", request.value),
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -82,20 +122,19 @@ struct BarHandler;
 impl JsonRpcHandler for BarHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "bar" {
+        if cx.method() == "bar" {
             let request: BarRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            response.cast::<BarResponse>().respond(BarResponse {
+            cx.parse_from_json().respond(BarResponse {
                 result: format!("bar: {}", request.value),
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -172,12 +211,20 @@ struct TrackRequest {
     value: String,
 }
 
-impl scp::JsonRpcRequest for TrackRequest {
-    type Response = FooResponse;
+impl JsonRpcMessage for TrackRequest {}
+
+impl JsonRpcOutgoingMessage for TrackRequest {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "track"
     }
+}
+
+impl JsonRpcRequest for TrackRequest {
+    type Response = FooResponse;
 }
 
 struct TrackingHandler {
@@ -188,22 +235,21 @@ struct TrackingHandler {
 impl JsonRpcHandler for TrackingHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == "track" {
+        if cx.method() == "track" {
             self.handled.lock().unwrap().push(self.name.clone());
 
             let request: TrackRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            response.cast::<FooResponse>().respond(FooResponse {
+            cx.parse_from_json().respond(FooResponse {
                 result: format!("{}: {}", self.name, request.value),
             })?;
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -282,12 +328,20 @@ struct Method1Request {
     value: String,
 }
 
-impl scp::JsonRpcRequest for Method1Request {
-    type Response = FooResponse;
+impl JsonRpcMessage for Method1Request {}
+
+impl JsonRpcOutgoingMessage for Method1Request {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "method1"
     }
+}
+
+impl JsonRpcRequest for Method1Request {
+    type Response = FooResponse;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -295,12 +349,20 @@ struct Method2Request {
     value: String,
 }
 
-impl scp::JsonRpcRequest for Method2Request {
-    type Response = FooResponse;
+impl JsonRpcMessage for Method2Request {}
+
+impl JsonRpcOutgoingMessage for Method2Request {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
 
     fn method(&self) -> &str {
         "method2"
     }
+}
+
+impl JsonRpcRequest for Method2Request {
+    type Response = FooResponse;
 }
 
 struct SelectiveHandler {
@@ -311,12 +373,11 @@ struct SelectiveHandler {
 impl JsonRpcHandler for SelectiveHandler {
     async fn handle_request(
         &mut self,
-        method: &str,
+        cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
-        response: JsonRpcRequestCx<serde_json::Value>,
     ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
-        if method == self.method_to_handle {
-            self.handled.lock().unwrap().push(method.to_string());
+        if cx.method() == self.method_to_handle {
+            self.handled.lock().unwrap().push(cx.method().to_string());
 
             // Parse as generic struct with value field
             #[derive(Deserialize)]
@@ -326,13 +387,13 @@ impl JsonRpcHandler for SelectiveHandler {
             let request: GenericRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            response.cast::<FooResponse>().respond(FooResponse {
-                result: format!("{}: {}", method, request.value),
+            cx.parse_from_json().respond(FooResponse {
+                result: format!("{}: {}", cx.method(), request.value),
             })?;
             Ok(Handled::Yes)
         } else {
             // Pass through to next handler
-            Ok(Handled::No(response))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -464,11 +525,19 @@ struct EventNotification {
     event: String,
 }
 
-impl JsonRpcNotification for EventNotification {
+impl JsonRpcMessage for EventNotification {}
+
+impl JsonRpcOutgoingMessage for EventNotification {
+    fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
+        scp::util::json_cast(self)
+    }
+
     fn method(&self) -> &str {
         "event"
     }
 }
+
+impl JsonRpcNotification for EventNotification {}
 
 struct EventHandler {
     events: Arc<Mutex<Vec<String>>>,
@@ -477,18 +546,17 @@ struct EventHandler {
 impl JsonRpcHandler for EventHandler {
     async fn handle_notification(
         &mut self,
-        method: &str,
+        cx: JsonRpcNotificationCx,
         params: &Option<jsonrpcmsg::Params>,
-        _cx: &JsonRpcConnectionCx,
-    ) -> std::result::Result<Handled<()>, jsonrpcmsg::Error> {
-        if method == "event" {
+    ) -> std::result::Result<Handled<JsonRpcNotificationCx>, jsonrpcmsg::Error> {
+        if cx.method() == "event" {
             let notification: EventNotification =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
             self.events.lock().unwrap().push(notification.event);
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No(()))
+            Ok(Handled::No(cx))
         }
     }
 }
@@ -498,12 +566,11 @@ struct IgnoreHandler;
 impl JsonRpcHandler for IgnoreHandler {
     async fn handle_notification(
         &mut self,
-        _method: &str,
+        cx: JsonRpcNotificationCx,
         _params: &Option<jsonrpcmsg::Params>,
-        _cx: &JsonRpcConnectionCx,
-    ) -> std::result::Result<Handled<()>, jsonrpcmsg::Error> {
+    ) -> std::result::Result<Handled<JsonRpcNotificationCx>, jsonrpcmsg::Error> {
         // Never claims anything, always passes through
-        Ok(Handled::No(()))
+        Ok(Handled::No(cx))
     }
 }
 
