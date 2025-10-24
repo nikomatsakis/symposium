@@ -56,56 +56,56 @@ impl<CB: AcpAgentToClientCallbacks> JsonRpcHandler for AcpAgentToClientMessages<
         match cx.method() {
             "session/request_permission" => {
                 self.callbacks
-                    .request_permission(json_cast(params)?, cx.parse_from_json())
+                    .request_permission(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "fs/write_text_file" => {
                 self.callbacks
-                    .write_text_file(json_cast(params)?, cx.parse_from_json())
+                    .write_text_file(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "fs/read_text_file" => {
                 self.callbacks
-                    .read_text_file(json_cast(params)?, cx.parse_from_json())
+                    .read_text_file(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "terminal/create" => {
                 self.callbacks
-                    .create_terminal(json_cast(params)?, cx.parse_from_json())
+                    .create_terminal(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "terminal/output" => {
                 self.callbacks
-                    .terminal_output(json_cast(params)?, cx.parse_from_json())
+                    .terminal_output(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "terminal/release" => {
                 self.callbacks
-                    .release_terminal(json_cast(params)?, cx.parse_from_json())
+                    .release_terminal(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "terminal/wait_for_exit" => {
                 self.callbacks
-                    .wait_for_terminal_exit(json_cast(params)?, cx.parse_from_json())
+                    .wait_for_terminal_exit(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "terminal/kill" => {
                 self.callbacks
-                    .kill_terminal_command(json_cast(params)?, cx.parse_from_json())
+                    .kill_terminal_command(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)

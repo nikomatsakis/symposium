@@ -56,35 +56,35 @@ impl<CB: AcpClientToAgentCallbacks> JsonRpcHandler for AcpClientToAgentMessages<
         match cx.method() {
             "initialize" => {
                 self.callbacks
-                    .initialize(json_cast(params)?, cx.parse_from_json())
+                    .initialize(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "session/load" => {
                 self.callbacks
-                    .load_session(json_cast(params)?, cx.parse_from_json())
+                    .load_session(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "session/new" => {
                 self.callbacks
-                    .new_session(json_cast(params)?, cx.parse_from_json())
+                    .new_session(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "session/prompt" => {
                 self.callbacks
-                    .prompt(json_cast(params)?, cx.parse_from_json())
+                    .prompt(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)
             }
             "session/set_mode" => {
                 self.callbacks
-                    .set_session_mode(json_cast(params)?, cx.parse_from_json())
+                    .set_session_mode(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(jsonrpc::Handled::Yes)

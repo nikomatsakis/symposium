@@ -256,7 +256,7 @@ impl JsonRpcConnectionCx {
         match request.params() {
             Ok(params) => {
                 let message = OutgoingMessage::Request {
-                    method,
+                    method: method.clone(),
                     params,
                     response_tx,
                 };
@@ -292,6 +292,7 @@ impl JsonRpcConnectionCx {
         }
 
         JsonRpcResponse::new(response_rx)
+            .map(move |json| <Req::Response>::from_value(&method, json))
     }
 
     /// Send an outgoing notification (no reply expected).)
@@ -390,35 +391,25 @@ impl<T: JsonRpcIncomingMessage> std::ops::Deref for JsonRpcRequestCx<T> {
 }
 
 impl JsonRpcRequestCx<serde_json::Value> {
-    pub fn parse_from_json<T: JsonRpcIncomingMessage>(self) -> JsonRpcRequestCx<T> {
-        self.map(
-            |method, value: T| value.into_json(method),
-            |_, err| Err(err),
-        )
-    }
-}
-
-impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
     /// Create a new method context.
-    pub fn new(
-        cx: &JsonRpcConnectionCx,
-        method: String,
-        id: jsonrpcmsg::Id,
-        make_json: impl FnOnce(
-            (String, jsonrpcmsg::Id),
-            Result<T, jsonrpcmsg::Error>,
-        ) -> Result<serde_json::Value, jsonrpcmsg::Error>
-        + Send
-        + 'static,
-    ) -> Self {
+    fn new(cx: &JsonRpcConnectionCx, method: String, id: jsonrpcmsg::Id) -> Self {
         Self {
             cx: cx.clone(),
             method,
             id,
-            make_json: SendBoxFnOnce::new(make_json),
+            make_json: SendBoxFnOnce::new(move |_, value| value),
         }
     }
 
+    pub fn cast<T: JsonRpcIncomingMessage>(self) -> JsonRpcRequestCx<T> {
+        self.wrap_params(move |(method, _), value| match value {
+            Ok(value) => T::into_json(value, &method),
+            Err(e) => Err(e),
+        })
+    }
+}
+
+impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
     /// Get the ID of the request being responded to.
     pub fn id(&self) -> &jsonrpcmsg::Id {
         &self.id
@@ -433,11 +424,21 @@ impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
     /// and which checks (dynamically) that the JSON value it receives
     /// can be converted to `T`.
     pub fn erase_to_json(self) -> JsonRpcRequestCx<serde_json::Value> {
-        self.wrap(T::from_value, |_, err| Err(err))
+        self.wrap_params(|(method, _id), value| T::from_value(&method, value?))
     }
 
     /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
-    pub fn wrap<U: JsonRpcIncomingMessage>(
+    pub fn wrap_method(self, method: String) -> JsonRpcRequestCx<T> {
+        JsonRpcRequestCx {
+            cx: self.cx,
+            method,
+            id: self.id,
+            make_json: self.make_json,
+        }
+    }
+
+    /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
+    pub fn wrap_params<U: JsonRpcIncomingMessage>(
         self,
         wrap_fn: impl FnOnce(
             (String, jsonrpcmsg::Id),
@@ -446,10 +447,17 @@ impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
         + Send
         + 'static,
     ) -> JsonRpcRequestCx<U> {
-        JsonRpcRequestCx::new(&self.cx, self.method, self.id, move |args, input| {
-            let t_value = wrap_fn(args.clone(), input);
-            self.make_json.call(args, t_value)
-        })
+        JsonRpcRequestCx {
+            cx: self.cx,
+            method: self.method,
+            id: self.id,
+            make_json: SendBoxFnOnce::new(
+                move |args: (String, jsonrpcmsg::Id), input: Result<U, jsonrpcmsg::Error>| {
+                    let t_value = wrap_fn(args.clone(), input);
+                    self.make_json.call(args, t_value)
+                },
+            ),
+        }
     }
 
     /// Get the underlying JSON RPC context.
@@ -511,7 +519,7 @@ pub trait JsonRpcMessage: 'static + Debug + Sized {}
 
 pub trait JsonRpcIncomingMessage: JsonRpcMessage {
     /// Convert this message into a JSON value.
-    fn into_json(self, _method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error>;
+    fn into_json(self, method: &str) -> Result<serde_json::Value, jsonrpcmsg::Error>;
 
     /// Parse a JSON value into the response type.
     fn from_value(method: &str, value: serde_json::Value) -> Result<Self, jsonrpcmsg::Error>;

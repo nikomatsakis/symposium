@@ -49,7 +49,7 @@ impl<CB: ConductorCallbacks> JsonRpcHandler for ProxyToConductorMessages<CB> {
             "_proxy/successor/send/request" => {
                 // Proxy is requesting us to send this message to their successor.
                 self.callbacks
-                    .successor_send_request(json_cast(params)?, cx.parse_from_json())
+                    .successor_send_request(json_cast(params)?, cx.cast())
                     .await
                     .map_err(acp_to_jsonrpc_error)?;
                 Ok(Handled::Yes)

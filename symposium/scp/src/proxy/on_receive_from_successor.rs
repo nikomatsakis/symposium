@@ -126,23 +126,10 @@ where
             params: inner_params,
         } = json_cast(params)?;
 
-        // The user will send us a response that is intended for the proxy.
-        // We repackage that into a `{message: ...}` struct that embeds
-        // the response that will be sent to the proxy.
-        let response = cx.map(
-            move |_, response: serde_json::Value| {
-                serde_json::to_value(messages::FromSuccessorResponse::Result(response))
-                    .map_err(|_| jsonrpcmsg::Error::internal_error())
-            },
-            move |_, error: jsonrpcmsg::Error| {
-                serde_json::to_value(messages::FromSuccessorResponse::Error(error))
-                    .map_err(|_| jsonrpcmsg::Error::internal_error())
-            },
-        );
-
-        self.handler
-            .handle_request(&inner_method, &inner_params, response)
-            .await
+        // Create the inner response context using the alternative method name.
+        // But the response will still be sent to `cx`
+        let inner_cx = cx.wrap_method(inner_method);
+        self.handler.handle_request(inner_cx, &inner_params).await
     }
 
     async fn handle_notification(

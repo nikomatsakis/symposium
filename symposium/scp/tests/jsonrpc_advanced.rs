@@ -131,7 +131,7 @@ impl JsonRpcHandler for PingHandler {
             let request: PingRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            cx.parse_from_json().respond(PongResponse {
+            cx.cast().respond(PongResponse {
                 value: request.value + 1,
             })?;
             Ok(Handled::Yes)
@@ -243,8 +243,7 @@ impl JsonRpcHandler for SlowHandler {
             // Simulate delay
             tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
 
-            cx.parse_from_json()
-                .respond(SlowResponse { id: request.id })?;
+            cx.cast().respond(SlowResponse { id: request.id })?;
             Ok(Handled::Yes)
         } else {
             Ok(Handled::No(cx))

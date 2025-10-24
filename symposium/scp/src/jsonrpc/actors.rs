@@ -130,7 +130,7 @@ async fn dispatch_request(
 ) -> Result<(), jsonrpcmsg::Error> {
     if let Some(id) = request.id {
         let method = request.method;
-        let request_cx = JsonRpcRequestCx::new(json_rpc_cx, method.clone(), id.clone(), |_, r| r);
+        let request_cx = JsonRpcRequestCx::new(json_rpc_cx, method.clone(), id.clone());
         let handled = handler.handle_request(request_cx, &request.params).await?;
 
         match handled {
