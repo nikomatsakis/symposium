@@ -6,9 +6,9 @@
 
 use scp::util::internal_error;
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcIncomingMessage,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage,
-    JsonRpcRequest, JsonRpcRequestCx,
+    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage, JsonRpcRequest,
+    JsonRpcRequestCx,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -107,7 +107,7 @@ impl JsonRpcHandler for FooHandler {
             let request: FooRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            cx.parse_from_json().respond(FooResponse {
+            cx.cast().respond(FooResponse {
                 result: format!("foo: {}", request.value),
             })?;
             Ok(Handled::Yes)
@@ -129,7 +129,7 @@ impl JsonRpcHandler for BarHandler {
             let request: BarRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            cx.parse_from_json().respond(BarResponse {
+            cx.cast().respond(BarResponse {
                 result: format!("bar: {}", request.value),
             })?;
             Ok(Handled::Yes)
@@ -244,7 +244,7 @@ impl JsonRpcHandler for TrackingHandler {
             let request: TrackRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            cx.parse_from_json().respond(FooResponse {
+            cx.cast().respond(FooResponse {
                 result: format!("{}: {}", self.name, request.value),
             })?;
             Ok(Handled::Yes)
@@ -377,7 +377,8 @@ impl JsonRpcHandler for SelectiveHandler {
         params: &Option<jsonrpcmsg::Params>,
     ) -> std::result::Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if cx.method() == self.method_to_handle {
-            self.handled.lock().unwrap().push(cx.method().to_string());
+            let method = cx.method().to_string();
+            self.handled.lock().unwrap().push(method.clone());
 
             // Parse as generic struct with value field
             #[derive(Deserialize)]
@@ -387,8 +388,8 @@ impl JsonRpcHandler for SelectiveHandler {
             let request: GenericRequest =
                 scp::util::json_cast(params).map_err(|_| jsonrpcmsg::Error::invalid_params())?;
 
-            cx.parse_from_json().respond(FooResponse {
-                result: format!("{}: {}", cx.method(), request.value),
+            cx.cast().respond(FooResponse {
+                result: format!("{}: {}", method, request.value),
             })?;
             Ok(Handled::Yes)
         } else {

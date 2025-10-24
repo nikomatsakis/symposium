@@ -318,7 +318,7 @@ impl JsonRpcHandler for StrictParamHandler {
             // Try to parse params - should fail if missing/invalid
             match scp::util::json_cast::<_, SimpleRequest>(params) {
                 Ok(request) => {
-                    cx.parse_from_json().respond(SimpleResponse {
+                    cx.cast().respond(SimpleResponse {
                         result: format!("Got: {}", request.message),
                     })?;
                 }

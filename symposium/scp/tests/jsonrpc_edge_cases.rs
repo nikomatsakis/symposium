@@ -111,7 +111,7 @@ impl JsonRpcHandler for EmptyParamsHandler {
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, jsonrpcmsg::Error> {
         if cx.method() == "empty_method" {
             // Accept request with no params
-            cx.parse_from_json().respond(SimpleResponse {
+            cx.cast().respond(SimpleResponse {
                 result: "Got empty request".to_string(),
             })?;
             Ok(Handled::Yes)
@@ -171,7 +171,7 @@ impl JsonRpcHandler for NullParamsHandler {
             // Check if params is None or contains null
             let has_params = params.is_some();
 
-            cx.parse_from_json().respond(SimpleResponse {
+            cx.cast().respond(SimpleResponse {
                 result: format!("Has params: {}", has_params),
             })?;
             Ok(Handled::Yes)

@@ -5,9 +5,9 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcIncomingMessage,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage,
-    JsonRpcRequest, JsonRpcRequestCx,
+    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage, JsonRpcRequest,
+    JsonRpcRequestCx,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -95,7 +95,7 @@ impl JsonRpcHandler for PingHandler {
                 echo: format!("pong: {}", request.message),
             };
 
-            cx.parse_from_json().respond(pong)?;
+            cx.cast().respond(pong)?;
             Ok(Handled::Yes)
         } else {
             Ok(Handled::No(cx))
