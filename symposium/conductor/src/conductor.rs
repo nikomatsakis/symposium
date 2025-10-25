@@ -400,13 +400,12 @@ impl Conductor {
 
                         predecessor
                             .send_request(agent_request)
-                            .on_receiving_response(async move |result| {
+                            .when_response_received_spawn(async move |result| {
                                 if let Err(error) = json_rpc_request_cx.respond_with_result(result)
                                 {
                                     error!(?error, "Failed to forward response to component");
                                 }
-                            })
-                            .await?;
+                            })?;
                     }
 
                     scp::AcpAgentToClientMessage::Notification(
@@ -448,7 +447,7 @@ impl Conductor {
                         serde_json::from_value(params),
                         component_response_cx,
                     )
-                    .await;
+                    .await?;
                 } else if method == "session/new" && self.is_last_proxy_component(component_index) {
                     // Intercept `session/new` send to the final agent
                     // to (maybe) adjust ACP bridging.
@@ -497,37 +496,32 @@ impl Conductor {
                     let component_request_id = component_response_cx.id().clone();
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
-                    let _ = successor_response
-                        .on_receiving_response(async move |result| {
-                            async {
-                                let is_ok = result.is_ok();
-                                debug!(is_ok, "Received successor response, sending to conductor");
+                    successor_response.when_response_received_spawn(async move |result| {
+                        async {
+                            let is_ok = result.is_ok();
+                            debug!(is_ok, "Received successor response, sending to conductor");
 
-                                if let Err(error) = conductor_tx_clone
-                                    .send(ConductorMessage::ResponseReceived {
-                                        result,
-                                        response_cx: component_response_cx,
-                                        method,
-                                        target_component_index: successor_index,
-                                    })
-                                    .await
-                                {
-                                    error!(
-                                        ?error,
-                                        "Failed to send successor response to conductor"
-                                    );
-                                } else {
-                                    debug!("Sent successor response to conductor for forwarding");
-                                }
+                            if let Err(error) = conductor_tx_clone
+                                .send(ConductorMessage::ResponseReceived {
+                                    result,
+                                    response_cx: component_response_cx,
+                                    method,
+                                    target_component_index: successor_index,
+                                })
+                                .await
+                            {
+                                error!(?error, "Failed to send successor response to conductor");
+                            } else {
+                                debug!("Sent successor response to conductor for forwarding");
                             }
-                            .instrument(tracing::info_span!(
-                                "receive_successor_response",
-                                component_request_id = ?component_request_id
-                            ))
-                            .instrument(current_span)
-                            .await
-                        })
-                        .await;
+                        }
+                        .instrument(tracing::info_span!(
+                            "receive_successor_response",
+                            component_request_id = ?component_request_id
+                        ))
+                        .instrument(current_span)
+                        .await
+                    })?;
                 } else {
                     // Now we can safely borrow from self.components
                     let successor_index = component_index + 1;
@@ -554,37 +548,32 @@ impl Conductor {
                     let component_request_id = component_response_cx.id().clone();
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
-                    let _ = successor_response
-                        .on_receiving_response(async move |result| {
-                            async {
-                                let is_ok = result.is_ok();
-                                debug!(is_ok, "Received successor response, sending to conductor");
+                    successor_response.when_response_received_spawn(async move |result| {
+                        async {
+                            let is_ok = result.is_ok();
+                            debug!(is_ok, "Received successor response, sending to conductor");
 
-                                if let Err(error) = conductor_tx_clone
-                                    .send(ConductorMessage::ResponseReceived {
-                                        result,
-                                        response_cx: component_response_cx,
-                                        method,
-                                        target_component_index: successor_index,
-                                    })
-                                    .await
-                                {
-                                    error!(
-                                        ?error,
-                                        "Failed to send successor response to conductor"
-                                    );
-                                } else {
-                                    debug!("Sent successor response to conductor for forwarding");
-                                }
+                            if let Err(error) = conductor_tx_clone
+                                .send(ConductorMessage::ResponseReceived {
+                                    result,
+                                    response_cx: component_response_cx,
+                                    method,
+                                    target_component_index: successor_index,
+                                })
+                                .await
+                            {
+                                error!(?error, "Failed to send successor response to conductor");
+                            } else {
+                                debug!("Sent successor response to conductor for forwarding");
                             }
-                            .instrument(tracing::info_span!(
-                                "receive_successor_response",
-                                component_request_id = ?component_request_id
-                            ))
-                            .instrument(current_span)
-                            .await
-                        })
-                        .await;
+                        }
+                        .instrument(tracing::info_span!(
+                            "receive_successor_response",
+                            component_request_id = ?component_request_id
+                        ))
+                        .instrument(current_span)
+                        .await
+                    })?;
                 }
             }
 
@@ -670,15 +659,7 @@ impl Conductor {
                     target_component_index, "Forwarding response received from component"
                 );
 
-                if self.is_agent_component(target_component_index) && method == "initialize" {
-                    if let Ok(ref mut response_value) = result {}
-                }
-
-                if let Err(error) = response_cx.respond_with_result(result) {
-                    error!(?error, "Failed to forward response");
-                } else {
-                    debug!("Successfully forwarded response");
-                }
+                response_cx.respond_with_result(result)?;
             }
 
             ConductorMessage::BridgeRequestReceived {
@@ -706,21 +687,17 @@ impl Conductor {
                 let response = self.components[0].jsonrpccx.send_request(request);
                 let method_for_task = method.clone();
 
-                let _ = response
-                    .on_receiving_response(async move |result| {
-                        async {
-                            debug!(
-                                is_ok = result.is_ok(),
-                                "Received MCP response from component"
-                            );
-                            let _ = response_cx.respond_with_result(result);
-                        }
-                        .instrument(
-                            tracing::info_span!("bridge_request", method = %method_for_task),
-                        )
-                        .await
-                    })
-                    .await;
+                let _ = response.when_response_received_spawn(async move |result| {
+                    async {
+                        debug!(
+                            is_ok = result.is_ok(),
+                            "Received MCP response from component"
+                        );
+                        let _ = response_cx.respond_with_result(result);
+                    }
+                    .instrument(tracing::info_span!("bridge_request", method = %method_for_task))
+                    .await
+                });
             }
 
             ConductorMessage::BridgeConnected { acp_url, bridge_cx } => {
@@ -793,13 +770,11 @@ impl Conductor {
             .jsonrpccx
             .send_request(ClientRequest::InitializeRequest(initialize_req));
 
-        response
-            .on_receiving_response(move |result| async move {
-                if let Err(error) = json_rpc_request_cx.respond_with_result(result) {
-                    error!(?error, "Failed to forward initialize response");
-                }
-            })
-            .await
+        response.when_response_received_spawn(move |result| async move {
+            if let Err(error) = json_rpc_request_cx.respond_with_result(result) {
+                error!(?error, "Failed to forward initialize response");
+            }
+        })
     }
 
     /// Transforms MCP servers with `acp:$UUID` URLs for agents that need bridging.
@@ -926,43 +901,41 @@ impl Conductor {
         let method_string = method.to_string();
         let current_span = tracing::Span::current();
 
-        let _ = response
-            .on_receiving_response(async move |result| {
-                async {
-                    let is_ok = result.is_ok();
+        let _ = response.when_response_received_spawn(async move |result| {
+            async {
+                let is_ok = result.is_ok();
+                debug!(
+                    method = method_string,
+                    is_ok, "Received bridge response, forwarding to agent"
+                );
+
+                if let Err(error) = conductor_tx
+                    .send(ConductorMessage::ResponseReceived {
+                        result,
+                        response_cx,
+                        method: method_string.clone(),
+                        target_component_index: 0, // Response is from bridge to component 0
+                    })
+                    .await
+                {
+                    error!(
+                        method = method_string,
+                        ?error,
+                        "Failed to send bridge response to conductor"
+                    );
+                } else {
                     debug!(
                         method = method_string,
-                        is_ok, "Received bridge response, forwarding to agent"
+                        "Sent bridge response to conductor for forwarding"
                     );
-
-                    if let Err(error) = conductor_tx
-                        .send(ConductorMessage::ResponseReceived {
-                            result,
-                            response_cx,
-                            method: method_string.clone(),
-                            target_component_index: 0, // Response is from bridge to component 0
-                        })
-                        .await
-                    {
-                        error!(
-                            method = method_string,
-                            ?error,
-                            "Failed to send bridge response to conductor"
-                        );
-                    } else {
-                        debug!(
-                            method = method_string,
-                            "Sent bridge response to conductor for forwarding"
-                        );
-                    }
                 }
-                .instrument(
-                    tracing::info_span!("receive_mcp_bridge_response", request_id = ?request_id),
-                )
-                .instrument(current_span)
-                .await
-            })
-            .await;
+            }
+            .instrument(
+                tracing::info_span!("receive_mcp_bridge_response", request_id = ?request_id),
+            )
+            .instrument(current_span)
+            .await
+        });
 
         Some(())
     }
@@ -1101,30 +1074,28 @@ impl Conductor {
             .send_request(req);
         let request_id = response_cx.id().clone();
         let current_span = tracing::Span::current();
-        let _ = response
-            .on_receiving_response(async move |result| {
-                async {
-                    let is_ok = result.is_ok();
-                    debug!(is_ok, ?result, "Received response, sending to conductor");
-                    if let Err(error) = conductor_tx
-                        .send(ConductorMessage::ResponseReceived {
-                            result,
-                            response_cx,
-                            method,
-                            target_component_index,
-                        })
-                        .await
-                    {
-                        error!(?error, "Failed to send response to conductor");
-                    } else {
-                        debug!("Sent response to conductor for forwarding");
-                    }
+        let _ = response.when_response_received_spawn(async move |result| {
+            async {
+                let is_ok = result.is_ok();
+                debug!(is_ok, ?result, "Received response, sending to conductor");
+                if let Err(error) = conductor_tx
+                    .send(ConductorMessage::ResponseReceived {
+                        result,
+                        response_cx,
+                        method,
+                        target_component_index,
+                    })
+                    .await
+                {
+                    error!(?error, "Failed to send response to conductor");
+                } else {
+                    debug!("Sent response to conductor for forwarding");
                 }
-                .instrument(tracing::info_span!("receive_response", request_id = ?request_id))
-                .instrument(current_span)
-                .await
-            })
-            .await;
+            }
+            .instrument(tracing::info_span!("receive_response", request_id = ?request_id))
+            .instrument(current_span)
+            .await
+        });
     }
 }
 

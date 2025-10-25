@@ -17,7 +17,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 async fn recv<R: JsonRpcMessage + Send>(response: JsonRpcResponse<R>) -> Result<R, acp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response
-        .on_receiving_response(move |result| async move {
+        .when_response_received_spawn(move |result| async move {
             let _ = tx.send(result);
         })
         .await?;
