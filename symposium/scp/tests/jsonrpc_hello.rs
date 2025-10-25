@@ -7,12 +7,25 @@ use futures::{AsyncRead, AsyncWrite};
 use scp::{
     Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
     JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage, JsonRpcRequest,
-    JsonRpcRequestCx,
+    JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Test helper to block and wait for a JSON-RPC response.
+async fn recv<R: JsonRpcMessage + Send>(
+    response: JsonRpcResponse<R>,
+) -> Result<R, jsonrpcmsg::Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    response
+        .upon_receiving_response(move |result| async move {
+            let _ = tx.send(result);
+        })
+        .await?;
+    rx.await.map_err(|_| jsonrpcmsg::Error::internal_error())?
+}
 
 /// Helper to set up a client-server pair for testing.
 /// Returns (server_connection, client_connection).
@@ -127,7 +140,7 @@ async fn test_hello_world() {
                         message: "hello world".to_string(),
                     };
 
-                    let response = cx.send_request(request).recv().await.map_err(|e| {
+                    let response = recv(cx.send_request(request)).await.map_err(|e| {
                         scp::util::internal_error(format!("Request failed: {:?}", e))
                     })?;
 
@@ -262,7 +275,7 @@ async fn test_multiple_sequential_requests() {
                             message: format!("message {}", i),
                         };
 
-                        let response = cx.send_request(request).recv().await.map_err(|e| {
+                        let response = recv(cx.send_request(request)).await.map_err(|e| {
                             scp::util::internal_error(format!("Request {} failed: {:?}", i, e))
                         })?;
 
@@ -310,7 +323,7 @@ async fn test_concurrent_requests() {
 
                     // Now await all responses
                     for (i, response_future) in responses {
-                        let response = response_future.recv().await.map_err(|e| {
+                        let response = recv(response_future).await.map_err(|e| {
                             scp::util::internal_error(format!("Request {} failed: {:?}", i, e))
                         })?;
 

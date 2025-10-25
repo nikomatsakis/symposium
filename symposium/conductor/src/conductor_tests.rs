@@ -18,7 +18,7 @@ use crate::{
 
 /// Test helper to block and wait for a JSON-RPC response.
 ///
-/// This is a convenience wrapper around `spawn_upon_receipt` that blocks
+/// This is a convenience wrapper around `upon_receiving_response` that blocks
 /// until the response is received, making test code more readable.
 async fn recv<R: scp::JsonRpcMessage + Send>(
     response: scp::JsonRpcResponse<R>,

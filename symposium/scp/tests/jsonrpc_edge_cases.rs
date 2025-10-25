@@ -9,10 +9,23 @@
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
     Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
-    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Test helper to block and wait for a JSON-RPC response.
+async fn recv<R: JsonRpcMessage + Send>(
+    response: JsonRpcResponse<R>,
+) -> Result<R, jsonrpcmsg::Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    response
+        .upon_receiving_response(move |result| async move {
+            let _ = tx.send(result);
+        })
+        .await?;
+    rx.await.map_err(|_| jsonrpcmsg::Error::internal_error())?
+}
 
 /// Helper to set up a client-server pair for testing.
 fn setup_test_connections<H: JsonRpcHandler + 'static>(
@@ -139,7 +152,7 @@ async fn test_empty_request() {
                 .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = EmptyRequest;
 
-                    let result: Result<SimpleResponse, _> = cx.send_request(request).recv().await;
+                    let result: Result<SimpleResponse, _> = recv(cx.send_request(request)).await;
 
                     // Should succeed
                     assert!(result.is_ok());
@@ -199,7 +212,7 @@ async fn test_null_parameters() {
                 .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = OptionalParamsRequest { value: None };
 
-                    let result: Result<SimpleResponse, _> = cx.send_request(request).recv().await;
+                    let result: Result<SimpleResponse, _> = recv(cx.send_request(request)).await;
 
                     // Should succeed - handler should handle null/missing params
                     assert!(result.is_ok());
@@ -236,7 +249,7 @@ async fn test_server_shutdown() {
                         let request = EmptyRequest;
 
                         // Send request and get future for response
-                        let response_future = cx.send_request(request).recv();
+                        let response_future = recv(cx.send_request(request));
 
                         // Give the request time to be sent over the wire
                         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;

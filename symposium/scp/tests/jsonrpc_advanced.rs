@@ -8,10 +8,23 @@
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
     Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
-    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Test helper to block and wait for a JSON-RPC response.
+async fn recv<R: JsonRpcMessage + Send>(
+    response: JsonRpcResponse<R>,
+) -> Result<R, jsonrpcmsg::Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    response
+        .upon_receiving_response(move |result| async move {
+            let _ = tx.send(result);
+        })
+        .await?;
+    rx.await.map_err(|_| jsonrpcmsg::Error::internal_error())?
+}
 
 /// Helper to set up a client-server pair for testing.
 fn setup_test_connections(
@@ -161,7 +174,7 @@ async fn test_bidirectional_communication() {
             let result = side_b
                 .with_client(async |cx| -> Result<(), jsonrpcmsg::Error> {
                     let request = PingRequest { value: 10 };
-                    let response_future = cx.send_request(request).recv();
+                    let response_future = recv(cx.send_request(request));
                     let response: Result<PongResponse, _> = response_future.await;
 
                     assert!(response.is_ok());
@@ -202,9 +215,9 @@ async fn test_request_ids() {
                     let req2 = PingRequest { value: 2 };
                     let req3 = PingRequest { value: 3 };
 
-                    let resp1_future = cx.send_request(req1).recv();
-                    let resp2_future = cx.send_request(req2).recv();
-                    let resp3_future = cx.send_request(req3).recv();
+                    let resp1_future = recv(cx.send_request(req1));
+                    let resp2_future = recv(cx.send_request(req2));
+                    let resp3_future = recv(cx.send_request(req3));
 
                     let resp1: Result<PongResponse, _> = resp1_future.await;
                     let resp2: Result<PongResponse, _> = resp2_future.await;
@@ -286,9 +299,9 @@ async fn test_out_of_order_responses() {
                         id: 3,
                     };
 
-                    let resp1_future = cx.send_request(req1).recv();
-                    let resp2_future = cx.send_request(req2).recv();
-                    let resp3_future = cx.send_request(req3).recv();
+                    let resp1_future = recv(cx.send_request(req1));
+                    let resp2_future = recv(cx.send_request(req2));
+                    let resp3_future = recv(cx.send_request(req3));
 
                     // Wait for all responses
                     let resp1: Result<SlowResponse, _> = resp1_future.await;

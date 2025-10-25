@@ -11,10 +11,23 @@ use expect_test::expect;
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
     Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
-    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Test helper to block and wait for a JSON-RPC response.
+async fn recv<R: JsonRpcMessage + Send>(
+    response: JsonRpcResponse<R>,
+) -> Result<R, jsonrpcmsg::Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    response
+        .upon_receiving_response(move |result| async move {
+            let _ = tx.send(result);
+        })
+        .await?;
+    rx.await.map_err(|_| jsonrpcmsg::Error::internal_error())?
+}
 
 /// Helper to set up a client-server pair for testing.
 fn setup_test_connections<H: JsonRpcHandler + 'static>(
@@ -202,7 +215,7 @@ async fn test_unknown_method() {
                         message: "test".to_string(),
                     };
 
-                    let result: Result<SimpleResponse, _> = cx.send_request(request).recv().await;
+                    let result: Result<SimpleResponse, _> = recv(cx.send_request(request)).await;
 
                     // Should get an error because no handler claims the method
                     assert!(result.is_err());
@@ -285,7 +298,7 @@ async fn test_handler_returns_error() {
                         value: "trigger error".to_string(),
                     };
 
-                    let result: Result<SimpleResponse, _> = cx.send_request(request).recv().await;
+                    let result: Result<SimpleResponse, _> = recv(cx.send_request(request)).await;
 
                     // Should get the error the handler returned
                     assert!(result.is_err());
@@ -372,7 +385,7 @@ async fn test_missing_required_params() {
                     // Send request with no params (EmptyRequest has no fields)
                     let request = EmptyRequest;
 
-                    let result: Result<SimpleResponse, _> = cx.send_request(request).recv().await;
+                    let result: Result<SimpleResponse, _> = recv(cx.send_request(request)).await;
 
                     // Should get invalid_params error
                     assert!(result.is_err());

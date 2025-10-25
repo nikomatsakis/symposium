@@ -8,12 +8,25 @@ use scp::util::internal_error;
 use scp::{
     Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
     JsonRpcNotification, JsonRpcNotificationCx, JsonRpcOutgoingMessage, JsonRpcRequest,
-    JsonRpcRequestCx,
+    JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Test helper to block and wait for a JSON-RPC response.
+async fn recv<R: JsonRpcMessage + Send>(
+    response: JsonRpcResponse<R>,
+) -> Result<R, jsonrpcmsg::Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    response
+        .upon_receiving_response(move |result| async move {
+            let _ = tx.send(result);
+        })
+        .await?;
+    rx.await.map_err(|_| jsonrpcmsg::Error::internal_error())?
+}
 
 // ============================================================================
 // Test 1: Multiple handlers with different methods
@@ -170,27 +183,23 @@ async fn test_multiple_handlers_different_methods() {
             let result = client
                 .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
                     // Test foo request
-                    let foo_response = cx
-                        .send_request(FooRequest {
-                            value: "test1".to_string(),
-                        })
-                        .recv()
-                        .await
-                        .map_err(|e| -> jsonrpcmsg::Error {
-                            internal_error(format!("Foo request failed: {e:?}"))
-                        })?;
+                    let foo_response = recv(cx.send_request(FooRequest {
+                        value: "test1".to_string(),
+                    }))
+                    .await
+                    .map_err(|e| -> jsonrpcmsg::Error {
+                        internal_error(format!("Foo request failed: {e:?}"))
+                    })?;
                     assert_eq!(foo_response.result, "foo: test1");
 
                     // Test bar request
-                    let bar_response = cx
-                        .send_request(BarRequest {
-                            value: "test2".to_string(),
-                        })
-                        .recv()
-                        .await
-                        .map_err(|e| -> jsonrpcmsg::Error {
-                            internal_error(format!("Bar request failed: {:?}", e))
-                        })?;
+                    let bar_response = recv(cx.send_request(BarRequest {
+                        value: "test2".to_string(),
+                    }))
+                    .await
+                    .map_err(|e| -> jsonrpcmsg::Error {
+                        internal_error(format!("Bar request failed: {:?}", e))
+                    })?;
                     assert_eq!(bar_response.result, "bar: test2");
 
                     Ok(())
@@ -292,15 +301,13 @@ async fn test_handler_priority_ordering() {
 
             let result = client
                 .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
-                    let response = cx
-                        .send_request(TrackRequest {
-                            value: "test".to_string(),
-                        })
-                        .recv()
-                        .await
-                        .map_err(|e| {
-                            scp::util::internal_error(format!("Track request failed: {:?}", e))
-                        })?;
+                    let response = recv(cx.send_request(TrackRequest {
+                        value: "test".to_string(),
+                    }))
+                    .await
+                    .map_err(|e| {
+                        scp::util::internal_error(format!("Track request failed: {:?}", e))
+                    })?;
 
                     // First handler should have handled it
                     assert_eq!(response.result, "handler1: test");
@@ -438,15 +445,13 @@ async fn test_fallthrough_behavior() {
             let result = client
                 .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
                     // Send method2 - should fallthrough handler1 to handler2
-                    let response = cx
-                        .send_request(Method2Request {
-                            value: "fallthrough".to_string(),
-                        })
-                        .recv()
-                        .await
-                        .map_err(|e| {
-                            scp::util::internal_error(format!("Method2 request failed: {:?}", e))
-                        })?;
+                    let response = recv(cx.send_request(Method2Request {
+                        value: "fallthrough".to_string(),
+                    }))
+                    .await
+                    .map_err(|e| {
+                        scp::util::internal_error(format!("Method2 request failed: {:?}", e))
+                    })?;
 
                     assert_eq!(response.result, "method2: fallthrough");
 
@@ -498,12 +503,10 @@ async fn test_no_handler_claims() {
             let result = client
                 .with_client(async |cx| -> std::result::Result<(), jsonrpcmsg::Error> {
                     // Send "bar" request which no handler claims
-                    let response_result = cx
-                        .send_request(BarRequest {
-                            value: "unclaimed".to_string(),
-                        })
-                        .recv()
-                        .await;
+                    let response_result = recv(cx.send_request(BarRequest {
+                        value: "unclaimed".to_string(),
+                    }))
+                    .await;
 
                     // Should get an error (method not found)
                     assert!(response_result.is_err());
