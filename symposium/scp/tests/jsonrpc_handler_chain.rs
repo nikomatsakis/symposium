@@ -21,7 +21,7 @@ async fn recv<R: JsonRpcMessage + Send>(
 ) -> Result<R, jsonrpcmsg::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response
-        .upon_receiving_response(move |result| async move {
+        .on_receiving_response(move |result| async move {
             let _ = tx.send(result);
         })
         .await?;

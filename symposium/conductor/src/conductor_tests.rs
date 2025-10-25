@@ -25,7 +25,7 @@ async fn recv<R: scp::JsonRpcMessage + Send>(
 ) -> Result<R, jsonrpcmsg::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response
-        .upon_receiving_response(move |result| async move {
+        .on_receiving_response(move |result| async move {
             let _ = tx.send(result);
         })
         .await?;
@@ -429,7 +429,7 @@ impl AcpClientToAgentCallbacks for Component1Callbacks {
 
         let current_span = tracing::Span::current();
         let _ = successor_response
-            .upon_receiving_response(|r| {
+            .on_receiving_response(|r| {
                 async move {
                     let _ = response.respond_with_result(r);
                 }
@@ -461,7 +461,7 @@ impl AcpClientToAgentCallbacks for Component1Callbacks {
 
         let current_span = tracing::Span::current();
         let _ = successor_response
-            .upon_receiving_response(|prompt_response| {
+            .on_receiving_response(|prompt_response| {
                 async move {
                     let _ = response.respond_with_result(prompt_response);
                 }

@@ -641,7 +641,7 @@ impl<R: JsonRpcMessage> JsonRpcResponse<R> {
     ///
     /// It is intentionally not possible to block until the response is received
     /// because doing so can easily stall the event loop if done directly in the `on_receive` callback.
-    pub async fn upon_receiving_response<F>(
+    pub async fn on_receiving_response<F>(
         mut self,
         task: impl FnOnce(Result<R, jsonrpcmsg::Error>) -> F + 'static + Send,
     ) -> Result<(), jsonrpcmsg::Error>

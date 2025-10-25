@@ -400,7 +400,7 @@ impl Conductor {
 
                         predecessor
                             .send_request(agent_request)
-                            .upon_receiving_response(async move |result| {
+                            .on_receiving_response(async move |result| {
                                 if let Err(error) = json_rpc_request_cx.respond_with_result(result)
                                 {
                                     error!(?error, "Failed to forward response to component");
@@ -498,7 +498,7 @@ impl Conductor {
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
                     let _ = successor_response
-                        .upon_receiving_response(move |result| {
+                        .on_receiving_response(move |result| {
                             async move {
                                 let is_ok = result.is_ok();
                                 debug!(is_ok, "Received successor response, sending to conductor");
@@ -554,7 +554,7 @@ impl Conductor {
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
                     let _ = successor_response
-                        .upon_receiving_response(move |result| {
+                        .on_receiving_response(move |result| {
                             async move {
                                 let is_ok = result.is_ok();
                                 debug!(is_ok, "Received successor response, sending to conductor");
@@ -694,7 +694,7 @@ impl Conductor {
                 let method_for_task = method.clone();
 
                 let _ = response
-                    .upon_receiving_response(move |result| {
+                    .on_receiving_response(move |result| {
                         async move {
                             debug!(
                                 is_ok = result.is_ok(),
@@ -780,7 +780,7 @@ impl Conductor {
             .send_request(ClientRequest::InitializeRequest(initialize_req));
 
         let _ = response
-            .upon_receiving_response(move |result| async move {
+            .on_receiving_response(move |result| async move {
                 if let Err(error) = json_rpc_request_cx.respond_with_result(result) {
                     error!(?error, "Failed to forward initialize response");
                 }
@@ -913,7 +913,7 @@ impl Conductor {
         let current_span = tracing::Span::current();
 
         let _ = response
-            .upon_receiving_response(move |result| {
+            .on_receiving_response(move |result| {
                 async move {
                     let is_ok = result.is_ok();
                     debug!(
@@ -1087,7 +1087,7 @@ impl Conductor {
         let request_id = response_cx.id().clone();
         let current_span = tracing::Span::current();
         let _ = response
-            .upon_receiving_response(move |result| {
+            .on_receiving_response(move |result| {
                 async move {
                     let is_ok = result.is_ok();
                     debug!(is_ok, ?result, "Received response, sending to conductor");
