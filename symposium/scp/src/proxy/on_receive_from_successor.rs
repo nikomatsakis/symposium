@@ -1,4 +1,5 @@
 use futures::{AsyncRead, AsyncWrite};
+use jsonrpcmsg::Params;
 
 use crate::{
     JsonRpcNotificationCx,
@@ -144,7 +145,7 @@ where
         let messages::FromSuccessorNotification {
             method: inner_method,
             params: inner_params,
-        } = json_cast::<_, messages::FromSuccessorNotification>(params)?;
+        } = json_cast::<_, messages::FromSuccessorNotification<Option<Params>>>(params)?;
 
         let inner_cx = JsonRpcNotificationCx::new(&cx, inner_method);
         self.handler

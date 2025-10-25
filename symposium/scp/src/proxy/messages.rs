@@ -135,20 +135,22 @@ impl JsonRpcIncomingMessage for FromSuccessorResponse {
 ///
 /// Delivered via `_proxy/successor/receive` when the successor sends a notification upstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FromSuccessorNotification {
+pub struct FromSuccessorNotification<N> {
     /// Name of the method to be invoked
     pub method: String,
 
     /// Parameters for the method invocation
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<jsonrpcmsg::Params>,
+    pub params: N,
 }
 
-impl JsonRpcMessage for FromSuccessorNotification {}
+impl<N: JsonRpcNotification> JsonRpcMessage for FromSuccessorNotification<N> {}
 
-impl JsonRpcOutgoingMessage for FromSuccessorNotification {
+impl<N: JsonRpcNotification> JsonRpcOutgoingMessage for FromSuccessorNotification<N> {
     fn params(self) -> Result<Option<jsonrpcmsg::Params>, jsonrpcmsg::Error> {
-        json_cast(self)
+        json_cast(FromSuccessorNotification {
+            method: self.method,
+            params: self.params.params()?,
+        })
     }
 
     fn method(&self) -> &str {
@@ -156,4 +158,4 @@ impl JsonRpcOutgoingMessage for FromSuccessorNotification {
     }
 }
 
-impl JsonRpcNotification for FromSuccessorNotification {}
+impl<N: JsonRpcNotification> JsonRpcNotification for FromSuccessorNotification<N> {}
