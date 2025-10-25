@@ -1,5 +1,5 @@
 use crate::{
-    JsonRpcNotificationCx,
+    JsonRpcNotificationCx, UntypedMessage,
     jsonrpc::{Handled, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcRequestCx},
     proxy::{ToSuccessorNotification, ToSuccessorRequest},
     util::json_cast,
@@ -13,7 +13,7 @@ pub trait ConductorCallbacks {
     /// Parameters for the method invocation
     async fn successor_send_request(
         &mut self,
-        args: ToSuccessorRequest<serde_json::Value>,
+        args: ToSuccessorRequest<UntypedMessage>,
         response: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<(), acp::Error>;
 
@@ -21,7 +21,7 @@ pub trait ConductorCallbacks {
     /// Parameters for the method invocation
     async fn successor_send_notification(
         &mut self,
-        args: ToSuccessorNotification<serde_json::Value>,
+        args: ToSuccessorNotification<UntypedMessage>,
         cx: &JsonRpcConnectionCx,
     ) -> Result<(), acp::Error>;
 }

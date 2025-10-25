@@ -1,6 +1,7 @@
 //! Core JSON-RPC server support.
 
 use agent_client_protocol as acp;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Deref;
 use tracing::Instrument as _;
@@ -9,7 +10,6 @@ use boxfnonce::SendBoxFnOnce;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{BoxFuture, Either};
 use futures::{AsyncRead, AsyncWrite, FutureExt};
-
 
 mod actors;
 mod handlers;
@@ -265,6 +265,17 @@ impl JsonRpcConnectionCx {
             message_tx: tx,
             task_tx,
         }
+    }
+
+    /// Spawns a task that will run so long as the JSON-RPC connection is being served.
+    /// If the task returns an error, the server will shut down.
+    pub fn spawn(
+        &self,
+        future: impl Future<Output = Result<(), acp::Error>> + Send + 'static,
+    ) -> Result<(), acp::Error> {
+        self.task_tx
+            .unbounded_send(Box::pin(future))
+            .map_err(acp::Error::into_internal_error)
     }
 
     /// Send an outgoing request and await the reply.
@@ -540,7 +551,8 @@ impl JsonRpcOutgoingMessage for serde_json::Value {
     fn into_untyped_message(self) -> Result<UntypedMessage, acp::Error> {
         // For raw JSON values, we expect them to already be properly formatted
         // This is a fallback for generic handling
-        Ok(UntypedMessage::new(String::new(), self))
+        let method = String::new();
+        UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -565,15 +577,20 @@ pub trait JsonRpcRequest: JsonRpcOutgoingMessage {
     type Response: JsonRpcIncomingMessage;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UntypedMessage {
     pub method: String,
     pub params: serde_json::Value,
 }
 
 impl UntypedMessage {
-    pub fn new(method: String, params: serde_json::Value) -> Self {
-        Self { method, params }
+    /// Returns an untyped message with the given method and parameters.
+    pub fn new(method: &str, params: impl Serialize) -> Result<Self, acp::Error> {
+        let params = serde_json::to_value(params)?;
+        Ok(Self {
+            method: method.to_string(),
+            params,
+        })
     }
 
     pub fn method(&self) -> &str {

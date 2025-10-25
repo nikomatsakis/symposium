@@ -1,8 +1,7 @@
 use futures::{AsyncRead, AsyncWrite};
-use jsonrpcmsg::Params;
 
 use crate::{
-    JsonRpcNotificationCx,
+    JsonRpcNotificationCx, UntypedMessage,
     jsonrpc::{ChainHandler, Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcRequestCx},
     proxy::messages,
     util::json_cast,
@@ -122,13 +121,14 @@ where
         //
         //
         //
-        let messages::FromSuccessorRequest {
-            method: inner_method,
-            params: inner_params,
-        } = json_cast(params)?;
+        let messages::FromSuccessorRequest { message }: messages::FromSuccessorRequest<
+            UntypedMessage,
+        > = json_cast(params)?;
 
         // Create the inner response context using the alternative method name.
         // But the response will still be sent to `cx`
+        let inner_method = message.method.clone();
+        let inner_params = json_cast(&message.params).ok();
         let inner_cx = cx.wrap_method(inner_method);
         self.handler.handle_request(inner_cx, &inner_params).await
     }
@@ -142,11 +142,12 @@ where
             return Ok(Handled::No(cx));
         }
 
-        let messages::FromSuccessorNotification {
-            method: inner_method,
-            params: inner_params,
-        } = json_cast::<_, messages::FromSuccessorNotification<Option<Params>>>(params)?;
+        let messages::FromSuccessorNotification { message }: messages::FromSuccessorNotification<
+            UntypedMessage,
+        > = json_cast(params)?;
 
+        let inner_method = message.method.clone();
+        let inner_params = json_cast(&message.params).ok();
         let inner_cx = JsonRpcNotificationCx::new(&cx, inner_method);
         self.handler
             .handle_notification(inner_cx, &inner_params)

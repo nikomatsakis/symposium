@@ -60,8 +60,8 @@ impl JsonRpcMessage for PingRequest {}
 
 impl JsonRpcOutgoingMessage for PingRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
-        let method = self.method().to_string();
-        scp::UntypedMessage::new(&method, self)
+        let method = self.method();
+        scp::UntypedMessage::new(method, self)
     }
 
     fn method(&self) -> &str {
@@ -103,8 +103,8 @@ impl JsonRpcMessage for SlowRequest {}
 
 impl JsonRpcOutgoingMessage for SlowRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
-        let method = self.method().to_string();
-        scp::UntypedMessage::new(&method, self)
+        let method = self.method();
+        scp::UntypedMessage::new(method, self)
     }
 
     fn method(&self) -> &str {

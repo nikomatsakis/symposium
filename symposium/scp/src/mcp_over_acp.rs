@@ -2,7 +2,7 @@ use std::error::Error;
 
 use crate::{
     Handled, JsonRpcHandler, JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx,
-    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, UntypedMessage,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, UntypedMessage, util::json_cast,
 };
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
@@ -16,27 +16,16 @@ pub const METHOD_MCP_REQUEST: &str = "_mcp/request";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpRequest<R> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: R,
+    #[serde(flatten)]
+    pub message: R,
 }
 
-impl<R: JsonRpcOutgoingMessage> JsonRpcMessage for McpRequest<R> {}
+impl<R: JsonRpcRequest> JsonRpcMessage for McpRequest<R> {}
 
-impl<R: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for McpRequest<R> {
+impl<R: JsonRpcRequest> JsonRpcOutgoingMessage for McpRequest<R> {
     fn into_untyped_message(self) -> Result<UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(UntypedMessage::new(
-            method,
-            serde_json::to_value(McpRequest {
-                method: params_msg.method,
-                params: params_msg.params,
-            })
-            .map_err(acp::Error::into_internal_error)?,
-        ))
+        let message = self.message.into_untyped_message()?;
+        UntypedMessage::new(METHOD_MCP_REQUEST, message)
     }
 
     fn method(&self) -> &str {
@@ -58,27 +47,17 @@ pub const METHOD_MCP_NOTIFICATION: &str = "_mcp/notification";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpNotification<R> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: R,
+    /// Wrapped message
+    #[serde(flatten)]
+    pub message: R,
 }
 
 impl<R: JsonRpcOutgoingMessage> JsonRpcMessage for McpNotification<R> {}
 
 impl<R: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for McpNotification<R> {
     fn into_untyped_message(self) -> Result<UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(UntypedMessage::new(
-            method,
-            serde_json::to_value(McpNotification {
-                method: params_msg.method,
-                params: params_msg.params,
-            })
-            .map_err(acp::Error::into_internal_error)?,
-        ))
+        let params = self.message.into_untyped_message()?;
+        UntypedMessage::new(METHOD_MCP_NOTIFICATION, params)
     }
 
     fn method(&self) -> &str {
@@ -93,13 +72,13 @@ impl<R: JsonRpcOutgoingMessage> JsonRpcNotification for McpNotification<R> {}
 pub trait AcpMcpCallbacks {
     async fn mcp_request(
         &mut self,
-        request: McpRequest<serde_json::Value>,
+        request: McpRequest<UntypedMessage>,
         request_cx: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<(), acp::Error>;
 
     async fn mcp_notification(
         &mut self,
-        request: McpNotification<serde_json::Value>,
+        request: McpNotification<UntypedMessage>,
         notification_cx: JsonRpcNotificationCx,
     ) -> Result<(), acp::Error>;
 }
@@ -119,28 +98,30 @@ impl<CB: AcpMcpCallbacks> JsonRpcHandler for AcpMcpMessages<CB> {
     async fn handle_request(
         &mut self,
         cx: JsonRpcRequestCx<serde_json::Value>,
-        _params: &Option<jsonrpcmsg::Params>,
+        params: &Option<jsonrpcmsg::Params>,
     ) -> Result<crate::Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error>
     {
         if cx.method() != METHOD_MCP_REQUEST {
             return Ok(Handled::No(cx));
         }
 
-        // TODO: implement MCP request handling
-        Ok(Handled::No(cx))
+        let request: McpRequest<UntypedMessage> = json_cast(params)?;
+        self.callbacks.mcp_request(request, cx).await?;
+        Ok(Handled::Yes)
     }
 
     async fn handle_notification(
         &mut self,
         cx: JsonRpcNotificationCx,
-        _params: &Option<jsonrpcmsg::Params>,
+        params: &Option<jsonrpcmsg::Params>,
     ) -> Result<crate::Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         if cx.method() != METHOD_MCP_NOTIFICATION {
             return Ok(Handled::No(cx));
         }
 
-        // TODO: implement MCP notification handling
-        Ok(crate::Handled::No(cx))
+        let request: McpNotification<UntypedMessage> = json_cast(params)?;
+        self.callbacks.mcp_notification(request, cx).await?;
+        Ok(Handled::Yes)
     }
 }
 
@@ -174,7 +155,7 @@ where
 {
     async fn mcp_request(
         &mut self,
-        request: McpRequest<serde_json::Value>,
+        request: McpRequest<UntypedMessage>,
         request_cx: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<(), acp::Error> {
         let untyped = request.into_untyped_message()?;
@@ -185,7 +166,7 @@ where
 
     async fn mcp_notification(
         &mut self,
-        request: McpNotification<serde_json::Value>,
+        request: McpNotification<UntypedMessage>,
         notification_cx: JsonRpcNotificationCx,
     ) -> Result<(), acp::Error> {
         let untyped = request.into_untyped_message()?;

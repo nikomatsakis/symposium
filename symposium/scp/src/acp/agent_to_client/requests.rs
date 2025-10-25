@@ -21,12 +21,9 @@ use crate::util::json_cast;
 impl JsonRpcMessage for RequestPermissionRequest {}
 
 impl JsonRpcOutgoingMessage for RequestPermissionRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -57,12 +54,9 @@ impl JsonRpcIncomingMessage for RequestPermissionResponse {
 impl JsonRpcMessage for WriteTextFileRequest {}
 
 impl JsonRpcOutgoingMessage for WriteTextFileRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -93,12 +87,9 @@ impl JsonRpcIncomingMessage for WriteTextFileResponse {
 impl JsonRpcMessage for ReadTextFileRequest {}
 
 impl JsonRpcOutgoingMessage for ReadTextFileRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -129,12 +120,9 @@ impl JsonRpcIncomingMessage for ReadTextFileResponse {
 impl JsonRpcMessage for CreateTerminalRequest {}
 
 impl JsonRpcOutgoingMessage for CreateTerminalRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -165,12 +153,9 @@ impl JsonRpcIncomingMessage for CreateTerminalResponse {
 impl JsonRpcMessage for TerminalOutputRequest {}
 
 impl JsonRpcOutgoingMessage for TerminalOutputRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -201,12 +186,9 @@ impl JsonRpcIncomingMessage for TerminalOutputResponse {
 impl JsonRpcMessage for ReleaseTerminalRequest {}
 
 impl JsonRpcOutgoingMessage for ReleaseTerminalRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -237,12 +219,9 @@ impl JsonRpcIncomingMessage for ReleaseTerminalResponse {
 impl JsonRpcMessage for WaitForTerminalExitRequest {}
 
 impl JsonRpcOutgoingMessage for WaitForTerminalExitRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {
@@ -273,12 +252,9 @@ impl JsonRpcIncomingMessage for WaitForTerminalExitResponse {
 impl JsonRpcMessage for KillTerminalCommandRequest {}
 
 impl JsonRpcOutgoingMessage for KillTerminalCommandRequest {
-    fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
+    fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
-        Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(&method, self)
     }
 
     fn method(&self) -> &str {

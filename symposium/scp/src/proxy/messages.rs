@@ -11,35 +11,30 @@ use crate::jsonrpc::{JsonRpcMessage, JsonRpcNotification, JsonRpcOutgoingMessage
 // Requests and notifications send TO successor (and the response we receieve)
 // ============================================================================
 
+const TO_SUCCESSOR_REQUEST_METHOD: &str = "_proxy/successor/send/request";
+
 /// A request being sent to the successor component.
 ///
 /// Used in `_proxy/successor/send` when the proxy wants to forward a request downstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToSuccessorRequest<Req> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: Req,
+pub struct ToSuccessorRequest<Req: JsonRpcRequest> {
+    /// The message to be sent to the successor component.
+    #[serde(flatten)]
+    pub message: Req,
 }
 
-impl<Req: JsonRpcMessage> JsonRpcMessage for ToSuccessorRequest<Req> {}
+impl<Req: JsonRpcRequest> JsonRpcMessage for ToSuccessorRequest<Req> {}
 
-impl<Req: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for ToSuccessorRequest<Req> {
+impl<Req: JsonRpcRequest> JsonRpcOutgoingMessage for ToSuccessorRequest<Req> {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(ToSuccessorRequest {
-                method: params_msg.method,
-                params: params_msg.params,
-            }).map_err(acp::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(
+            TO_SUCCESSOR_REQUEST_METHOD,
+            self.message.into_untyped_message()?,
+        )
     }
 
     fn method(&self) -> &str {
-        "_proxy/successor/send/request"
+        TO_SUCCESSOR_REQUEST_METHOD
     }
 }
 
@@ -47,35 +42,30 @@ impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
     type Response = Req::Response;
 }
 
+const TO_SUCCESSOR_NOTIFICATION_METHOD: &str = "_proxy/successor/send/notification";
+
 /// A notification being sent to the successor component.
 ///
 /// Used in `_proxy/successor/send` when the proxy wants to forward a notification downstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToSuccessorNotification<Req> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: Req,
+pub struct ToSuccessorNotification<Req: JsonRpcNotification> {
+    /// The message to be sent to the successor component.
+    #[serde(flatten)]
+    pub message: Req,
 }
 
-impl<Req: JsonRpcMessage> JsonRpcMessage for ToSuccessorNotification<Req> {}
+impl<Req: JsonRpcNotification> JsonRpcMessage for ToSuccessorNotification<Req> {}
 
-impl<Req: JsonRpcOutgoingMessage> JsonRpcOutgoingMessage for ToSuccessorNotification<Req> {
+impl<Req: JsonRpcNotification> JsonRpcOutgoingMessage for ToSuccessorNotification<Req> {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(ToSuccessorRequest {
-                method: params_msg.method,
-                params: params_msg.params,
-            }).map_err(acp::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(
+            TO_SUCCESSOR_NOTIFICATION_METHOD,
+            self.message.into_untyped_message()?,
+        )
     }
 
     fn method(&self) -> &str {
-        "_proxy/successor/send/notification"
+        TO_SUCCESSOR_NOTIFICATION_METHOD
     }
 }
 
@@ -85,36 +75,31 @@ impl<Req: JsonRpcNotification> JsonRpcNotification for ToSuccessorNotification<R
 // Messages FROM successor
 // ============================================================================
 
+const FROM_SUCCESSOR_REQUEST_METHOD: &str = "_proxy/successor/receive/request";
+
 /// A request received from the successor component.
 ///
 /// Delivered via `_proxy/successor/receive` when the successor wants to call back upstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FromSuccessorRequest<R> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: R,
+pub struct FromSuccessorRequest<Req: JsonRpcRequest> {
+    /// The message received from the successor component.
+    #[serde(flatten)]
+    pub message: Req,
 }
 
-impl<R: JsonRpcRequest> JsonRpcMessage for FromSuccessorRequest<R> {}
+impl<Req: JsonRpcRequest> JsonRpcMessage for FromSuccessorRequest<Req> {}
 
 impl<R: JsonRpcRequest> JsonRpcOutgoingMessage for FromSuccessorRequest<R> {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(ToSuccessorRequest {
-                method: params_msg.method,
-                params: params_msg.params,
-            }).map_err(acp::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(
+            FROM_SUCCESSOR_REQUEST_METHOD,
+            self.message.into_untyped_message()?,
+        )
     }
 
     fn method(&self) -> &str {
-        "_proxy/successor/receive/request"
+        FROM_SUCCESSOR_REQUEST_METHOD
     }
 }
 
@@ -122,35 +107,30 @@ impl<R: JsonRpcRequest> JsonRpcRequest for FromSuccessorRequest<R> {
     type Response = R::Response;
 }
 
+const FROM_SUCCESSOR_NOTIFICATION_METHOD: &str = "_proxy/successor/receive/notification";
+
 /// A notification received from the successor component.
 ///
 /// Delivered via `_proxy/successor/receive` when the successor sends a notification upstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FromSuccessorNotification<N> {
-    /// Name of the method to be invoked
-    pub method: String,
-
-    /// Parameters for the method invocation
-    pub params: N,
+pub struct FromSuccessorNotification<N: JsonRpcNotification> {
+    /// The message received from the successor component.
+    #[serde(flatten)]
+    pub message: N,
 }
 
 impl<N: JsonRpcNotification> JsonRpcMessage for FromSuccessorNotification<N> {}
 
 impl<N: JsonRpcNotification> JsonRpcOutgoingMessage for FromSuccessorNotification<N> {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, acp::Error> {
-        let method = self.method().to_string();
-        let params_msg = self.params.into_untyped_message()?;
-                Ok(crate::UntypedMessage::new(
-            method,
-            serde_json::to_value(ToSuccessorRequest {
-                method: params_msg.method,
-                params: params_msg.params,
-            }).map_err(acp::Error::into_internal_error)?,
-        ))
+        crate::UntypedMessage::new(
+            FROM_SUCCESSOR_NOTIFICATION_METHOD,
+            self.message.into_untyped_message()?,
+        )
     }
 
     fn method(&self) -> &str {
-        "_proxy/successor/receive/notification"
+        FROM_SUCCESSOR_NOTIFICATION_METHOD
     }
 }
 
