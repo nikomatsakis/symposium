@@ -62,7 +62,7 @@
 
 use std::{collections::HashMap, pin::Pin};
 
-use agent_client_protocol::{ClientRequest, InitializeRequest, NewSessionRequest};
+use agent_client_protocol::{self as acp, ClientRequest, InitializeRequest, NewSessionRequest};
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 use scp::{
     AcpAgentToClientMessages, AcpClientToAgentMessages, InitializeRequestExt,
@@ -319,6 +319,24 @@ impl Conductor {
             .map_err(|err| anyhow::anyhow!("{err:?}"))
     }
 
+    /// Central message handling logic for the conductor.
+    /// The conductor routes all [`ConductorMessage`] messages through to this function.
+    /// Each message corresponds to a request or notification from one component to another.
+    /// The conductor ferries messages from one place to another, sometimes making modifications along the way.
+    /// Note that *responses to requests* are sent *directly* without going through this loop.
+    ///
+    /// The names we use are
+    ///
+    /// * The *client* is the originator of all ACP traffic, typically an editor or GUI.
+    /// * Then there is a sequence of *components* consisting of:
+    ///     * Zero or more *proxies*, which receive messages and forward them to the next component in the chain.
+    ///     * And finally the *agent*, which is the final component in the chain and handles the actual work.
+    ///
+    /// For the most part, we just pass messages through the chain without modification, but there are a few exceptions:
+    ///
+    /// * We insert the "proxy" capability to initialization messages going to proxy components (and remove it for the agent component).
+    /// * We modify "session/new" requests that use `acp:...` as the URL for an MCP server to redirect
+    ///   through a stdio server that runs on localhost and bridges messages.
     async fn handle_conductor_message(
         &mut self,
         client: &JsonRpcConnectionCx,
@@ -326,22 +344,20 @@ impl Conductor {
         conductor_tx: &mpsc::Sender<ConductorMessage>,
     ) -> Result<(), agent_client_protocol::Error> {
         match message {
-            // When we receive messages from the client, forward to the first item
-            // the proxy chain.
+            // # Messages coming from the client:
+            //
+            // * these are sent to the first component in the chain (could be a proxy or the agent)
             ConductorMessage::ClientToAgentViaProxyChain { message } => match message {
-                // Special handling for initialize: manage proxy capability based on chain position
+                // Initialize requests: insert or remove proxy capability.
                 scp::AcpClientToAgentMessage::Request(
                     ClientRequest::InitializeRequest(init_req),
                     json_rpc_request_cx,
                 ) => {
-                    self.send_initialize_request(
-                        0,
-                        Ok::<_, serde_json::Error>(init_req),
-                        json_rpc_request_cx,
-                    )
-                    .await;
+                    self.send_initialize_request(0, Ok(init_req), json_rpc_request_cx)
+                        .await?;
                 }
 
+                // Other requests: forward to the first component.
                 scp::AcpClientToAgentMessage::Request(client_request, json_rpc_request_cx) => {
                     let method = client_request.method().to_string();
 
@@ -357,10 +373,10 @@ impl Conductor {
                         client_request,
                         json_rpc_request_cx,
                         conductor_tx.clone(),
-                    )
-                    .await;
+                    )?;
                 }
 
+                // Notifications: forward to the first component.
                 scp::AcpClientToAgentMessage::Notification(client_notification, _json_rpc_cx) => {
                     debug!(
                         method = client_notification.method(),
@@ -373,6 +389,7 @@ impl Conductor {
                 }
             },
 
+            // # Message coming from a component to its *predecessor*.
             ConductorMessage::ComponentToItsPredecessorMessage {
                 component_index,
                 message,
@@ -400,7 +417,7 @@ impl Conductor {
 
                         predecessor
                             .send_request(agent_request)
-                            .when_response_received_spawn(async move |result| {
+                            .await_when_response_received(async move |result| {
                                 if let Err(error) = json_rpc_request_cx.respond_with_result(result)
                                 {
                                     error!(?error, "Failed to forward response to component");
@@ -444,7 +461,7 @@ impl Conductor {
                     // depending on whether we are sending this message to the final component.
                     self.send_initialize_request(
                         component_index,
-                        serde_json::from_value(params),
+                        serde_json::from_value(params).map_err(acp::Error::into_internal_error),
                         component_response_cx,
                     )
                     .await?;
@@ -496,7 +513,7 @@ impl Conductor {
                     let component_request_id = component_response_cx.id().clone();
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
-                    successor_response.when_response_received_spawn(async move |result| {
+                    successor_response.await_when_response_received(async move |response| {
                         async {
                             let is_ok = result.is_ok();
                             debug!(is_ok, "Received successor response, sending to conductor");
@@ -548,7 +565,7 @@ impl Conductor {
                     let component_request_id = component_response_cx.id().clone();
                     let current_span = tracing::Span::current();
                     let mut conductor_tx_clone = conductor_tx.clone();
-                    successor_response.when_response_received_spawn(async move |result| {
+                    successor_response.await_when_response_received(async move |result| {
                         async {
                             let is_ok = result.is_ok();
                             debug!(is_ok, "Received successor response, sending to conductor");
@@ -687,7 +704,7 @@ impl Conductor {
                 let response = self.components[0].jsonrpccx.send_request(request);
                 let method_for_task = method.clone();
 
-                let _ = response.when_response_received_spawn(async move |result| {
+                let _ = response.await_when_response_received(async move |result| {
                     async {
                         debug!(
                             is_ok = result.is_ok(),
@@ -740,38 +757,31 @@ impl Conductor {
         self.components.len() > 1 && component_index == self.components.len() - 2
     }
 
-    async fn send_initialize_request<E>(
+    async fn send_initialize_request(
         &self,
         to_component: usize,
-        initialize_req: Result<InitializeRequest, E>,
-        json_rpc_request_cx: JsonRpcRequestCx<serde_json::Value>,
+        initialize_req: Result<InitializeRequest, acp::Error>,
+        request_cx: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<(), agent_client_protocol::Error> {
-        let total_components = self.components.len();
-        let to_last_component = to_component == total_components - 1;
-
+        // If we failed to create the initialize request, respond with an error and return.
         let Ok(mut initialize_req) = initialize_req else {
-            json_rpc_request_cx.respond_with_error(agent_client_protocol::Error::parse_error())?;
+            request_cx.respond_with_error(agent_client_protocol::Error::parse_error())?;
             return Ok(());
         };
 
         // Either add or remove proxy, depending on whether this component has a successor.
-        if to_last_component {
+        if self.is_agent_component(to_component) {
             initialize_req = initialize_req.remove_meta_capability(Proxy);
         } else {
             initialize_req = initialize_req.add_meta_capability(Proxy);
         }
 
-        info!(
-            component_index = to_component,
-            to_last_component, "Managed proxy capability for initialize request"
-        );
-
         let response = self.components[to_component]
             .jsonrpccx
             .send_request(ClientRequest::InitializeRequest(initialize_req));
 
-        response.when_response_received_spawn(move |result| async move {
-            if let Err(error) = json_rpc_request_cx.respond_with_result(result) {
+        response.await_when_response_received(move |result| async move {
+            if let Err(error) = request_cx.respond_with_result(result) {
                 error!(?error, "Failed to forward initialize response");
             }
         })
@@ -901,7 +911,7 @@ impl Conductor {
         let method_string = method.to_string();
         let current_span = tracing::Span::current();
 
-        let _ = response.when_response_received_spawn(async move |result| {
+        let _ = response.await_when_response_received(async move |result| {
             async {
                 let is_ok = result.is_ok();
                 debug!(
@@ -1060,42 +1070,24 @@ impl Conductor {
         Ok(tcp_port)
     }
 
-    /// Send `req`
-    async fn send_request_to_component<Req: JsonRpcRequest<Response = serde_json::Value>>(
+    /// Send the request `req` to the given component. When the response is received,
+    /// it will be sent through the conductor as a [`ConductorMessage::ResponseReceived`].
+    fn send_request_to_component<Req: JsonRpcRequest<Response = serde_json::Value>>(
         &self,
         target_component_index: usize,
         req: Req,
         response_cx: JsonRpcRequestCx<serde_json::Value>,
         mut conductor_tx: mpsc::Sender<ConductorMessage>,
-    ) {
+    ) -> Result<(), acp::Error> {
         let method = req.method().to_string();
         let response = self.components[target_component_index]
             .jsonrpccx
             .send_request(req);
         let request_id = response_cx.id().clone();
         let current_span = tracing::Span::current();
-        let _ = response.when_response_received_spawn(async move |result| {
-            async {
-                let is_ok = result.is_ok();
-                debug!(is_ok, ?result, "Received response, sending to conductor");
-                if let Err(error) = conductor_tx
-                    .send(ConductorMessage::ResponseReceived {
-                        result,
-                        response_cx,
-                        method,
-                        target_component_index,
-                    })
-                    .await
-                {
-                    error!(?error, "Failed to send response to conductor");
-                } else {
-                    debug!("Sent response to conductor for forwarding");
-                }
-            }
-            .instrument(tracing::info_span!("receive_response", request_id = ?request_id))
-            .instrument(current_span)
-            .await
-        });
+        response.await_when_response_received(async move |result| {
+            ignore_send_err(response_cx.respond_with_result(result));
+        })
     }
 }
 
@@ -1187,21 +1179,6 @@ pub enum ConductorMessage {
         component_index: usize,
         args: scp::ToSuccessorNotification<serde_json::Value>,
         component_cx: JsonRpcConnectionCx,
-    },
-
-    /// Response received from a request that needs to be forwarded.
-    ///
-    /// Responses are routed back through the conductor to enable centralized
-    /// inspection and modification (e.g., adding capabilities to InitializeResponse).
-    ResponseReceived {
-        /// The response result (Ok with JSON value or Err with error)
-        result: Result<serde_json::Value, agent_client_protocol::Error>,
-        /// Context to send the response to
-        response_cx: JsonRpcRequestCx<serde_json::Value>,
-        /// The method that was called (e.g., "initialize")
-        method: String,
-        /// Index of the component that sent the request
-        target_component_index: usize,
     },
 
     /// Error from a spawned task that couldn't be handled locally.

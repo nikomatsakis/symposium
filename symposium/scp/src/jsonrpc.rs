@@ -3,6 +3,7 @@
 use agent_client_protocol as acp;
 use std::fmt::Debug;
 use std::ops::Deref;
+use tracing::Instrument as _;
 
 use boxfnonce::SendBoxFnOnce;
 use futures::channel::{mpsc, oneshot};
@@ -33,10 +34,10 @@ pub struct JsonRpcConnection<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     handler: H,
 
     /// Receiver for new tasks.
-    new_task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, ()>>,
+    new_task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, Result<(), acp::Error>>>,
 
     /// Sender to send messages to the "new task" actor.
-    new_task_tx: mpsc::UnboundedSender<BoxFuture<'static, ()>>,
+    new_task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
 }
 
 impl<OB: AsyncWrite, IB: AsyncRead> JsonRpcConnection<OB, IB, NullHandler> {
@@ -252,13 +253,13 @@ pub enum Handled<T> {
 #[derive(Clone)]
 pub struct JsonRpcConnectionCx {
     message_tx: mpsc::UnboundedSender<OutgoingMessage>,
-    task_tx: mpsc::UnboundedSender<BoxFuture<'static, ()>>,
+    task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
 }
 
 impl JsonRpcConnectionCx {
     fn new(
         tx: mpsc::UnboundedSender<OutgoingMessage>,
-        task_tx: mpsc::UnboundedSender<BoxFuture<'static, ()>>,
+        task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
     ) -> Self {
         Self {
             message_tx: tx,
@@ -311,7 +312,7 @@ impl JsonRpcConnectionCx {
             }
         }
 
-        JsonRpcResponse::new(response_rx, self.task_tx.clone())
+        JsonRpcResponse::new(method.clone(), response_rx, self.task_tx.clone())
             .map(move |json| <Req::Response>::from_value(&method, json))
     }
 
@@ -578,17 +579,20 @@ impl JsonRpcRequest for JsonRpcUntypedRequest {
 
 /// Represents a pending response of type `R` from an outgoing request.
 pub struct JsonRpcResponse<R> {
+    method: String,
     response_rx: oneshot::Receiver<Result<serde_json::Value, acp::Error>>,
-    task_tx: mpsc::UnboundedSender<BoxFuture<'static, ()>>,
+    task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
     to_result: Box<dyn Fn(serde_json::Value) -> Result<R, acp::Error> + Send>,
 }
 
 impl JsonRpcResponse<serde_json::Value> {
     fn new(
+        method: String,
         response_rx: oneshot::Receiver<Result<serde_json::Value, acp::Error>>,
-        task_tx: mpsc::UnboundedSender<BoxFuture<'static, ()>>,
+        task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
     ) -> Self {
         Self {
+            method,
             response_rx,
             task_tx,
             to_result: Box::new(Ok),
@@ -606,6 +610,7 @@ impl<R: JsonRpcMessage> JsonRpcResponse<R> {
         U: JsonRpcMessage,
     {
         JsonRpcResponse {
+            method: self.method,
             response_rx: self.response_rx,
             task_tx: self.task_tx,
             to_result: Box::new(move |value| map_fn((self.to_result)(value)?)),
@@ -616,33 +621,46 @@ impl<R: JsonRpcMessage> JsonRpcResponse<R> {
     ///
     /// It is intentionally not possible to block until the response is received
     /// because doing so can easily stall the event loop if done directly in the `on_receive` callback.
-    pub fn when_response_received_spawn<F>(
+    ///
+    /// If this task ultimately returns `Err`, the server will abort.
+    pub fn await_when_response_received<F>(
         self,
         task: impl FnOnce(Result<R, acp::Error>) -> F + 'static + Send,
     ) -> Result<(), acp::Error>
     where
-        F: Future<Output = ()> + 'static + Send,
+        F: Future<Output = Result<(), acp::Error>> + 'static + Send,
     {
+        let current_span = tracing::Span::current();
         self.task_tx
-            .unbounded_send(Box::pin(async move {
-                let result = match self.response_rx.await {
-                    // We received a JSON value; transform it to our result type
-                    Ok(Ok(json_value)) => (self.to_result)(json_value),
+            .unbounded_send(Box::pin(
+                async move {
+                    let result = match self.response_rx.await {
+                        // We received a JSON value; transform it to our result type
+                        Ok(Ok(json_value)) => {
+                            tracing::trace!(?json_value, "received response to message");
+                            (self.to_result)(json_value)
+                        }
 
-                    // We got sent an error
-                    Ok(Err(e)) => Err(e),
+                        // We got sent an error
+                        Ok(Err(e)) => Err(e),
 
-                    // if the `response_tx` is dropped before we get a chance, that's weird
-                    Err(e) => Err(acp::Error::new((
-                        COMMUNICATION_FAILURE,
-                        format!(
-                            "reply of type `{}` never arrived: {e}",
-                            std::any::type_name::<R>()
-                        ),
-                    ))),
-                };
-                task(result).await;
-            }))
+                        // if the `response_tx` is dropped before we get a chance, that's weird
+                        Err(e) => Err(acp::Error::new((
+                            COMMUNICATION_FAILURE,
+                            format!(
+                                "reply of type `{}` never arrived: {e}",
+                                std::any::type_name::<R>()
+                            ),
+                        ))),
+                    };
+                    task(result).await
+                }
+                .instrument(tracing::info_span!(
+                    "receive_response",
+                    method = self.method
+                ))
+                .instrument(current_span),
+            ))
             .map_err(acp::Error::into_internal_error)
     }
 }

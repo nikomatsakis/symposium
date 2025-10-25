@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::pin::pin;
 
+use agent_client_protocol as acp;
 use futures::AsyncBufReadExt as _;
 use futures::AsyncRead;
 use futures::AsyncWrite;
@@ -24,8 +25,8 @@ use super::Handled;
 
 /// The "task actor" manages other tasks
 pub(super) async fn task_actor(
-    mut task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, ()>>,
-) -> Result<(), agent_client_protocol::Error> {
+    mut task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, Result<(), acp::Error>>>,
+) -> Result<(), acp::Error> {
     let mut futures = FuturesUnordered::new();
 
     loop {
@@ -40,13 +41,18 @@ pub(super) async fn task_actor(
 
         // If there are no more tasks coming in, just drain our queue and return.
         if task_rx.is_terminated() {
-            while let Some(()) = futures.next().await {}
+            while let Some(result) = futures.next().await {
+                result?;
+            }
             return Ok(());
         }
 
         // Otherwise, run futures until we get a request for a new task.
         futures::select! {
-            _ = futures.next() => {}
+            result = futures.next() => if let Some(result) = result {
+                result?;
+            },
+
             task = task_rx.next() => {
                 if let Some(future) = task {
                     futures.push(future);

@@ -11,10 +11,19 @@ use tokio::process::Child;
 /// to the conductor via JSON-RPC.
 pub struct Component {
     /// The child process, if this component was spawned via Command.
+    /// This is used to kill the child process when the component is dropped.
     /// None for mock components used in tests.
-    #[expect(dead_code)]
     pub child: Option<Child>,
+
     pub jsonrpccx: JsonRpcConnectionCx,
+}
+
+impl Drop for Component {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            child.start_kill();
+        }
+    }
 }
 
 /// Specifies how to create a component in the proxy chain.

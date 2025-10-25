@@ -19,8 +19,9 @@ async fn recv<R: JsonRpcMessage + Send>(
     response: JsonRpcResponse<R>,
 ) -> Result<R, agent_client_protocol::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    response.when_response_received_spawn(move |result| async move {
-        let _ = tx.send(result);
+    response.await_when_response_received(async move |result| {
+        tx.send(result)
+            .map_err(|_| agent_client_protocol::Error::internal_error())
     })?;
     rx.await
         .map_err(|_| agent_client_protocol::Error::internal_error())?
@@ -646,9 +647,9 @@ async fn test_handler_claims_notification() {
                         })
                         .map_err(|e| {
                             scp::util::internal_error(format!(
-                                    "Failed to send notification: {:?}",
-                                    e
-                                ))
+                                "Failed to send notification: {:?}",
+                                e
+                            ))
                         })?;
 
                         // Give server time to process
