@@ -1,8 +1,8 @@
 use std::error::Error;
 
 use crate::{
-    Handled, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcNotificationCx, JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx,
+    Handled, JsonRpcHandler, JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx,
+    JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponsePayload,
     UntypedMessage, util::json_cast,
 };
 use agent_client_protocol as acp;
@@ -39,7 +39,7 @@ pub struct McpConnectResponse {
 
 impl JsonRpcMessage for McpConnectResponse {}
 
-impl JsonRpcIncomingMessage for McpConnectResponse {
+impl JsonRpcResponsePayload for McpConnectResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
         serde_json::to_value(self).map_err(acp::Error::into_internal_error)
     }

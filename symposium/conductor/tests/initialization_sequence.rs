@@ -20,7 +20,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::Instrument;
 
 /// Test helper to receive a JSON-RPC response
-async fn recv<R: scp::JsonRpcIncomingMessage + Send>(
+async fn recv<R: scp::JsonRpcResponsePayload + Send>(
     response: scp::JsonRpcResponse<R>,
 ) -> Result<R, agent_client_protocol::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();

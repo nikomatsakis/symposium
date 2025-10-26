@@ -7,7 +7,7 @@ use agent_client_protocol::{
 };
 
 use crate::jsonrpc::{
-    JsonRpcIncomingMessage, JsonRpcMessage, JsonRpcOutgoingMessage, JsonRpcRequest,
+    JsonRpcMessage, JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcResponsePayload,
 };
 use crate::util::json_cast;
 
@@ -37,7 +37,7 @@ impl JsonRpcRequest for RequestPermissionRequest {
 
 impl JsonRpcMessage for RequestPermissionResponse {}
 
-impl JsonRpcIncomingMessage for RequestPermissionResponse {
+impl JsonRpcResponsePayload for RequestPermissionResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -70,7 +70,7 @@ impl JsonRpcRequest for WriteTextFileRequest {
 
 impl JsonRpcMessage for WriteTextFileResponse {}
 
-impl JsonRpcIncomingMessage for WriteTextFileResponse {
+impl JsonRpcResponsePayload for WriteTextFileResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -103,7 +103,7 @@ impl JsonRpcRequest for ReadTextFileRequest {
 
 impl JsonRpcMessage for ReadTextFileResponse {}
 
-impl JsonRpcIncomingMessage for ReadTextFileResponse {
+impl JsonRpcResponsePayload for ReadTextFileResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -136,7 +136,7 @@ impl JsonRpcRequest for CreateTerminalRequest {
 
 impl JsonRpcMessage for CreateTerminalResponse {}
 
-impl JsonRpcIncomingMessage for CreateTerminalResponse {
+impl JsonRpcResponsePayload for CreateTerminalResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -169,7 +169,7 @@ impl JsonRpcRequest for TerminalOutputRequest {
 
 impl JsonRpcMessage for TerminalOutputResponse {}
 
-impl JsonRpcIncomingMessage for TerminalOutputResponse {
+impl JsonRpcResponsePayload for TerminalOutputResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -202,7 +202,7 @@ impl JsonRpcRequest for ReleaseTerminalRequest {
 
 impl JsonRpcMessage for ReleaseTerminalResponse {}
 
-impl JsonRpcIncomingMessage for ReleaseTerminalResponse {
+impl JsonRpcResponsePayload for ReleaseTerminalResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -235,7 +235,7 @@ impl JsonRpcRequest for WaitForTerminalExitRequest {
 
 impl JsonRpcMessage for WaitForTerminalExitResponse {}
 
-impl JsonRpcIncomingMessage for WaitForTerminalExitResponse {
+impl JsonRpcResponsePayload for WaitForTerminalExitResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
@@ -268,7 +268,7 @@ impl JsonRpcRequest for KillTerminalCommandRequest {
 
 impl JsonRpcMessage for KillTerminalCommandResponse {}
 
-impl JsonRpcIncomingMessage for KillTerminalCommandResponse {
+impl JsonRpcResponsePayload for KillTerminalCommandResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }

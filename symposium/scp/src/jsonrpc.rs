@@ -397,7 +397,7 @@ impl Deref for JsonRpcNotificationCx {
 /// The context to respond to an incoming request.
 /// Derefs to a [`JsonRpcCx`] which can be used to send other requests and notification.
 #[must_use]
-pub struct JsonRpcRequestCx<T: JsonRpcIncomingMessage> {
+pub struct JsonRpcRequestCx<T: JsonRpcResponsePayload> {
     /// The context to use to send outgoing messages and replies.
     cx: JsonRpcConnectionCx,
 
@@ -415,7 +415,7 @@ pub struct JsonRpcRequestCx<T: JsonRpcIncomingMessage> {
     >,
 }
 
-impl<T: JsonRpcIncomingMessage> std::ops::Deref for JsonRpcRequestCx<T> {
+impl<T: JsonRpcResponsePayload> std::ops::Deref for JsonRpcRequestCx<T> {
     type Target = JsonRpcConnectionCx;
 
     fn deref(&self) -> &Self::Target {
@@ -434,7 +434,7 @@ impl JsonRpcRequestCx<serde_json::Value> {
         }
     }
 
-    pub fn cast<T: JsonRpcIncomingMessage>(self) -> JsonRpcRequestCx<T> {
+    pub fn cast<T: JsonRpcResponsePayload>(self) -> JsonRpcRequestCx<T> {
         self.wrap_params(move |(method, _), value| match value {
             Ok(value) => T::into_json(value, &method),
             Err(e) => Err(e),
@@ -442,7 +442,7 @@ impl JsonRpcRequestCx<serde_json::Value> {
     }
 }
 
-impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
+impl<T: JsonRpcResponsePayload> JsonRpcRequestCx<T> {
     /// Get the ID of the request being responded to.
     pub fn id(&self) -> &jsonrpcmsg::Id {
         &self.id
@@ -471,7 +471,7 @@ impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
     }
 
     /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
-    pub fn wrap_params<U: JsonRpcIncomingMessage>(
+    pub fn wrap_params<U: JsonRpcResponsePayload>(
         self,
         wrap_fn: impl FnOnce((String, jsonrpcmsg::Id), Result<U, acp::Error>) -> Result<T, acp::Error>
         + Send
@@ -527,7 +527,8 @@ impl<T: JsonRpcIncomingMessage> JsonRpcRequestCx<T> {
 /// Common bounds for any JSON-RPC message.
 pub trait JsonRpcMessage: 'static + Debug + Sized {}
 
-pub trait JsonRpcIncomingMessage: JsonRpcMessage {
+/// Defines the "payload" of a successful response to a JSON-RPC request.
+pub trait JsonRpcResponsePayload: 'static + Debug + Sized {
     /// Convert this message into a JSON value.
     fn into_json(self, method: &str) -> Result<serde_json::Value, acp::Error>;
 
@@ -537,7 +538,7 @@ pub trait JsonRpcIncomingMessage: JsonRpcMessage {
 
 impl JsonRpcMessage for serde_json::Value {}
 
-impl JsonRpcIncomingMessage for serde_json::Value {
+impl JsonRpcResponsePayload for serde_json::Value {
     fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, acp::Error> {
         Ok(value)
     }
@@ -574,7 +575,7 @@ pub trait JsonRpcNotification: JsonRpcOutgoingMessage {}
 /// A struct that represents a request (JSON-RPC message expecting a response).
 pub trait JsonRpcRequest: JsonRpcOutgoingMessage {
     /// The type of data expected in response.
-    type Response: JsonRpcIncomingMessage;
+    type Response: JsonRpcResponsePayload;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -647,14 +648,14 @@ impl JsonRpcResponse<serde_json::Value> {
     }
 }
 
-impl<R: JsonRpcIncomingMessage> JsonRpcResponse<R> {
+impl<R: JsonRpcResponsePayload> JsonRpcResponse<R> {
     /// Create a new response that maps the result of the response to a new type.
     pub fn map<U>(
         self,
         map_fn: impl Fn(R) -> Result<U, acp::Error> + 'static + Send,
     ) -> JsonRpcResponse<U>
     where
-        U: JsonRpcIncomingMessage,
+        U: JsonRpcResponsePayload,
     {
         JsonRpcResponse {
             method: self.method,

@@ -8,14 +8,14 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcIncomingMessage, JsonRpcMessage,
+    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcResponsePayload, JsonRpcMessage,
     JsonRpcOutgoingMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
-async fn recv<R: JsonRpcIncomingMessage + Send>(
+async fn recv<R: JsonRpcResponsePayload + Send>(
     response: JsonRpcResponse<R>,
 ) -> Result<R, agent_client_protocol::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -102,7 +102,7 @@ struct SimpleResponse {
 
 impl JsonRpcMessage for SimpleResponse {}
 
-impl JsonRpcIncomingMessage for SimpleResponse {
+impl JsonRpcResponsePayload for SimpleResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
     }
