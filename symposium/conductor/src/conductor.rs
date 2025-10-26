@@ -205,7 +205,6 @@ impl Conductor {
                         Box::pin(stdout.compat()) as Pin<Box<dyn AsyncRead + Send>>,
                     )
                 }
-                #[cfg(any(test, feature = "test-support"))]
                 ComponentProvider::Mock(mock) => {
                     debug!(component_index, "Creating mock component");
                     // mock is Box<dyn MockComponent>, create() takes Box<Self>

@@ -34,7 +34,6 @@ pub enum ComponentProvider {
     Command(String),
 
     /// Create a mock component for testing (provides byte streams directly).
-    #[cfg(any(test, feature = "test-support"))]
     Mock(Box<dyn MockComponent>),
 }
 
