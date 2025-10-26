@@ -203,7 +203,7 @@ async fn test_multiple_handlers_different_methods() {
                         .await
                         .map_err(
                             |e| -> agent_client_protocol::Error {
-                                scp::util::internal_error(format!("Foo request failed: {e:?}"))
+                                scp::util::into_internal_error(format!("Foo request failed: {e:?}"))
                             },
                         )?;
                         assert_eq!(foo_response.result, "foo: test1");
@@ -215,7 +215,10 @@ async fn test_multiple_handlers_different_methods() {
                         .await
                         .map_err(
                             |e| -> agent_client_protocol::Error {
-                                scp::util::internal_error(format!("Bar request failed: {:?}", e))
+                                scp::util::into_internal_error(format!(
+                                    "Bar request failed: {:?}",
+                                    e
+                                ))
                             },
                         )?;
                         assert_eq!(bar_response.result, "bar: test2");
@@ -330,7 +333,7 @@ async fn test_handler_priority_ordering() {
                         }))
                         .await
                         .map_err(|e| {
-                            scp::util::internal_error(format!("Track request failed: {:?}", e))
+                            scp::util::into_internal_error(format!("Track request failed: {:?}", e))
                         })?;
 
                         // First handler should have handled it
@@ -481,7 +484,10 @@ async fn test_fallthrough_behavior() {
                         }))
                         .await
                         .map_err(|e| {
-                            scp::util::internal_error(format!("Method2 request failed: {:?}", e))
+                            scp::util::into_internal_error(format!(
+                                "Method2 request failed: {:?}",
+                                e
+                            ))
                         })?;
 
                         assert_eq!(response.result, "method2: fallthrough");
@@ -652,7 +658,7 @@ async fn test_handler_claims_notification() {
                             event: "test_event".to_string(),
                         })
                         .map_err(|e| {
-                            scp::util::internal_error(format!(
+                            scp::util::into_internal_error(format!(
                                 "Failed to send notification: {:?}",
                                 e
                             ))

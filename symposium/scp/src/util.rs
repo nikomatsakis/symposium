@@ -1,5 +1,6 @@
 use agent_client_protocol as acp;
 
+/// Cast from `N` to `M` by serializing/deserialization to/from JSON.
 pub fn json_cast<N, M>(params: N) -> Result<M, acp::Error>
 where
     N: serde::Serialize,
@@ -10,11 +11,10 @@ where
     Ok(m)
 }
 
-/// Create an internal error from an error value.
-/// This is a convenience helper that can be used directly with `map_err`:
-/// ```
-/// some_result.map_err(scp::util::internal_error)
-/// ```
-pub fn internal_error(error: impl std::fmt::Display) -> acp::Error {
-    acp::Error::new((-32603, error.to_string()))
+pub fn into_internal_error(message: impl ToString) -> acp::Error {
+    acp::Error::internal_error().with_data(message.to_string())
+}
+
+pub fn into_parse_error(message: impl ToString) -> acp::Error {
+    acp::Error::parse_error().with_data(message.to_string())
 }
