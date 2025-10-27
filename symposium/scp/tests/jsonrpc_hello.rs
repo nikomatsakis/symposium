@@ -5,9 +5,8 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcResponsePayload, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest,
-    JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcConnection, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcRequestCx,
+    JsonRpcResponse, JsonRpcResponsePayload,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -28,12 +27,12 @@ async fn recv<R: JsonRpcResponsePayload + Send>(
 }
 
 /// Helper to set up a client-server pair for testing.
-/// Returns (server_connection, client_connection).
-fn setup_test_connections<H: JsonRpcHandler + 'static>(
-    server_handler: H,
-) -> (
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
+/// Returns (server_reader, server_writer, client_reader, client_writer) for manual setup.
+fn setup_test_streams() -> (
+    impl AsyncRead,
+    impl AsyncWrite,
+    impl AsyncRead,
+    impl AsyncWrite,
 ) {
     let (client_writer, server_reader) = tokio::io::duplex(1024);
     let (server_writer, client_reader) = tokio::io::duplex(1024);
@@ -43,10 +42,7 @@ fn setup_test_connections<H: JsonRpcHandler + 'static>(
     let client_reader = client_reader.compat();
     let client_writer = client_writer.compat_write();
 
-    let server = JsonRpcConnection::new(server_writer, server_reader).on_receive(server_handler);
-    let client = JsonRpcConnection::new(client_writer, client_reader);
-
-    (server, client)
+    (server_reader, server_writer, client_reader, client_writer)
 }
 
 /// A simple "ping" request.
@@ -54,7 +50,6 @@ fn setup_test_connections<H: JsonRpcHandler + 'static>(
 struct PingRequest {
     message: String,
 }
-
 
 impl JsonRpcMessage for PingRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
@@ -64,6 +59,17 @@ impl JsonRpcMessage for PingRequest {
 
     fn method(&self) -> &str {
         "ping"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "ping" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -76,7 +82,6 @@ impl JsonRpcRequest for PingRequest {
 struct PongResponse {
     echo: String,
 }
-
 
 impl JsonRpcResponsePayload for PongResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
@@ -91,36 +96,6 @@ impl JsonRpcResponsePayload for PongResponse {
     }
 }
 
-/// Handler that responds to ping requests.
-struct PingHandler;
-
-impl JsonRpcHandler for PingHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<
-        Handled<JsonRpcRequestCx<serde_json::Value>>,
-        agent_client_protocol::Error,
-    > {
-        if cx.method() == "ping" {
-            // Parse the request
-            let request: PingRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            // Send back a pong
-            let pong = PongResponse {
-                echo: format!("pong: {}", request.message),
-            };
-
-            cx.cast().respond(pong)?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn test_hello_world() {
     use tokio::task::LocalSet;
@@ -129,7 +104,18 @@ async fn test_hello_world() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(PingHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async move |request: PingRequest, request_cx: JsonRpcRequestCx<PongResponse>| {
+                    let pong = PongResponse {
+                        echo: format!("pong: {}", request.message),
+                    };
+                    request_cx.respond(pong)
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             // Spawn the server in the background
             tokio::task::spawn_local(async move {
@@ -168,7 +154,6 @@ struct LogNotification {
     message: String,
 }
 
-
 impl JsonRpcMessage for LogNotification {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -178,32 +163,20 @@ impl JsonRpcMessage for LogNotification {
     fn method(&self) -> &str {
         "log"
     }
+
+    fn parse_notification(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "log" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
+    }
 }
 
 impl JsonRpcNotification for LogNotification {}
-
-/// Handler that collects log notifications
-struct LogHandler {
-    logs: Arc<Mutex<Vec<String>>>,
-}
-
-impl JsonRpcHandler for LogHandler {
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        if cx.method() == "log" {
-            let log: LogNotification = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            self.logs.lock().unwrap().push(log.message);
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_notification() {
@@ -216,7 +189,18 @@ async fn test_notification() {
             let logs = Arc::new(Mutex::new(Vec::new()));
             let logs_clone = logs.clone();
 
-            let (server, client) = setup_test_connections(LogHandler { logs: logs_clone });
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader)
+                .on_receive_notification({
+                    let logs = logs_clone.clone();
+                    async move |notification: LogNotification, _cx| {
+                        logs.lock().unwrap().push(notification.message);
+                        Ok(())
+                    }
+                });
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
@@ -274,7 +258,18 @@ async fn test_multiple_sequential_requests() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(PingHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: PingRequest, request_cx: JsonRpcRequestCx<PongResponse>| {
+                    let pong = PongResponse {
+                        echo: format!("pong: {}", request.message),
+                    };
+                    request_cx.respond(pong)
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {
@@ -316,7 +311,18 @@ async fn test_concurrent_requests() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(PingHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: PingRequest, request_cx: JsonRpcRequestCx<PongResponse>| {
+                    let pong = PongResponse {
+                        echo: format!("pong: {}", request.message),
+                    };
+                    request_cx.respond(pong)
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve().await {

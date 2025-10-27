@@ -5,9 +5,8 @@
 //! handler claims them.
 
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcResponsePayload, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest,
-    JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcConnection, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcRequestCx,
+    JsonRpcResponse, JsonRpcResponsePayload,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -36,7 +35,6 @@ struct FooRequest {
     value: String,
 }
 
-
 impl JsonRpcMessage for FooRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -45,6 +43,17 @@ impl JsonRpcMessage for FooRequest {
 
     fn method(&self) -> &str {
         "foo"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "foo" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -56,7 +65,6 @@ impl JsonRpcRequest for FooRequest {
 struct FooResponse {
     result: String,
 }
-
 
 impl JsonRpcResponsePayload for FooResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
@@ -76,7 +84,6 @@ struct BarRequest {
     value: String,
 }
 
-
 impl JsonRpcMessage for BarRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -85,6 +92,17 @@ impl JsonRpcMessage for BarRequest {
 
     fn method(&self) -> &str {
         "bar"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "bar" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -97,7 +115,6 @@ struct BarResponse {
     result: String,
 }
 
-
 impl JsonRpcResponsePayload for BarResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
         serde_json::to_value(self).map_err(agent_client_protocol::Error::into_internal_error)
@@ -108,56 +125,6 @@ impl JsonRpcResponsePayload for BarResponse {
         value: serde_json::Value,
     ) -> Result<Self, agent_client_protocol::Error> {
         scp::util::json_cast(&value)
-    }
-}
-
-struct FooHandler;
-
-impl JsonRpcHandler for FooHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<
-        Handled<JsonRpcRequestCx<serde_json::Value>>,
-        agent_client_protocol::Error,
-    > {
-        if cx.method() == "foo" {
-            let request: FooRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            cx.cast().respond(FooResponse {
-                result: format!("foo: {}", request.value),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
-struct BarHandler;
-
-impl JsonRpcHandler for BarHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<
-        Handled<JsonRpcRequestCx<serde_json::Value>>,
-        agent_client_protocol::Error,
-    > {
-        if cx.method() == "bar" {
-            let request: BarRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            cx.cast().respond(BarResponse {
-                result: format!("bar: {}", request.value),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
     }
 }
 
@@ -179,8 +146,20 @@ async fn test_multiple_handlers_different_methods() {
 
             // Chain both handlers
             let server = JsonRpcConnection::new(server_writer, server_reader)
-                .on_receive(FooHandler)
-                .on_receive(BarHandler);
+                .on_receive_request(
+                    async |request: FooRequest, request_cx: JsonRpcRequestCx<FooResponse>| {
+                        request_cx.respond(FooResponse {
+                            result: format!("foo: {}", request.value),
+                        })
+                    },
+                )
+                .on_receive_request(
+                    async |request: BarRequest, request_cx: JsonRpcRequestCx<BarResponse>| {
+                        request_cx.respond(BarResponse {
+                            result: format!("bar: {}", request.value),
+                        })
+                    },
+                );
             let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
@@ -235,7 +214,6 @@ struct TrackRequest {
     value: String,
 }
 
-
 impl JsonRpcMessage for TrackRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -245,40 +223,21 @@ impl JsonRpcMessage for TrackRequest {
     fn method(&self) -> &str {
         "track"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "track" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
+    }
 }
 
 impl JsonRpcRequest for TrackRequest {
     type Response = FooResponse;
-}
-
-struct TrackingHandler {
-    name: String,
-    handled: Arc<Mutex<Vec<String>>>,
-}
-
-impl JsonRpcHandler for TrackingHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<
-        Handled<JsonRpcRequestCx<serde_json::Value>>,
-        agent_client_protocol::Error,
-    > {
-        if cx.method() == "track" {
-            self.handled.lock().unwrap().push(self.name.clone());
-
-            let request: TrackRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            cx.cast().respond(FooResponse {
-                result: format!("{}: {}", self.name, request.value),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -300,15 +259,27 @@ async fn test_handler_priority_ordering() {
             let client_writer = client_writer.compat_write();
 
             // First handler in chain should get first chance
+            let handled_clone1 = handled.clone();
+            let handled_clone2 = handled.clone();
             let server = JsonRpcConnection::new(server_writer, server_reader)
-                .on_receive(TrackingHandler {
-                    name: "handler1".to_string(),
-                    handled: handled.clone(),
-                })
-                .on_receive(TrackingHandler {
-                    name: "handler2".to_string(),
-                    handled: handled.clone(),
-                });
+                .on_receive_request(
+                    async move |request: TrackRequest,
+                                request_cx: JsonRpcRequestCx<FooResponse>| {
+                        handled_clone1.lock().unwrap().push("handler1".to_string());
+                        request_cx.respond(FooResponse {
+                            result: format!("handler1: {}", request.value),
+                        })
+                    },
+                )
+                .on_receive_request(
+                    async move |request: TrackRequest,
+                                request_cx: JsonRpcRequestCx<FooResponse>| {
+                        handled_clone2.lock().unwrap().push("handler2".to_string());
+                        request_cx.respond(FooResponse {
+                            result: format!("handler2: {}", request.value),
+                        })
+                    },
+                );
             let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
@@ -355,7 +326,6 @@ struct Method1Request {
     value: String,
 }
 
-
 impl JsonRpcMessage for Method1Request {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -364,6 +334,17 @@ impl JsonRpcMessage for Method1Request {
 
     fn method(&self) -> &str {
         "method1"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "method1" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -376,7 +357,6 @@ struct Method2Request {
     value: String,
 }
 
-
 impl JsonRpcMessage for Method2Request {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -386,47 +366,21 @@ impl JsonRpcMessage for Method2Request {
     fn method(&self) -> &str {
         "method2"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "method2" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
+    }
 }
 
 impl JsonRpcRequest for Method2Request {
     type Response = FooResponse;
-}
-
-struct SelectiveHandler {
-    method_to_handle: String,
-    handled: Arc<Mutex<Vec<String>>>,
-}
-
-impl JsonRpcHandler for SelectiveHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<
-        Handled<JsonRpcRequestCx<serde_json::Value>>,
-        agent_client_protocol::Error,
-    > {
-        if cx.method() == self.method_to_handle {
-            let method = cx.method().to_string();
-            self.handled.lock().unwrap().push(method.clone());
-
-            // Parse as generic struct with value field
-            #[derive(Deserialize)]
-            struct GenericRequest {
-                value: String,
-            }
-            let request: GenericRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            cx.cast().respond(FooResponse {
-                result: format!("{}: {}", method, request.value),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            // Pass through to next handler
-            Ok(Handled::No(cx))
-        }
-    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -448,15 +402,27 @@ async fn test_fallthrough_behavior() {
             let client_writer = client_writer.compat_write();
 
             // Handler1 only handles "method1", Handler2 only handles "method2"
+            let handled_clone1 = handled.clone();
+            let handled_clone2 = handled.clone();
             let server = JsonRpcConnection::new(server_writer, server_reader)
-                .on_receive(SelectiveHandler {
-                    method_to_handle: "method1".to_string(),
-                    handled: handled.clone(),
-                })
-                .on_receive(SelectiveHandler {
-                    method_to_handle: "method2".to_string(),
-                    handled: handled.clone(),
-                });
+                .on_receive_request(
+                    async move |request: Method1Request,
+                                request_cx: JsonRpcRequestCx<FooResponse>| {
+                        handled_clone1.lock().unwrap().push("method1".to_string());
+                        request_cx.respond(FooResponse {
+                            result: format!("method1: {}", request.value),
+                        })
+                    },
+                )
+                .on_receive_request(
+                    async move |request: Method2Request,
+                                request_cx: JsonRpcRequestCx<FooResponse>| {
+                        handled_clone2.lock().unwrap().push("method2".to_string());
+                        request_cx.respond(FooResponse {
+                            result: format!("method2: {}", request.value),
+                        })
+                    },
+                );
             let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
@@ -515,8 +481,13 @@ async fn test_no_handler_claims() {
             let client_writer = client_writer.compat_write();
 
             // Handler that only handles "foo"
-            let server =
-                JsonRpcConnection::new(server_writer, server_reader).on_receive(FooHandler);
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: FooRequest, request_cx: JsonRpcRequestCx<FooResponse>| {
+                    request_cx.respond(FooResponse {
+                        result: format!("foo: {}", request.value),
+                    })
+                },
+            );
             let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
@@ -556,7 +527,6 @@ struct EventNotification {
     event: String,
 }
 
-
 impl JsonRpcMessage for EventNotification {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -566,44 +536,20 @@ impl JsonRpcMessage for EventNotification {
     fn method(&self) -> &str {
         "event"
     }
+
+    fn parse_notification(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "event" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
+    }
 }
 
 impl JsonRpcNotification for EventNotification {}
-
-struct EventHandler {
-    events: Arc<Mutex<Vec<String>>>,
-}
-
-impl JsonRpcHandler for EventHandler {
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        if cx.method() == "event" {
-            let notification: EventNotification = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            self.events.lock().unwrap().push(notification.event);
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
-struct IgnoreHandler;
-
-impl JsonRpcHandler for IgnoreHandler {
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        _params: &Option<jsonrpcmsg::Params>,
-    ) -> std::result::Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        // Never claims anything, always passes through
-        Ok(Handled::No(cx))
-    }
-}
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_handler_claims_notification() {
@@ -623,12 +569,15 @@ async fn test_handler_claims_notification() {
             let client_reader = client_reader.compat();
             let client_writer = client_writer.compat_write();
 
-            // IgnoreHandler passes through, EventHandler claims
+            // EventHandler claims notifications
+            let events_clone = events.clone();
             let server = JsonRpcConnection::new(server_writer, server_reader)
-                .on_receive(IgnoreHandler)
-                .on_receive(EventHandler {
-                    events: events.clone(),
-                });
+                .on_receive_notification(
+                    async move |notification: EventNotification, _notification_cx| {
+                        events_clone.lock().unwrap().push(notification.event);
+                        Ok(())
+                    },
+                );
             let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {

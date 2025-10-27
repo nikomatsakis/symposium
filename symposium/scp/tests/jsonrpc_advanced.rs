@@ -7,8 +7,8 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcResponsePayload, JsonRpcMessage,
-    JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcConnection, JsonRpcMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcResponsePayload,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -26,12 +26,12 @@ async fn recv<R: JsonRpcResponsePayload + Send>(
         .map_err(|_| agent_client_protocol::Error::internal_error())?
 }
 
-/// Helper to set up a client-server pair for testing.
-fn setup_test_connections(
-    server_handler: impl JsonRpcHandler + 'static,
-) -> (
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
+/// Helper to set up test streams for testing.
+fn setup_test_streams() -> (
+    impl AsyncRead,
+    impl AsyncWrite,
+    impl AsyncRead,
+    impl AsyncWrite,
 ) {
     let (client_writer, server_reader) = tokio::io::duplex(1024);
     let (server_writer, client_reader) = tokio::io::duplex(1024);
@@ -41,10 +41,7 @@ fn setup_test_connections(
     let client_reader = client_reader.compat();
     let client_writer = client_writer.compat_write();
 
-    let server = JsonRpcConnection::new(server_writer, server_reader).on_receive(server_handler);
-    let client = JsonRpcConnection::new(client_writer, client_reader);
-
-    (server, client)
+    (server_reader, server_writer, client_reader, client_writer)
 }
 
 // ============================================================================
@@ -56,7 +53,6 @@ struct PingRequest {
     value: u32,
 }
 
-
 impl JsonRpcMessage for PingRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -65,6 +61,17 @@ impl JsonRpcMessage for PingRequest {
 
     fn method(&self) -> &str {
         "ping"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "ping" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -76,7 +83,6 @@ impl JsonRpcRequest for PingRequest {
 struct PongResponse {
     value: u32,
 }
-
 
 impl JsonRpcResponsePayload for PongResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
@@ -97,7 +103,6 @@ struct SlowRequest {
     id: u32,
 }
 
-
 impl JsonRpcMessage for SlowRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -106,6 +111,17 @@ impl JsonRpcMessage for SlowRequest {
 
     fn method(&self) -> &str {
         "slow"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "slow" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -117,7 +133,6 @@ impl JsonRpcRequest for SlowRequest {
 struct SlowResponse {
     id: u32,
 }
-
 
 impl JsonRpcResponsePayload for SlowResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
@@ -136,28 +151,6 @@ impl JsonRpcResponsePayload for SlowResponse {
 // Test 1: Bidirectional communication
 // ============================================================================
 
-struct PingHandler;
-
-impl JsonRpcHandler for PingHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
-        if cx.method() == "ping" {
-            let request: PingRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            cx.cast().respond(PongResponse {
-                value: request.value + 1,
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn test_bidirectional_communication() {
     use tokio::task::LocalSet;
@@ -167,7 +160,17 @@ async fn test_bidirectional_communication() {
     local
         .run_until(async {
             // Set up two connections that are symmetric - both can send and receive
-            let (side_a, side_b) = setup_test_connections(PingHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let side_a = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: PingRequest, request_cx: JsonRpcRequestCx<PongResponse>| {
+                    request_cx.respond(PongResponse {
+                        value: request.value + 1,
+                    })
+                },
+            );
+
+            let side_b = JsonRpcConnection::new(client_writer, client_reader);
 
             // Spawn side_a as server
             tokio::task::spawn_local(async move {
@@ -206,7 +209,17 @@ async fn test_request_ids() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(PingHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: PingRequest, request_cx: JsonRpcRequestCx<PongResponse>| {
+                    request_cx.respond(PongResponse {
+                        value: request.value + 1,
+                    })
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 server.serve().await.ok();
@@ -245,29 +258,6 @@ async fn test_request_ids() {
 // Test 3: Out-of-order responses
 // ============================================================================
 
-struct SlowHandler;
-
-impl JsonRpcHandler for SlowHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
-        if cx.method() == "slow" {
-            let request: SlowRequest = scp::util::json_cast(params)
-                .map_err(|_| agent_client_protocol::Error::invalid_params())?;
-
-            // Simulate delay
-            tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
-
-            cx.cast().respond(SlowResponse { id: request.id })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn test_out_of_order_responses() {
     use tokio::task::LocalSet;
@@ -276,7 +266,17 @@ async fn test_out_of_order_responses() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(SlowHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |request: SlowRequest, request_cx: JsonRpcRequestCx<SlowResponse>| {
+                    // Simulate delay
+                    tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
+                    request_cx.respond(SlowResponse { id: request.id })
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 server.serve().await.ok();

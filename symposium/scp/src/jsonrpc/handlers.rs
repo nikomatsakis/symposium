@@ -55,13 +55,13 @@ where
     }
 }
 
-pub struct NotificationHandler<R, F>
+pub struct NotificationHandler<N, F>
 where
-    R: JsonRpcNotification,
-    F: AsyncFnMut(R, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    N: JsonRpcNotification,
+    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
 {
     handler: F,
-    phantom: PhantomData<fn(R)>,
+    phantom: PhantomData<fn(N)>,
 }
 
 impl<R, F> NotificationHandler<R, F>
@@ -87,7 +87,7 @@ where
         cx: JsonRpcNotificationCx,
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        match R::parse_request(cx.method(), params) {
+        match R::parse_notification(cx.method(), params) {
             Some(Ok(req)) => {
                 (self.handler)(req, cx).await?;
                 Ok(Handled::Yes)

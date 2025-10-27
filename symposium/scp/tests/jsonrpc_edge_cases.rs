@@ -8,8 +8,8 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcResponsePayload, JsonRpcMessage,
-    JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcConnection, JsonRpcMessage, JsonRpcRequest, JsonRpcRequestCx, JsonRpcResponse,
+    JsonRpcResponsePayload,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -27,12 +27,12 @@ async fn recv<R: JsonRpcResponsePayload + Send>(
         .map_err(|_| agent_client_protocol::Error::internal_error())?
 }
 
-/// Helper to set up a client-server pair for testing.
-fn setup_test_connections<H: JsonRpcHandler + 'static>(
-    server_handler: H,
-) -> (
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
-    JsonRpcConnection<impl AsyncWrite, impl AsyncRead, impl JsonRpcHandler>,
+/// Helper to set up test streams.
+fn setup_test_streams() -> (
+    impl AsyncRead,
+    impl AsyncWrite,
+    impl AsyncRead,
+    impl AsyncWrite,
 ) {
     let (client_writer, server_reader) = tokio::io::duplex(1024);
     let (server_writer, client_reader) = tokio::io::duplex(1024);
@@ -42,10 +42,7 @@ fn setup_test_connections<H: JsonRpcHandler + 'static>(
     let client_reader = client_reader.compat();
     let client_writer = client_writer.compat_write();
 
-    let server = JsonRpcConnection::new(server_writer, server_reader).on_receive(server_handler);
-    let client = JsonRpcConnection::new(client_writer, client_reader);
-
-    (server, client)
+    (server_reader, server_writer, client_reader, client_writer)
 }
 
 // ============================================================================
@@ -55,7 +52,6 @@ fn setup_test_connections<H: JsonRpcHandler + 'static>(
 #[derive(Debug, Serialize, Deserialize)]
 struct EmptyRequest;
 
-
 impl JsonRpcMessage for EmptyRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -64,6 +60,16 @@ impl JsonRpcMessage for EmptyRequest {
 
     fn method(&self) -> &str {
         "empty_method"
+    }
+
+    fn parse_request(
+        method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "empty_method" {
+            return None;
+        }
+        Some(Ok(EmptyRequest))
     }
 }
 
@@ -77,7 +83,6 @@ struct OptionalParamsRequest {
     value: Option<String>,
 }
 
-
 impl JsonRpcMessage for OptionalParamsRequest {
     fn into_untyped_message(self) -> Result<scp::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -86,6 +91,17 @@ impl JsonRpcMessage for OptionalParamsRequest {
 
     fn method(&self) -> &str {
         "optional_params_method"
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        if method != "optional_params_method" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(scp::util::json_cast(params))
     }
 }
 
@@ -97,7 +113,6 @@ impl JsonRpcRequest for OptionalParamsRequest {
 struct SimpleResponse {
     result: String,
 }
-
 
 impl JsonRpcResponsePayload for SimpleResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, agent_client_protocol::Error> {
@@ -116,26 +131,6 @@ impl JsonRpcResponsePayload for SimpleResponse {
 // Test 1: Empty request (no parameters)
 // ============================================================================
 
-struct EmptyParamsHandler;
-
-impl JsonRpcHandler for EmptyParamsHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        _params: &Option<jsonrpcmsg::Params>,
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
-        if cx.method() == "empty_method" {
-            // Accept request with no params
-            cx.cast().respond(SimpleResponse {
-                result: "Got empty request".to_string(),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn test_empty_request() {
     use tokio::task::LocalSet;
@@ -144,7 +139,17 @@ async fn test_empty_request() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(EmptyParamsHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |_request: EmptyRequest, request_cx: JsonRpcRequestCx<SimpleResponse>| {
+                    request_cx.respond(SimpleResponse {
+                        result: "Got empty request".to_string(),
+                    })
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 server.serve().await.ok();
@@ -174,37 +179,26 @@ async fn test_empty_request() {
 // Test 2: Null parameters
 // ============================================================================
 
-struct NullParamsHandler;
-
-impl JsonRpcHandler for NullParamsHandler {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
-        if cx.method() == "optional_params_method" {
-            // Check if params is None or contains null
-            let has_params = params.is_some();
-
-            cx.cast().respond(SimpleResponse {
-                result: format!("Has params: {}", has_params),
-            })?;
-            Ok(Handled::Yes)
-        } else {
-            Ok(Handled::No(cx))
-        }
-    }
-}
-
 #[tokio::test(flavor = "current_thread")]
-async fn test_null_parameters() {
+async fn test_null_params() {
     use tokio::task::LocalSet;
 
     let local = LocalSet::new();
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(NullParamsHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |_request: OptionalParamsRequest,
+                       request_cx: JsonRpcRequestCx<SimpleResponse>| {
+                    request_cx.respond(SimpleResponse {
+                        result: "Has params: true".to_string(),
+                    })
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             tokio::task::spawn_local(async move {
                 server.serve().await.ok();
@@ -239,7 +233,17 @@ async fn test_server_shutdown() {
 
     local
         .run_until(async {
-            let (server, client) = setup_test_connections(EmptyParamsHandler);
+            let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
+
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |_request: EmptyRequest, request_cx: JsonRpcRequestCx<SimpleResponse>| {
+                    request_cx.respond(SimpleResponse {
+                        result: "Got empty request".to_string(),
+                    })
+                },
+            );
+
+            let client = JsonRpcConnection::new(client_writer, client_reader);
 
             let server_handle = tokio::task::spawn_local(async move {
                 server.serve().await.ok();
@@ -298,8 +302,13 @@ async fn test_client_disconnect() {
             let server_reader = server_reader.compat();
             let server_writer = server_writer.compat_write();
 
-            let server =
-                JsonRpcConnection::new(server_writer, server_reader).on_receive(EmptyParamsHandler);
+            let server = JsonRpcConnection::new(server_writer, server_reader).on_receive_request(
+                async |_request: EmptyRequest, request_cx: JsonRpcRequestCx<SimpleResponse>| {
+                    request_cx.respond(SimpleResponse {
+                        result: "Got empty request".to_string(),
+                    })
+                },
+            );
 
             tokio::task::spawn_local(async move {
                 let _ = server.serve().await;
