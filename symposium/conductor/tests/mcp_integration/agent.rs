@@ -32,7 +32,17 @@ impl ComponentProvider for AgentComponentProvider {
                     request_cx.respond(response)
                 })
                 .on_receive_request(async move |request: NewSessionRequest, request_cx| {
-                    assert!(!request.mcp_servers.is_empty());
+                    assert_eq!(request.mcp_servers.len(), 1);
+
+                    // Although the proxy injects an HTTP server, it will be rewritten to stdio by the conductor.
+                    assert!(
+                        matches!(
+                            request.mcp_servers[0],
+                            agent_client_protocol::McpServer::Stdio { .. }
+                        ),
+                        "expected a stdio MCP server: {:?}",
+                        request.mcp_servers
+                    );
 
                     // Simple session response
                     let response = NewSessionResponse {
