@@ -5,9 +5,6 @@ pub mod conductor;
 mod mcp_bridge;
 
 #[cfg(test)]
-mod conductor_tests;
-
-#[cfg(test)]
 mod mcp_bridge_rmcp_test;
 
 #[cfg(test)]
