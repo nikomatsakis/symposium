@@ -123,7 +123,7 @@ impl<R: JsonRpcRequest> JsonRpcMessage for McpOverAcpRequest<R> {
     }
 
     fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        // Generic type - cannot deserialize without knowing concrete R type
         None
     }
 
@@ -131,8 +131,7 @@ impl<R: JsonRpcRequest> JsonRpcMessage for McpOverAcpRequest<R> {
         _method: &str,
         _params: &impl Serialize,
     ) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        None // Request, not notification
     }
 }
 
@@ -169,15 +168,14 @@ impl<R: JsonRpcMessage> JsonRpcMessage for McpOverAcpNotification<R> {
     }
 
     fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        None // Notification, not request
     }
 
     fn parse_notification(
         _method: &str,
         _params: &impl Serialize,
     ) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        // Generic type - cannot deserialize without knowing concrete R type
         None
     }
 }

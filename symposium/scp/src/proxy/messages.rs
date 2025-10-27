@@ -96,11 +96,21 @@ impl<Req: JsonRpcNotification> JsonRpcMessage for ToSuccessorNotification<Req> {
     }
 
     fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
+        method: &str,
+        params: &impl Serialize,
     ) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        if method == TO_SUCCESSOR_NOTIFICATION_METHOD {
+            match crate::util::json_cast::<_, crate::UntypedMessage>(params) {
+                Ok(msg) => match Req::parse_notification(&msg.method, &msg.params) {
+                    Some(Ok(notification)) => Some(Ok(ToSuccessorNotification { notification })),
+                    Some(Err(err)) => Some(Err(err)),
+                    None => None,
+                },
+                Err(err) => Some(Err(err)),
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -135,17 +145,26 @@ impl<R: JsonRpcRequest> JsonRpcMessage for FromSuccessorRequest<R> {
         FROM_SUCCESSOR_REQUEST_METHOD
     }
 
-    fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, acp::Error>> {
+        if method == FROM_SUCCESSOR_REQUEST_METHOD {
+            match crate::util::json_cast::<_, crate::UntypedMessage>(params) {
+                Ok(msg) => match R::parse_request(&msg.method, &msg.params) {
+                    Some(Ok(request)) => Some(Ok(FromSuccessorRequest { request })),
+                    Some(Err(err)) => Some(Err(err)),
+                    None => None,
+                },
+                Err(err) => Some(Err(err)),
+            }
+        } else {
+            None
+        }
     }
 
     fn parse_notification(
         _method: &str,
         _params: &impl Serialize,
     ) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        None // Request, not notification
     }
 }
 
@@ -178,16 +197,25 @@ impl<N: JsonRpcNotification> JsonRpcMessage for FromSuccessorNotification<N> {
     }
 
     fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        None // Notification, not request
     }
 
     fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
+        method: &str,
+        params: &impl Serialize,
     ) -> Option<Result<Self, acp::Error>> {
-        // Generic wrapper type - cannot be parsed without knowing concrete inner type
-        None
+        if method == FROM_SUCCESSOR_NOTIFICATION_METHOD {
+            match crate::util::json_cast::<_, crate::UntypedMessage>(params) {
+                Ok(msg) => match N::parse_notification(&msg.method, &msg.params) {
+                    Some(Ok(notification)) => Some(Ok(FromSuccessorNotification { notification })),
+                    Some(Err(err)) => Some(Err(err)),
+                    None => None,
+                },
+                Err(err) => Some(Err(err)),
+            }
+        } else {
+            None
+        }
     }
 }
 

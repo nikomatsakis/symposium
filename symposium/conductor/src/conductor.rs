@@ -75,6 +75,7 @@ use scp::{
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, info};
+use tracing_subscriber::fmt::init;
 
 use crate::{
     component::{Component, ComponentProvider},
@@ -665,31 +666,49 @@ impl Conductor {
         mut initialize_req: InitializeRequest,
         request_cx: JsonRpcRequestCx<InitializeResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
-        // Either add or remove proxy, depending on whether this component has a successor.
-        let is_agent = self.is_agent_component(target_component_index);
-
-        if is_agent {
-            initialize_req = initialize_req.remove_meta_capability(Proxy);
-        } else {
-            initialize_req = initialize_req.add_meta_capability(Proxy);
+        // The conductor does not accept proxy capabilities.
+        if initialize_req.has_meta_capability(Proxy) {
+            return Err(scp::util::internal_error(
+                "conductor received unexpected initialization request with proxy capability",
+            ));
         }
 
-        self.components[target_component_index]
-            .agent_cx
-            .send_request(initialize_req)
-            .await_when_response_received(async move |response| match response {
-                Ok(response) => {
-                    // Verify proxy capability handshake for non-agent components
-                    if !is_agent && !response.has_meta_capability(Proxy) {
-                        request_cx.respond_with_error(acp::Error::internal_error().with_data(
-                            format!("component {} is not a proxy", target_component_index),
-                        ))
-                    } else {
+        // Either add or remove proxy, depending on whether this component has a successor.
+        let is_agent = self.is_agent_component(target_component_index);
+        if is_agent {
+            self.components[target_component_index]
+                .agent_cx
+                .send_request(initialize_req)
+                .await_when_response_received(async move |response| match response {
+                    Ok(response) => request_cx.respond(response),
+                    Err(error) => request_cx.respond_with_error(error),
+                })
+        } else {
+            initialize_req = initialize_req.add_meta_capability(Proxy);
+            self.components[target_component_index]
+                .agent_cx
+                .send_request(initialize_req)
+                .await_when_response_received(async move |response| match response {
+                    Ok(mut response) => {
+                        // Verify proxy capability handshake for non-agent components
+                        // Each proxy component must respond with Proxy capability or we
+                        // abort the conductor.
+                        if !response.has_meta_capability(Proxy) {
+                            return Err(scp::util::internal_error(format!(
+                                "component {} is not a proxy",
+                                target_component_index
+                            )));
+                        }
+
+                        // We don't want to respond with that proxy capability to the predecessor.
+                        // Proxy communication is just between the conductor and others.
+                        response = response.remove_meta_capability(Proxy);
+
                         request_cx.respond(response)
                     }
-                }
-                Err(error) => request_cx.respond_with_error(error),
-            })
+                    Err(error) => request_cx.respond_with_error(error),
+                })
+        }
     }
 
     // Intercept `session/new` requests and replace MCP servers based on `acp:...` URLs with stdio-based servers.

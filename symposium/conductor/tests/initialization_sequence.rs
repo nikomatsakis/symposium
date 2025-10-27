@@ -11,7 +11,7 @@ use agent_client_protocol::{InitializeRequest, InitializeResponse};
 use conductor::component::{Cleanup, ComponentProvider};
 use conductor::conductor::Conductor;
 use futures::{AsyncRead, AsyncWrite};
-use scp::{JsonRpcConnection, JsonRpcConnectionCx, MetaCapabilityExt, Proxy};
+use scp::{JsonRpcConnection, JsonRpcConnectionCx, JsonRpcCxExt, MetaCapabilityExt, Proxy};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -77,18 +77,25 @@ impl ComponentProvider for InitComponentProvider {
                     let has_proxy_capability = request.has_meta_capability(Proxy);
                     *config.offered_proxy.lock().expect("unpoisoned") = Some(has_proxy_capability);
 
-                    let mut response = InitializeResponse {
-                        protocol_version: request.protocol_version,
-                        agent_capabilities: AgentCapabilities::default(),
-                        auth_methods: vec![],
-                        meta: None,
-                    };
-
                     if config.respond_with_proxy {
-                        response = response.add_meta_capability(Proxy);
-                    }
+                        request_cx
+                            .send_request_to_successor(request)
+                            .await_when_response_received(async move |response| {
+                                let mut response = response?;
+                                assert!(!response.has_meta_capability(Proxy));
+                                response = response.add_meta_capability(Proxy);
+                                request_cx.respond(response)
+                            })
+                    } else {
+                        let response = InitializeResponse {
+                            protocol_version: request.protocol_version,
+                            agent_capabilities: AgentCapabilities::default(),
+                            auth_methods: vec![],
+                            meta: None,
+                        };
 
-                    request_cx.respond(response)
+                        request_cx.respond(response)
+                    }
                 })
                 .serve()
                 .await
@@ -155,6 +162,50 @@ async fn test_single_component_no_proxy_offer() -> Result<(), acp::Error> {
     .await?;
 
     assert_eq!(component1.read_offered_proxy(), Some(false));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_two_components() -> Result<(), acp::Error> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("conductor=debug".parse().unwrap()),
+        )
+        .with_test_writer()
+        .try_init();
+
+    // Create a single mock component
+    let component1 = InitConfig::new(true);
+    let component2 = InitConfig::new(false);
+
+    run_test_with_components(
+        vec![
+            InitComponentProvider::new(&component1),
+            InitComponentProvider::new(&component2),
+        ],
+        async |editor_cx| {
+            let init_response = recv(editor_cx.send_request(InitializeRequest {
+                protocol_version: Default::default(),
+                client_capabilities: Default::default(),
+                meta: None,
+            }))
+            .await;
+
+            assert!(
+                init_response.is_ok(),
+                "Initialize should succeed: {:?}",
+                init_response
+            );
+
+            Ok::<(), agent_client_protocol::Error>(())
+        },
+    )
+    .await?;
+
+    assert_eq!(component1.read_offered_proxy(), Some(true));
+    assert_eq!(component2.read_offered_proxy(), Some(false));
 
     Ok(())
 }
