@@ -78,6 +78,46 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         }
     }
 
+    /// Invoke the given closure when a request is received.
+    pub fn on_request<R, F>(
+        self,
+        op: F,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, RequestHandler<R, F>>>
+    where
+        R: JsonRpcRequest,
+        F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
+    {
+        JsonRpcConnection {
+            handler: ChainHandler::new(self.handler, RequestHandler::new(op)),
+            outgoing_bytes: self.outgoing_bytes,
+            incoming_bytes: self.incoming_bytes,
+            outgoing_rx: self.outgoing_rx,
+            outgoing_tx: self.outgoing_tx,
+            new_task_rx: self.new_task_rx,
+            new_task_tx: self.new_task_tx,
+        }
+    }
+
+    /// Invoke the given closure when a notification is received.
+    pub fn on_notification<N, F>(
+        self,
+        op: F,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationHandler<N, F>>>
+    where
+        N: JsonRpcNotification,
+        F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    {
+        JsonRpcConnection {
+            handler: ChainHandler::new(self.handler, NotificationHandler::new(op)),
+            outgoing_bytes: self.outgoing_bytes,
+            incoming_bytes: self.incoming_bytes,
+            outgoing_rx: self.outgoing_rx,
+            outgoing_tx: self.outgoing_tx,
+            new_task_rx: self.new_task_rx,
+            new_task_tx: self.new_task_tx,
+        }
+    }
+
     /// Returns a [`JsonRpcCx`] that allows you to send requests over the connection
     /// and receive responses.
     ///
