@@ -13,6 +13,12 @@ use tracing::debug;
 pub trait ComponentProvider: Send {
     /// Create a component that will read/write ACP messages from the given streams.
     /// The `cx` can be used to spawn tasks running in the JSON RPC connection.
+    ///
+    /// # Parameters
+    ///
+    /// * `cx`: The JSON RPC connection context.
+    /// * `outgoing_bytes`: bytes sent from the component to the conductor.
+    /// * `incoming_bytes`: bytes received by the conponent from the conductor.
     fn create(
         &self,
         cx: &JsonRpcConnectionCx,
@@ -92,14 +98,14 @@ impl ComponentProvider for CommandComponentProvider {
                 .await
                 .map_err(acp::Error::into_internal_error)?;
             Ok(())
-        });
+        })?;
 
         cx.spawn(async move {
             tokio::io::copy(&mut child_stdout, &mut outgoing_bytes.compat_write())
                 .await
                 .map_err(acp::Error::into_internal_error)?;
             Ok(())
-        });
+        })?;
 
         Ok(Cleanup::KillProcess(child))
     }

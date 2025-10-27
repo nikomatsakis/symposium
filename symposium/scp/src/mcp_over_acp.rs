@@ -47,7 +47,7 @@ impl JsonRpcResponsePayload for McpConnectResponse {
 pub const METHOD_MCP_DISCONNECT_NOTIFICATION: &str = "_mcp/disconnect";
 
 /// Disconnects the MCP connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct McpDisconnectNotification {
     /// The id of the connection to disconnect.
     pub connection_id: String,

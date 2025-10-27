@@ -34,18 +34,18 @@ async fn recv<R: scp::JsonRpcResponsePayload + Send>(
 
 struct InitConfig {
     respond_with_proxy: bool,
-    offered_proxy: Mutex<bool>,
+    offered_proxy: Mutex<Option<bool>>,
 }
 
 impl InitConfig {
     fn new(respond_with_proxy: bool) -> Arc<Self> {
         Arc::new(Self {
             respond_with_proxy,
-            offered_proxy: Mutex::new(false),
+            offered_proxy: Mutex::new(None),
         })
     }
 
-    fn read_offered_proxy(&self) -> bool {
+    fn read_offered_proxy(&self) -> Option<bool> {
         *self.offered_proxy.lock().expect("not poisoned")
     }
 }
@@ -72,10 +72,10 @@ impl ComponentProvider for InitComponentProvider {
         let config = Arc::clone(&self.config);
         cx.spawn(async move {
             JsonRpcConnection::new(outgoing_bytes, incoming_bytes)
+                .name("init-component-provider")
                 .on_receive_request(async move |request: InitializeRequest, request_cx| {
-                    if request.has_meta_capability(Proxy) {
-                        *config.offered_proxy.lock().expect("unpoisoned") = true;
-                    }
+                    let has_proxy_capability = request.has_meta_capability(Proxy);
+                    *config.offered_proxy.lock().expect("unpoisoned") = Some(has_proxy_capability);
 
                     let mut response = InitializeResponse {
                         protocol_version: request.protocol_version,
@@ -107,6 +107,7 @@ async fn run_test_with_components(
     let (conductor_out, editor_in) = duplex(1024);
 
     JsonRpcConnection::new(editor_out.compat_write(), editor_in.compat())
+        .name("editor-to-connector")
         .with_spawned(async move {
             Conductor::run(
                 conductor_out.compat_write(),
@@ -153,7 +154,7 @@ async fn test_single_component_no_proxy_offer() -> Result<(), acp::Error> {
     )
     .await?;
 
-    assert_eq!(component1.read_offered_proxy(), false);
+    assert_eq!(component1.read_offered_proxy(), Some(false));
 
     Ok(())
 }

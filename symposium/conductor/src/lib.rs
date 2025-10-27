@@ -14,7 +14,6 @@ mod mcp_bridge_rmcp_test;
 mod test_util;
 
 use clap::{Parser, Subcommand};
-use component::ComponentProvider;
 use tokio::io::{stdin, stdout};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 

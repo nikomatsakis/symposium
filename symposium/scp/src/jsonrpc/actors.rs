@@ -122,6 +122,7 @@ pub(super) async fn reply_actor(
 /// # Returns
 /// - `Result<(), acp::Error>`: an error if something unrecoverable occurred
 pub(super) async fn incoming_actor(
+    connection_name: &Option<String>,
     json_rpc_cx: &JsonRpcConnectionCx,
     incoming_bytes: impl AsyncRead,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
@@ -138,7 +139,7 @@ pub(super) async fn incoming_actor(
             Ok(msg) => match msg {
                 jsonrpcmsg::Message::Request(request) => {
                     tracing::trace!(method = %request.method, id = ?request.id, "Handling request");
-                    dispatch_request(json_rpc_cx, request, &mut handler).await?
+                    dispatch_request(connection_name, json_rpc_cx, request, &mut handler).await?
                 }
                 jsonrpcmsg::Message::Response(response) => {
                     tracing::trace!(id = ?response.id, has_result = response.result.is_some(), has_error = response.error.is_some(), "Handling response");
@@ -172,10 +173,18 @@ pub(super) async fn incoming_actor(
 /// Dispatches a JSON-RPC request to the handler.
 /// Report an error back to the server if it does not get handled.
 async fn dispatch_request(
+    connection_name: &Option<String>,
     json_rpc_cx: &JsonRpcConnectionCx,
     request: jsonrpcmsg::Request,
     handler: &mut impl JsonRpcHandler,
 ) -> Result<(), agent_client_protocol::Error> {
+    tracing::debug!(
+        ?request,
+        "handler_type" = ?handler.describe_chain(),
+        connection_name,
+        "dispatch_request"
+    );
+
     if let Some(id) = request.id {
         let method = request.method;
         let request_cx = JsonRpcRequestCx::new(json_rpc_cx, method.clone(), id.clone());
@@ -216,6 +225,7 @@ async fn dispatch_request(
 /// * `reply_tx`: Sender for reply messages.
 /// * `outgoing_bytes`: AsyncWrite for sending messages.
 pub(super) async fn outgoing_actor(
+    connection_name: &Option<String>,
     mut outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
     outgoing_bytes: impl AsyncWrite,
@@ -223,6 +233,8 @@ pub(super) async fn outgoing_actor(
     let mut outgoing_bytes = pin!(outgoing_bytes);
 
     while let Some(message) = outgoing_rx.next().await {
+        tracing::debug!(connection_name, ?message, "outgoing_actor");
+
         // Create the message to be sent over the transport
         let json_rpc_message = match message {
             OutgoingMessage::Request {

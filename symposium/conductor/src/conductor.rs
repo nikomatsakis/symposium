@@ -133,7 +133,8 @@ impl Conductor {
         providers.reverse();
         let (conductor_tx, conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
 
-        let connection = JsonRpcConnection::new(outgoing_bytes, incoming_bytes);
+        let connection =
+            JsonRpcConnection::new(outgoing_bytes, incoming_bytes).name("client-to-conductor");
 
         let serve_args = ServeArgs {
             connection,
@@ -186,19 +187,19 @@ impl Conductor {
                 "Creating component"
             );
 
-            let (proxy_stream, conductor_stream) = tokio::io::duplex(1024); // buffer size
+            let (component_stream, conductor_stream) = tokio::io::duplex(1024); // buffer size
 
             // Split each side into read/write halves
-            let (conductor_read, proxy_write) = tokio::io::split(proxy_stream);
-            let (proxy_read, conductor_write) = tokio::io::split(conductor_stream);
+            let (component_read, component_write) = tokio::io::split(component_stream);
+            let (conductor_read, conductor_write) = tokio::io::split(conductor_stream);
 
             let cx = serve_args.connection.json_rpc_cx();
 
             // Create the component streams based on the provider type
             let cleanup = next_provider.create(
                 &cx,
-                Box::pin(proxy_write.compat_write()),
-                Box::pin(proxy_read.compat()),
+                Box::pin(component_write.compat_write()),
+                Box::pin(component_read.compat()),
             )?;
 
             debug!(
@@ -207,6 +208,7 @@ impl Conductor {
             );
 
             JsonRpcConnection::new(conductor_write.compat_write(), conductor_read.compat())
+                .name(format!("conductor-to-component({})", component_index))
                 // Intercept messages sent by a proxy component (acting as ACP client) to its successor agent.
                 .on_receive_request({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
@@ -307,11 +309,11 @@ impl Conductor {
             // Any incoming requests from the client are client-to-agent requests targeting the first component.
             .on_receive_request({
                 let mut conductor_tx = conductor_tx.clone();
-                async move |request: scp::ToSuccessorRequest<UntypedMessage>, request_cx| {
+                async move |request: UntypedMessage, request_cx| {
                     conductor_tx
                         .send(ConductorMessage::ClientToAgentRequest {
                             target_component_index: 0,
-                            request: request.request,
+                            request,
                             request_cx,
                         })
                         .await
@@ -321,11 +323,11 @@ impl Conductor {
             // Any incoming notifications from the client are client-to-agent notifications targeting the first component.
             .on_receive_notification({
                 let mut conductor_tx = conductor_tx.clone();
-                async move |notification: scp::ToSuccessorNotification<UntypedMessage>, _| {
+                async move |notification: UntypedMessage, _| {
                     conductor_tx
                         .send(ConductorMessage::ClientToAgentNotification {
                             target_component_index: 0,
-                            notification: notification.notification,
+                            notification,
                         })
                         .await
                         .map_err(scp::util::internal_error)
@@ -369,6 +371,8 @@ impl Conductor {
         message: ConductorMessage,
         conductor_tx: &mut mpsc::Sender<ConductorMessage>,
     ) -> Result<(), agent_client_protocol::Error> {
+        tracing::debug!(?message, "handle_conductor_message");
+
         match message {
             ConductorMessage::ClientToAgentRequest {
                 target_component_index,
@@ -721,6 +725,7 @@ impl Conductor {
 ///
 /// All spawned tasks send messages via this enum through a shared channel,
 /// allowing centralized routing logic in the `serve()` loop.
+#[derive(Debug)]
 pub enum ConductorMessage {
     /// Some unknown request targeting a component from its client.
     /// This request will be forwarded "as is" to the component.

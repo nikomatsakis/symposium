@@ -47,12 +47,10 @@
 //! # }
 //! ```
 
-mod conductor;
 mod messages;
 mod on_receive_from_successor;
 mod send_request_to_successor;
 
-pub use conductor::*;
 pub use messages::*;
 pub use on_receive_from_successor::*;
 pub use send_request_to_successor::*;

@@ -18,6 +18,8 @@ pub use handlers::*;
 /// Create a JsonRpcConnection. This can be the basis for either a server or a client.
 #[must_use]
 pub struct JsonRpcConnection<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
+    name: Option<String>,
+
     /// Where to send bytes to communicate to the other side
     outgoing_bytes: OB,
 
@@ -48,6 +50,7 @@ impl<OB: AsyncWrite, IB: AsyncRead> JsonRpcConnection<OB, IB, NullHandler> {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
         let (new_task_tx, new_task_rx) = mpsc::unbounded();
         Self {
+            name: None,
             outgoing_bytes,
             incoming_bytes,
             outgoing_rx,
@@ -60,6 +63,12 @@ impl<OB: AsyncWrite, IB: AsyncRead> JsonRpcConnection<OB, IB, NullHandler> {
 }
 
 impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB, H> {
+    /// Set the "name" of this connection -- used only for debugging logs.
+    pub fn name(mut self, name: impl ToString) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
     /// Invoke the given closure when a request is received.
     pub fn on_receive_request<R, F>(
         self,
@@ -70,6 +79,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
     {
         JsonRpcConnection {
+            name: self.name,
             handler: ChainHandler::new(self.handler, RequestHandler::new(op)),
             outgoing_bytes: self.outgoing_bytes,
             incoming_bytes: self.incoming_bytes,
@@ -90,6 +100,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
     {
         JsonRpcConnection {
+            name: self.name,
             handler: ChainHandler::new(self.handler, NotificationHandler::new(op)),
             outgoing_bytes: self.outgoing_bytes,
             incoming_bytes: self.incoming_bytes,
@@ -127,11 +138,13 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         let json_rpc_cx = JsonRpcConnectionCx::new(self.outgoing_tx, self.new_task_tx);
         futures::select!(
             r = actors::outgoing_actor(
+                &self.name,
                 self.outgoing_rx,
                 reply_tx.clone(),
                 self.outgoing_bytes,
             ).fuse() => r?,
             r = actors::incoming_actor(
+                &self.name,
                 &json_rpc_cx,
                 self.incoming_bytes,
                 reply_tx,
@@ -182,6 +195,7 @@ enum ReplyMessage {
 }
 
 /// Messages send to be serialized over the transport.
+#[derive(Debug)]
 enum OutgoingMessage {
     /// Send a request to the server.
     Request {
@@ -244,6 +258,12 @@ pub trait JsonRpcHandler {
         cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
+        tracing::debug!(
+            type_name = std::any::type_name::<Self>(),
+            method = cx.method(),
+            params = ?params,
+            "JsonRpcHandler::handle_request"
+        );
         Ok(Handled::No(cx))
     }
 
@@ -271,8 +291,16 @@ pub trait JsonRpcHandler {
         cx: JsonRpcNotificationCx,
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
+        tracing::debug!(
+            type_name = std::any::type_name::<Self>(),
+            method = cx.method(),
+            params = ?params,
+            "JsonRpcHandler::handle_notification"
+        );
         Ok(Handled::No(cx))
     }
+
+    fn describe_chain(&self) -> impl std::fmt::Debug;
 }
 
 /// Return type from JsonRpcHandler; indicates whether the request was handled or not.
@@ -283,7 +311,7 @@ pub enum Handled<T> {
 }
 
 /// Connection context used to send requests/notifications of the other side.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JsonRpcConnectionCx {
     message_tx: mpsc::UnboundedSender<OutgoingMessage>,
     task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
@@ -446,6 +474,17 @@ pub struct JsonRpcRequestCx<T: JsonRpcResponsePayload> {
         ((String, jsonrpcmsg::Id), Result<T, acp::Error>),
         Result<serde_json::Value, acp::Error>,
     >,
+}
+
+impl<T: JsonRpcResponsePayload> std::fmt::Debug for JsonRpcRequestCx<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonRpcRequestCx")
+            .field("cx", &self.cx)
+            .field("method", &self.method)
+            .field("id", &self.id)
+            .field("response_type", &std::any::type_name::<T>())
+            .finish()
+    }
 }
 
 impl<T: JsonRpcResponsePayload> std::ops::Deref for JsonRpcRequestCx<T> {
@@ -620,7 +659,7 @@ pub trait JsonRpcRequest: JsonRpcMessage {
     type Response: JsonRpcResponsePayload;
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UntypedMessage {
     pub method: String,
     pub params: serde_json::Value,
@@ -656,6 +695,20 @@ impl JsonRpcMessage for UntypedMessage {
 
     fn into_untyped_message(self) -> Result<UntypedMessage, agent_client_protocol::Error> {
         Ok(self)
+    }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        Some(UntypedMessage::new(method, params))
+    }
+
+    fn parse_notification(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        Some(UntypedMessage::new(method, params))
     }
 }
 

@@ -203,6 +203,7 @@ impl McpBridgeConnectionActor {
         // The bridge will send MCP requests (tools/call, etc.) to the conductor
         // The conductor can also send responses back
         let result = JsonRpcConnection::new(write_half.compat_write(), read_half.compat())
+            .name(format!("mpc-client-to-conductor({connection_id})"))
             // When we receive a message from the MCP client, forward it to the conductor
             .on_receive_request({
                 let mut conductor_tx = self.conductor_tx.clone();
