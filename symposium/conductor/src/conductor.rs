@@ -62,7 +62,9 @@
 
 use std::{collections::HashMap, pin::Pin};
 
-use agent_client_protocol::{self as acp, ClientRequest, InitializeRequest, InitializeResponse};
+use agent_client_protocol::{
+    self as acp, ClientRequest, InitializeRequest, InitializeResponse, NewSessionRequest,
+};
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 
 use scp::{
@@ -219,28 +221,62 @@ impl Conductor {
             );
 
             JsonRpcConnection::new(stdin, stdout)
+                // Intercept messages sent by a proxy component (acting as ACP client) to its successor agent.
+                .on_receive_request({
+                    let mut conductor_tx = serve_args.conductor_tx.clone();
+                    async move |request: scp::ToSuccessorRequest<UntypedMessage>, request_cx| {
+                        conductor_tx
+                            .send(ConductorMessage::ClientToAgentRequest {
+                                target_component_index: component_index + 1,
+                                request: request.request,
+                                request_cx,
+                            })
+                            .await
+                            .map_err(scp::util::internal_error)
+                    }
+                })
+                .on_receive_notification({
+                    let mut conductor_tx = serve_args.conductor_tx.clone();
+                    async move |notification: scp::ToSuccessorNotification<UntypedMessage>, _| {
+                        conductor_tx
+                            .send(ConductorMessage::ClientToAgentNotification {
+                                target_component_index: component_index + 1,
+                                notification: notification.notification,
+                            })
+                            .await
+                            .map_err(scp::util::internal_error)
+                    }
+                })
                 // The proxy sees the conductor as its "client",
                 // so if it sends a normal ACP message
                 // (i.e., an agent-to-client message),
                 // the conductor will forward that
                 // to the proxy's predecessor.
-                .on_receive(AcpAgentToClientMessages::send_to({
+                .on_receive_request({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |message| {
+                    async move |request: UntypedMessage, request_cx| {
                         conductor_tx
-                            .send(ConductorMessage::ComponentToItsPredecessorMessage {
-                                component_index,
-                                message,
+                            .send(ConductorMessage::AgentToClientRequest {
+                                source_component_index: component_index,
+                                request,
+                                request_cx,
                             })
                             .await
+                            .map_err(scp::util::internal_error)
                     }
-                }))
-                // When the proxy sends a `_proxy/successor/send/{request,notification}` message,
-                // the conductor will forward that to the proxy's successor.
-                .on_receive(ProxyToConductorMessages::callback(SuccessorSendCallbacks {
-                    component_index,
-                    conductor_tx: serve_args.conductor_tx.clone(),
-                }))
+                })
+                .on_receive_notification({
+                    let mut conductor_tx = serve_args.conductor_tx.clone();
+                    async move |notification: UntypedMessage, _| {
+                        conductor_tx
+                            .send(ConductorMessage::AgentToClientNotification {
+                                source_component_index: component_index,
+                                notification,
+                            })
+                            .await
+                            .map_err(scp::util::internal_error)
+                    }
+                })
                 .with_client(async move |jsonrpccx| {
                     self.components.push(Component {
                         child,
@@ -284,16 +320,33 @@ impl Conductor {
         } = serve_args;
 
         JsonRpcConnection::new(outgoing_bytes, incoming_bytes)
-            .on_receive(AcpClientToAgentMessages::send_to({
-                // When we receive messages from the client, forward to the first item
-                // the proxy chain.
+            // Any incoming requests from the client are client-to-agent requests targeting the first component.
+            .on_receive_request({
                 let mut conductor_tx = conductor_tx.clone();
-                async move |message| {
+                async move |request: scp::ToSuccessorRequest<UntypedMessage>, request_cx| {
                     conductor_tx
-                        .send(ConductorMessage::ClientToAgentViaProxyChain { message })
+                        .send(ConductorMessage::ClientToAgentRequest {
+                            target_component_index: 0,
+                            request: request.request,
+                            request_cx,
+                        })
                         .await
+                        .map_err(scp::util::internal_error)
                 }
-            }))
+            })
+            // Any incoming notifications from the client are client-to-agent notifications targeting the first component.
+            .on_receive_notification({
+                let mut conductor_tx = conductor_tx.clone();
+                async move |notification: scp::ToSuccessorNotification<UntypedMessage>, _| {
+                    conductor_tx
+                        .send(ConductorMessage::ClientToAgentNotification {
+                            target_component_index: 0,
+                            notification: notification.notification,
+                        })
+                        .await
+                        .map_err(scp::util::internal_error)
+                }
+            })
             .with_client({
                 async |client| {
                     // This is the "central actor" of the conductor. Most other things forward messages
@@ -334,88 +387,44 @@ impl Conductor {
         conductor_tx: &mut mpsc::Sender<ConductorMessage>,
     ) -> Result<(), agent_client_protocol::Error> {
         match message {
-            // Incoming message from our client:
-            //
-            // Forward to the first component (proxy or agent).
-            // We intercept "initialize" messions.
-            ConductorMessage::ClientToAgentViaProxyChain { message } => match message {
-                scp::AcpClientToAgentMessage::Request(request, request_cx) => {
-                    self.forward_client_to_agent_request(conductor_tx, 0, request, request_cx)
-                        .await
-                }
-                scp::AcpClientToAgentMessage::Notification(notification, _) => {
-                    self.send_client_to_agent_notification(0, notification)
-                        .await
-                }
-            },
-
-            // Incoming request from a proxy to its successor
-            //
-            // Forward to the first component (proxy or agent).
-            // We intercept "initialize" messions.
-            ConductorMessage::ProxyRequestToSuccessor {
-                component_index,
-                args: scp::ToSuccessorRequest { request },
+            ConductorMessage::ClientToAgentRequest {
+                target_component_index,
+                request,
                 request_cx,
             } => {
                 self.forward_client_to_agent_request(
                     conductor_tx,
-                    component_index,
+                    target_component_index,
                     request,
                     request_cx,
                 )
                 .await
             }
 
-            // Incoming notification from a proxy to its successor
-            //
-            // Forward to the first component (proxy or agent).
-            // We intercept "initialize" messions.
-            ConductorMessage::ProxyNotificationToSuccessor {
-                component_index,
-                args: scp::ToSuccessorNotification { notification },
-                component_cx: _,
+            ConductorMessage::ClientToAgentNotification {
+                target_component_index,
+                notification,
             } => {
-                self.send_client_to_agent_notification(component_index + 1, notification)
+                self.send_client_to_agent_notification(target_component_index, notification)
                     .await
             }
 
-            // Incoming message from the agent or a proxy to its predecessor.
-            ConductorMessage::ComponentToItsPredecessorMessage {
-                component_index,
-                message,
-            } => match message {
-                scp::AcpAgentToClientMessage::Request(request, request_cx) => {
-                    debug!(
-                        component_index,
-                        method = request.method(),
-                        "Routing component request to its client"
-                    );
+            ConductorMessage::AgentToClientRequest {
+                source_component_index,
+                request,
+                request_cx,
+            } => self
+                .send_request_to_predecessor_of(client, source_component_index, request)
+                .forward_to_request_cx(request_cx),
 
-                    self.send_request_to_predecessor_of(client, component_index, request)
-                        .forward_to_request_cx(request_cx)
-                }
-
-                scp::AcpAgentToClientMessage::Notification(notification, _) => {
-                    debug!(
-                        component_index,
-                        method = notification.method(),
-                        "Routing component notification to its client"
-                    );
-
-                    self.send_notification_to_predecessor_of(client, component_index, notification)
-                }
-            },
-
-            ConductorMessage::Error { error } => {
-                error!(
-                    error_code = error.code,
-                    error_message = %error.message,
-                    "Error in spawned task"
-                );
-
-                Err(error)
-            }
+            ConductorMessage::AgentToClientNotification {
+                source_component_index,
+                notification,
+            } => self.send_notification_to_predecessor_of(
+                client,
+                source_component_index,
+                notification,
+            ),
 
             // New MCP connection request. Send it back along the chain to get a connection id.
             // When the connection id arrives, send a message back into this conductor loop with
@@ -509,13 +518,13 @@ impl Conductor {
     fn send_request_to_predecessor_of<Req: JsonRpcRequest>(
         &mut self,
         client: &JsonRpcConnectionCx,
-        component_index: usize,
+        source_component_index: usize,
         request: Req,
     ) -> JsonRpcResponse<Req::Response> {
-        if component_index == 0 {
+        if source_component_index == 0 {
             client.send_request(request)
         } else {
-            self.components[component_index - 1]
+            self.components[source_component_index - 1]
                 .agent_cx
                 .send_request(scp::FromSuccessorRequest { request })
         }
@@ -591,12 +600,12 @@ impl Conductor {
     async fn send_client_to_agent_notification<N: JsonRpcNotification>(
         &mut self,
         target_component_index: usize,
-        request: N,
+        notification: N,
     ) -> Result<(), agent_client_protocol::Error> {
         // Otherwise, just send the message along "as is".
         self.components[target_component_index]
             .agent_cx
-            .send_notification(request)
+            .send_notification(notification)
     }
 
     /// Checks if the given component index is the agent (final component).
@@ -670,43 +679,6 @@ impl Conductor {
     }
 }
 
-struct SuccessorSendCallbacks {
-    component_index: usize,
-    conductor_tx: mpsc::Sender<ConductorMessage>,
-}
-
-impl scp::ConductorCallbacks for SuccessorSendCallbacks {
-    async fn successor_send_request(
-        &mut self,
-        args: scp::ToSuccessorRequest<UntypedMessage>,
-        response: JsonRpcRequestCx<serde_json::Value>,
-    ) -> Result<(), agent_client_protocol::Error> {
-        self.conductor_tx
-            .send(ConductorMessage::ProxyRequestToSuccessor {
-                component_index: self.component_index,
-                args,
-                request_cx: response,
-            })
-            .await
-            .map_err(agent_client_protocol::Error::into_internal_error)
-    }
-
-    async fn successor_send_notification(
-        &mut self,
-        args: scp::ToSuccessorNotification<UntypedMessage>,
-        cx: &scp::JsonRpcConnectionCx,
-    ) -> Result<(), agent_client_protocol::Error> {
-        self.conductor_tx
-            .send(ConductorMessage::ProxyNotificationToSuccessor {
-                component_index: self.component_index,
-                args,
-                component_cx: cx.clone(),
-            })
-            .await
-            .map_err(agent_client_protocol::Error::into_internal_error)
-    }
-}
-
 /// Messages sent to the conductor's main event loop for routing.
 ///
 /// These messages enable the conductor to route communication between:
@@ -717,51 +689,35 @@ impl scp::ConductorCallbacks for SuccessorSendCallbacks {
 /// All spawned tasks send messages via this enum through a shared channel,
 /// allowing centralized routing logic in the `serve()` loop.
 pub enum ConductorMessage {
-    /// Message from the editor to be routed through the proxy chain.
-    ///
-    /// Always sent to component 0, which then uses `_proxy/successor/*`
-    /// to forward to subsequent components if needed.
-    ClientToAgentViaProxyChain {
-        message: scp::AcpClientToAgentMessage,
-    },
-
-    /// Message from a component back to its client.
-    ///
-    /// The client is either:
-    /// - The editor (if `component_index == 0`)
-    /// - The predecessor component (if `component_index > 0`)
-    ///
-    /// This handles responses and notifications flowing backward through the chain.
-    ComponentToItsPredecessorMessage {
-        component_index: usize,
-        message: scp::AcpAgentToClientMessage,
-    },
-
-    /// Request from a component to its successor via `_proxy/successor/request`.
-    ///
-    /// The conductor strips the `_proxy/successor/` prefix and routes to
-    /// `components[component_index + 1]`, managing capability modifications
-    /// for `initialize` requests based on chain position.
-    ProxyRequestToSuccessor {
-        component_index: usize,
-        args: scp::ToSuccessorRequest<UntypedMessage>,
+    /// Some unknown request targeting a component from its client.
+    /// This request will be forwarded "as is" to the component.
+    ClientToAgentRequest {
+        target_component_index: usize,
+        request: UntypedMessage,
         request_cx: JsonRpcRequestCx<serde_json::Value>,
     },
 
-    /// Notification from a component to its successor via `_proxy/successor/notification`.
-    ///
-    /// Similar to requests, but no response is expected. The conductor strips
-    /// the prefix and forwards to the next component.
-    ProxyNotificationToSuccessor {
-        component_index: usize,
-        args: scp::ToSuccessorNotification<UntypedMessage>,
-        component_cx: JsonRpcConnectionCx,
+    /// Some unknown notification targeting a component from its client.
+    /// This notification will be forwarded "as is" to the component.
+    ClientToAgentNotification {
+        target_component_index: usize,
+        notification: UntypedMessage,
     },
 
-    /// Error from a spawned task that couldn't be handled locally.
-    ///
-    /// Currently logged as a warning. Future versions may trigger chain shutdown.
-    Error { error: agent_client_protocol::Error },
+    /// Some unknown request sent by a component to its client.
+    /// This request will be forwarded "as is" to its client.
+    AgentToClientRequest {
+        source_component_index: usize,
+        request: UntypedMessage,
+        request_cx: JsonRpcRequestCx<serde_json::Value>,
+    },
+
+    /// Some unknown notification targeting a component from another component.
+    /// This notification will be forwarded "as is" to the component.
+    AgentToClientNotification {
+        source_component_index: usize,
+        notification: UntypedMessage,
+    },
 
     /// A pending MCP bridge connection request request.
     /// The request must be sent back over ACP to receive the connection-id.

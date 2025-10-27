@@ -23,6 +23,12 @@ use crate::{
 mod notifications;
 mod requests;
 
+/// Requests that agents sent to clients via the ACP protocol.
+pub use acp::AgentRequest as AcpAgentToClientRequest;
+
+/// Notifications that agents sent to clients via the ACP protocol.
+pub use acp::AgentNotification as AcpAgentToClientNotification;
+
 /// Messages that editors receive from agents via the ACP protocol.
 /// Unifies both requests (which expect responses) and notifications (fire-and-forget).
 pub enum AcpAgentToClientMessage {

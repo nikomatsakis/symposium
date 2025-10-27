@@ -79,7 +79,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
     }
 
     /// Invoke the given closure when a request is received.
-    pub fn on_request<R, F>(
+    pub fn on_receive_request<R, F>(
         self,
         op: F,
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, RequestHandler<R, F>>>
@@ -99,7 +99,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
     }
 
     /// Invoke the given closure when a notification is received.
-    pub fn on_notification<N, F>(
+    pub fn on_receive_notification<N, F>(
         self,
         op: F,
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationHandler<N, F>>>
