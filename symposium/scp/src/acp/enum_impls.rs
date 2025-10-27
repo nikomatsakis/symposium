@@ -67,6 +67,14 @@ impl JsonRpcMessage for ClientRequest {
 
         Some(result)
     }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        // ClientRequest is for requests only, not notifications
+        None
+    }
 }
 
 impl JsonRpcRequest for ClientRequest {
@@ -84,6 +92,14 @@ impl JsonRpcMessage for ClientNotification {
             ClientNotification::CancelNotification(_) => "session/cancel",
             ClientNotification::ExtNotification(ext) => &ext.method,
         }
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        // ClientNotification is for notifications only, not requests
+        None
     }
 
     fn parse_notification(
@@ -183,6 +199,14 @@ impl JsonRpcMessage for AgentRequest {
 
         Some(result)
     }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        // AgentRequest is for requests only, not notifications
+        None
+    }
 }
 
 impl JsonRpcRequest for AgentRequest {
@@ -200,6 +224,14 @@ impl JsonRpcMessage for AgentNotification {
             AgentNotification::SessionNotification(_) => "session/update",
             AgentNotification::ExtNotification(ext) => &ext.method,
         }
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        // AgentNotification is for notifications only, not requests
+        None
     }
 
     fn parse_notification(

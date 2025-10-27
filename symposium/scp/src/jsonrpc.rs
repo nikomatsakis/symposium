@@ -613,9 +613,7 @@ pub trait JsonRpcMessage: 'static + Debug + Sized {
     fn parse_request(
         _method: &str,
         _params: &Option<jsonrpcmsg::Params>,
-    ) -> Option<Result<Self, acp::Error>> {
-        None
-    }
+    ) -> Option<Result<Self, acp::Error>>;
 
     /// Attempt to parse this type from a JSON-RPC notification.
     ///
@@ -626,9 +624,7 @@ pub trait JsonRpcMessage: 'static + Debug + Sized {
     fn parse_notification(
         _method: &str,
         _params: &Option<jsonrpcmsg::Params>,
-    ) -> Option<Result<Self, acp::Error>> {
-        None
-    }
+    ) -> Option<Result<Self, acp::Error>>;
 }
 
 /// Defines the "payload" of a successful response to a JSON-RPC request.

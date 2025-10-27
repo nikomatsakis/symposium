@@ -20,6 +20,25 @@ impl JsonRpcMessage for McpConnectRequest {
     fn method(&self) -> &str {
         METHOD_MCP_CONNECT_REQUEST
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != METHOD_MCP_CONNECT_REQUEST {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(crate::util::json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for McpConnectRequest {
@@ -61,6 +80,25 @@ impl JsonRpcMessage for McpDisconnectNotification {
     fn method(&self) -> &str {
         METHOD_MCP_DISCONNECT_NOTIFICATION
     }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a notification, not a request
+        None
+    }
+
+    fn parse_notification(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != METHOD_MCP_DISCONNECT_NOTIFICATION {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(crate::util::json_cast(params))
+    }
 }
 
 impl JsonRpcNotification for McpDisconnectNotification {}
@@ -90,6 +128,22 @@ impl<R: JsonRpcRequest> JsonRpcMessage for McpOverAcpRequest<R> {
 
     fn method(&self) -> &str {
         METHOD_MCP_REQUEST
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
     }
 }
 
@@ -123,6 +177,22 @@ impl<R: JsonRpcMessage> JsonRpcMessage for McpOverAcpNotification<R> {
 
     fn method(&self) -> &str {
         METHOD_MCP_NOTIFICATION
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
     }
 }
 

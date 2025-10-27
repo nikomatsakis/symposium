@@ -13,6 +13,14 @@ impl JsonRpcMessage for CancelNotification {
         "session/cancel"
     }
 
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, agent_client_protocol::Error>> {
+        // This is a notification, not a request
+        None
+    }
+
     fn parse_notification(
         method: &str,
         params: &Option<jsonrpcmsg::Params>,

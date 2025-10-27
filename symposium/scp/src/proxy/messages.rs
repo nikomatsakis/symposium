@@ -34,6 +34,22 @@ impl<Req: JsonRpcRequest> JsonRpcMessage for ToSuccessorRequest<Req> {
     fn method(&self) -> &str {
         TO_SUCCESSOR_REQUEST_METHOD
     }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
 }
 
 impl<Req: JsonRpcRequest> JsonRpcRequest for ToSuccessorRequest<Req> {
@@ -62,6 +78,22 @@ impl<Req: JsonRpcNotification> JsonRpcMessage for ToSuccessorNotification<Req> {
 
     fn method(&self) -> &str {
         TO_SUCCESSOR_NOTIFICATION_METHOD
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
     }
 }
 
@@ -95,6 +127,22 @@ impl<R: JsonRpcRequest> JsonRpcMessage for FromSuccessorRequest<R> {
     fn method(&self) -> &str {
         FROM_SUCCESSOR_REQUEST_METHOD
     }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
 }
 
 impl<R: JsonRpcRequest> JsonRpcRequest for FromSuccessorRequest<R> {
@@ -123,6 +171,22 @@ impl<N: JsonRpcNotification> JsonRpcMessage for FromSuccessorNotification<N> {
 
     fn method(&self) -> &str {
         FROM_SUCCESSOR_NOTIFICATION_METHOD
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // Generic wrapper type - cannot be parsed without knowing concrete inner type
+        None
     }
 }
 

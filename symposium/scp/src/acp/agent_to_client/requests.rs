@@ -16,7 +16,6 @@ use crate::util::json_cast;
 // RequestPermissionRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for RequestPermissionRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -26,12 +25,30 @@ impl JsonRpcMessage for RequestPermissionRequest {
     fn method(&self) -> &str {
         "session/request_permission"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "session/request_permission" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for RequestPermissionRequest {
     type Response = RequestPermissionResponse;
 }
-
 
 impl JsonRpcResponsePayload for RequestPermissionResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -47,7 +64,6 @@ impl JsonRpcResponsePayload for RequestPermissionResponse {
 // WriteTextFileRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for WriteTextFileRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -57,12 +73,30 @@ impl JsonRpcMessage for WriteTextFileRequest {
     fn method(&self) -> &str {
         "fs/write_text_file"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "fs/write_text_file" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for WriteTextFileRequest {
     type Response = WriteTextFileResponse;
 }
-
 
 impl JsonRpcResponsePayload for WriteTextFileResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -78,7 +112,6 @@ impl JsonRpcResponsePayload for WriteTextFileResponse {
 // ReadTextFileRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for ReadTextFileRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -88,12 +121,30 @@ impl JsonRpcMessage for ReadTextFileRequest {
     fn method(&self) -> &str {
         "fs/read_text_file"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "fs/read_text_file" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for ReadTextFileRequest {
     type Response = ReadTextFileResponse;
 }
-
 
 impl JsonRpcResponsePayload for ReadTextFileResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -109,7 +160,6 @@ impl JsonRpcResponsePayload for ReadTextFileResponse {
 // CreateTerminalRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for CreateTerminalRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -119,12 +169,30 @@ impl JsonRpcMessage for CreateTerminalRequest {
     fn method(&self) -> &str {
         "terminal/create"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "terminal/create" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for CreateTerminalRequest {
     type Response = CreateTerminalResponse;
 }
-
 
 impl JsonRpcResponsePayload for CreateTerminalResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -140,7 +208,6 @@ impl JsonRpcResponsePayload for CreateTerminalResponse {
 // TerminalOutputRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for TerminalOutputRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -150,12 +217,30 @@ impl JsonRpcMessage for TerminalOutputRequest {
     fn method(&self) -> &str {
         "terminal/output"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "terminal/output" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for TerminalOutputRequest {
     type Response = TerminalOutputResponse;
 }
-
 
 impl JsonRpcResponsePayload for TerminalOutputResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -171,7 +256,6 @@ impl JsonRpcResponsePayload for TerminalOutputResponse {
 // ReleaseTerminalRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for ReleaseTerminalRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -181,12 +265,30 @@ impl JsonRpcMessage for ReleaseTerminalRequest {
     fn method(&self) -> &str {
         "terminal/release"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "terminal/release" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for ReleaseTerminalRequest {
     type Response = ReleaseTerminalResponse;
 }
-
 
 impl JsonRpcResponsePayload for ReleaseTerminalResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -202,7 +304,6 @@ impl JsonRpcResponsePayload for ReleaseTerminalResponse {
 // WaitForTerminalExitRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for WaitForTerminalExitRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -212,12 +313,30 @@ impl JsonRpcMessage for WaitForTerminalExitRequest {
     fn method(&self) -> &str {
         "terminal/wait_for_exit"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "terminal/wait_for_exit" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for WaitForTerminalExitRequest {
     type Response = WaitForTerminalExitResponse;
 }
-
 
 impl JsonRpcResponsePayload for WaitForTerminalExitResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
@@ -233,7 +352,6 @@ impl JsonRpcResponsePayload for WaitForTerminalExitResponse {
 // KillTerminalCommandRequest
 // ============================================================================
 
-
 impl JsonRpcMessage for KillTerminalCommandRequest {
     fn into_untyped_message(self) -> Result<crate::UntypedMessage, agent_client_protocol::Error> {
         let method = self.method().to_string();
@@ -243,12 +361,30 @@ impl JsonRpcMessage for KillTerminalCommandRequest {
     fn method(&self) -> &str {
         "terminal/kill"
     }
+
+    fn parse_request(
+        method: &str,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        if method != "terminal/kill" {
+            return None;
+        }
+        let params = params.as_ref()?;
+        Some(json_cast(params))
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &Option<jsonrpcmsg::Params>,
+    ) -> Option<Result<Self, acp::Error>> {
+        // This is a request, not a notification
+        None
+    }
 }
 
 impl JsonRpcRequest for KillTerminalCommandRequest {
     type Response = KillTerminalCommandResponse;
 }
-
 
 impl JsonRpcResponsePayload for KillTerminalCommandResponse {
     fn into_json(self, _method: &str) -> Result<serde_json::Value, acp::Error> {
