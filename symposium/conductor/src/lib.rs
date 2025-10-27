@@ -4,12 +4,6 @@ pub mod component;
 pub mod conductor;
 mod mcp_bridge;
 
-#[cfg(test)]
-mod mcp_bridge_rmcp_test;
-
-#[cfg(test)]
-mod test_util;
-
 use clap::{Parser, Subcommand};
 use tokio::io::{stdin, stdout};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
