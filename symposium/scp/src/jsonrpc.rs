@@ -69,6 +69,26 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         self
     }
 
+    /// Add a new [`JsonRpcHandler`] to the chain.
+    ///
+    /// Prefer [`Self::on_receive_request`] or [`Self::on_receive_notification`].
+    /// This is a low-level method that is not intended for general use.
+    pub fn chain_handler<H1: JsonRpcHandler>(
+        self,
+        handler: H1,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, H1>> {
+        JsonRpcConnection {
+            name: self.name,
+            handler: ChainHandler::new(self.handler, handler),
+            outgoing_bytes: self.outgoing_bytes,
+            incoming_bytes: self.incoming_bytes,
+            outgoing_rx: self.outgoing_rx,
+            outgoing_tx: self.outgoing_tx,
+            new_task_rx: self.new_task_rx,
+            new_task_tx: self.new_task_tx,
+        }
+    }
+
     /// Invoke the given closure when a request is received.
     pub fn on_receive_request<R, F>(
         self,
@@ -258,12 +278,6 @@ pub trait JsonRpcHandler {
         cx: JsonRpcRequestCx<serde_json::Value>,
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
-        tracing::debug!(
-            type_name = std::any::type_name::<Self>(),
-            method = cx.method(),
-            params = ?params,
-            "JsonRpcHandler::handle_request"
-        );
         Ok(Handled::No(cx))
     }
 
@@ -291,12 +305,6 @@ pub trait JsonRpcHandler {
         cx: JsonRpcNotificationCx,
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
-        tracing::debug!(
-            type_name = std::any::type_name::<Self>(),
-            method = cx.method(),
-            params = ?params,
-            "JsonRpcHandler::handle_notification"
-        );
         Ok(Handled::No(cx))
     }
 

@@ -1,9 +1,12 @@
+use std::marker::PhantomData;
+
 use agent_client_protocol as acp;
 use futures::{AsyncRead, AsyncWrite};
 
 use crate::{
-    FromSuccessorNotification, FromSuccessorRequest, JsonRpcConnection, JsonRpcHandler,
-    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest, JsonRpcRequestCx,
+    ChainHandler, FromSuccessorNotification, FromSuccessorRequest, Handled, JsonRpcConnection,
+    JsonRpcHandler, JsonRpcMessage, JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest,
+    JsonRpcRequestCx,
 };
 
 /// Extension trait for [`JsonRpcConnection`] that adds S/ACP proxy capabilities.
@@ -36,7 +39,7 @@ pub trait JsonRpcConnectionExt<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler>
     fn on_receive_request_from_successor<R, F>(
         self,
         op: F,
-    ) -> JsonRpcConnection<OB, IB, impl JsonRpcHandler>
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JsonRpcRequest,
         F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>;
@@ -66,7 +69,7 @@ pub trait JsonRpcConnectionExt<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler>
     fn on_receive_notification_from_successor<N, F>(
         self,
         op: F,
-    ) -> JsonRpcConnection<OB, IB, impl JsonRpcHandler>
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JsonRpcNotification,
         F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>;
@@ -77,29 +80,149 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnectionExt<OB, 
 {
     fn on_receive_request_from_successor<R, F>(
         self,
-        mut op: F,
-    ) -> JsonRpcConnection<OB, IB, impl JsonRpcHandler>
+        op: F,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JsonRpcRequest,
         F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
     {
-        self.on_receive_request(async move |request: FromSuccessorRequest<R>, request_cx| {
-            op(request.request, request_cx).await
-        })
+        self.chain_handler(RequestFromSuccessorHandler::new(op))
     }
 
     fn on_receive_notification_from_successor<N, F>(
         self,
-        mut op: F,
-    ) -> JsonRpcConnection<OB, IB, impl JsonRpcHandler>
+        op: F,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JsonRpcNotification,
         F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
     {
-        self.on_receive_notification(
-            async move |notification: FromSuccessorNotification<N>, cx| {
-                op(notification.notification, cx).await
-            },
-        )
+        self.chain_handler(NotificationFromSuccessorHandler::new(op))
+    }
+}
+
+pub struct RequestFromSuccessorHandler<R, F>
+where
+    R: JsonRpcRequest,
+    F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
+{
+    handler: F,
+    phantom: PhantomData<fn(R)>,
+}
+
+impl<R, F> RequestFromSuccessorHandler<R, F>
+where
+    R: JsonRpcRequest,
+    F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
+{
+    pub fn new(handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<R, F> JsonRpcHandler for RequestFromSuccessorHandler<R, F>
+where
+    R: JsonRpcRequest,
+    F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
+{
+    async fn handle_request(
+        &mut self,
+        cx: JsonRpcRequestCx<serde_json::Value>,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
+        tracing::debug!(
+            request_type = std::any::type_name::<R>(),
+            method = cx.method(),
+            params = ?params,
+            "RequestHandler::handle_request"
+        );
+        match <FromSuccessorRequest<R>>::parse_request(cx.method(), params) {
+            Some(Ok(req)) => {
+                tracing::trace!(?req, "RequestHandler::handle_request: parse completed");
+                (self.handler)(req.request, cx.cast()).await?;
+                Ok(Handled::Yes)
+            }
+            Some(Err(err)) => {
+                tracing::trace!(?err, "RequestHandler::handle_request: parse errored");
+                Err(err)
+            }
+            None => {
+                tracing::trace!("RequestHandler::handle_request: parse failed");
+                Ok(Handled::No(cx))
+            }
+        }
+    }
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        std::any::type_name::<R>()
+    }
+}
+
+pub struct NotificationFromSuccessorHandler<N, F>
+where
+    N: JsonRpcNotification,
+    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+{
+    handler: F,
+    phantom: PhantomData<fn(N)>,
+}
+
+impl<N, F> NotificationFromSuccessorHandler<N, F>
+where
+    N: JsonRpcNotification,
+    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+{
+    pub fn new(handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<N, F> JsonRpcHandler for NotificationFromSuccessorHandler<N, F>
+where
+    N: JsonRpcNotification,
+    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+{
+    async fn handle_notification(
+        &mut self,
+        cx: JsonRpcNotificationCx,
+        params: &Option<jsonrpcmsg::Params>,
+    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
+        tracing::debug!(
+            request_type = std::any::type_name::<N>(),
+            method = cx.method(),
+            params = ?params,
+            "NotificationFromSuccessorHandler::handle_request"
+        );
+        match <FromSuccessorNotification<N>>::parse_notification(cx.method(), params) {
+            Some(Ok(req)) => {
+                tracing::trace!(
+                    ?req,
+                    "NotificationFromSuccessorHandler::handle_request: parse completed"
+                );
+                (self.handler)(req.notification, cx).await?;
+                Ok(Handled::Yes)
+            }
+            Some(Err(err)) => {
+                tracing::trace!(
+                    ?err,
+                    "NotificationFromSuccessorHandler::handle_request: parse errored"
+                );
+                Err(err)
+            }
+            None => {
+                tracing::trace!("NotificationFromSuccessorHandler::handle_request: parse failed");
+                Ok(Handled::No(cx))
+            }
+        }
+    }
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        std::any::type_name::<N>()
     }
 }

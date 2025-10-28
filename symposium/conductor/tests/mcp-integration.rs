@@ -113,10 +113,7 @@ async fn test_proxy_provides_mcp_tools() -> Result<(), acp::Error> {
 #[tokio::test]
 async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("conductor=trace".parse().unwrap()),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_test_writer()
         .try_init();
 
@@ -200,12 +197,13 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
     }
 
     // Verify the output
-    let output = log_entries.join("\n");
     expect![[r#"
-        "Foo",
-        "PromptResponse { stop_reason: EndTurn, meta: None }"
+        [
+            "SessionNotification { session_id: SessionId(\"test-session-123\"), update: AgentMessageChunk { content: Text(TextContent { annotations: None, text: \"Hello. I will now use the MCP tool\", meta: None }) }, meta: None }",
+            "PromptResponse { stop_reason: EndTurn, meta: None }",
+        ]
     "#]]
-    .assert_debug_eq(&output);
+    .assert_debug_eq(&log_entries);
 
     Ok(())
 }

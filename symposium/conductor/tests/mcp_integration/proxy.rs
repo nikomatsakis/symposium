@@ -253,7 +253,8 @@ impl ComponentProvider for ProxyComponentProvider {
                     })
                     // All other notifications -- pass along to the predecessor
                     .on_receive_request_from_successor(
-                        async move |request: McpOverAcpRequest<UntypedMessage>, request_cx| {
+                        async move |request: UntypedMessage, request_cx| {
+                            tracing::debug!(?request, "on_receive_request_from_successor");
                             request_cx
                                 .send_request(request)
                                 .forward_to_request_cx(request_cx)
@@ -262,6 +263,7 @@ impl ComponentProvider for ProxyComponentProvider {
                     // All other notifications -- pass along to the predecessor
                     .on_receive_notification_from_successor(
                         async move |notification: UntypedMessage, cx| {
+                            tracing::debug!(?notification, "on_receive_request_from_successor");
                             cx.send_notification(notification)
                         },
                     )

@@ -109,18 +109,31 @@ where
         params: &Option<jsonrpcmsg::Params>,
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         tracing::debug!(
-            type_name = std::any::type_name::<Self>(),
+            type_name = std::any::type_name::<R>(),
             method = cx.method(),
             params = ?params,
             "handle_notification"
         );
         match R::parse_notification(cx.method(), params) {
             Some(Ok(req)) => {
+                tracing::trace!(
+                    ?req,
+                    "NotificationHandler::handle_notification: parse completed"
+                );
                 (self.handler)(req, cx).await?;
                 Ok(Handled::Yes)
             }
-            Some(Err(err)) => Err(err),
-            None => Ok(Handled::No(cx)),
+            Some(Err(err)) => {
+                tracing::trace!(
+                    ?err,
+                    "NotificationHandler::handle_notification: parse errored"
+                );
+                Err(err)
+            }
+            None => {
+                tracing::trace!("RequestHandler::handle_request: parse failed");
+                Ok(Handled::No(cx))
+            }
         }
     }
 
