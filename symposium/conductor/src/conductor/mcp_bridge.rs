@@ -51,6 +51,7 @@ impl McpBridgeListeners {
         cx: &JsonRpcConnectionCx,
         mcp_server: &mut McpServer,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_command: &[String],
     ) -> Result<(), acp::Error> {
         use agent_client_protocol::McpServer;
 
@@ -85,10 +86,20 @@ impl McpBridgeListeners {
         );
 
         // Transform to stdio transport pointing to conductor mcp process
+        // First element is the command, rest are args
+        tracing::debug!(
+            conductor_command = ?conductor_command,
+            "Transforming MCP server to stdio"
+        );
+        let command = std::path::PathBuf::from(&conductor_command[0]);
+        let mut args: Vec<String> = conductor_command[1..].to_vec();
+        args.push("mcp".to_string());
+        args.push(tcp_port.tcp_port.to_string());
+
         let transformed = McpServer::Stdio {
             name: name.clone(),
-            command: std::path::PathBuf::from("conductor"),
-            args: vec!["mcp".to_string(), tcp_port.tcp_port.to_string()],
+            command,
+            args,
             env: vec![],
         };
         *mcp_server = transformed;

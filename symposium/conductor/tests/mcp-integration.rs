@@ -44,10 +44,17 @@ async fn run_test_with_components(
     JsonRpcConnection::new(editor_out.compat_write(), editor_in.compat())
         .name("editor-to-connector")
         .with_spawned(async move {
-            Conductor::run(
+            Conductor::run_with_command(
                 conductor_out.compat_write(),
                 conductor_in.compat(),
                 components,
+                Some(vec![
+                    "cargo".to_string(),
+                    "run".to_string(),
+                    "-p".to_string(),
+                    "conductor".to_string(),
+                    "--".to_string(),
+                ]),
             )
             .await
         })
@@ -138,13 +145,20 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
             }
         })
         .with_spawned(async move {
-            Conductor::run(
+            Conductor::run_with_command(
                 conductor_out.compat_write(),
                 conductor_in.compat(),
                 vec![
                     mcp_integration::proxy::create(),
                     mcp_integration::agent::create(),
                 ],
+                Some(vec![
+                    "cargo".to_string(),
+                    "run".to_string(),
+                    "-p".to_string(),
+                    "conductor".to_string(),
+                    "--".to_string(),
+                ]),
             )
             .await
         })

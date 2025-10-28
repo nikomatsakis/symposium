@@ -223,6 +223,6 @@ where
     }
 
     fn describe_chain(&self) -> impl std::fmt::Debug {
-        std::any::type_name::<N>()
+        format!("FromSuccessor<{}>", std::any::type_name::<N>())
     }
 }

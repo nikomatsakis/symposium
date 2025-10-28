@@ -110,6 +110,10 @@ pub struct Conductor {
 
     /// The chain of spawned components, ordered from first (index 0) to last
     components: Vec<Component>,
+
+    /// Command and args to spawn conductor MCP bridge processes
+    /// E.g., vec!["conductor"] or vec!["cargo", "run", "-p", "conductor", "--"]
+    conductor_command: Vec<String>,
 }
 
 impl Conductor {
@@ -118,6 +122,31 @@ impl Conductor {
         incoming_bytes: IB,
         mut providers: Vec<Box<dyn ComponentProvider>>,
     ) -> Result<(), acp::Error> {
+        Self::run_with_command(outgoing_bytes, incoming_bytes, providers, None).await
+    }
+
+    pub async fn run_with_command<OB: AsyncWrite, IB: AsyncRead>(
+        outgoing_bytes: OB,
+        incoming_bytes: IB,
+        mut providers: Vec<Box<dyn ComponentProvider>>,
+        conductor_command: Option<Vec<String>>,
+    ) -> Result<(), acp::Error> {
+        tracing::debug!(
+            incoming_conductor_command = ?conductor_command,
+            "run_with_command called"
+        );
+        let conductor_command = conductor_command.unwrap_or_else(|| {
+            vec![
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.to_str().map(String::from))
+                    .unwrap_or_else(|| "conductor".to_string()),
+            ]
+        });
+        tracing::debug!(
+            resolved_conductor_command = ?conductor_command,
+            "conductor_command after unwrap_or_else"
+        );
         if providers.len() == 0 {
             return Err(scp::util::internal_error(
                 "must have at least one component",
@@ -145,6 +174,7 @@ impl Conductor {
             bridge_listeners: Default::default(),
             bridge_connections: Default::default(),
             conductor_rx,
+            conductor_command,
         }
         .launch_proxy(providers, serve_args)
         .await
@@ -721,7 +751,12 @@ impl Conductor {
         if self.is_agent_component(target_component_index) {
             for mcp_server in &mut request.mcp_servers {
                 self.bridge_listeners
-                    .transform_mcp_servers(&request_cx, mcp_server, conductor_tx)
+                    .transform_mcp_servers(
+                        &request_cx,
+                        mcp_server,
+                        conductor_tx,
+                        &self.conductor_command,
+                    )
                     .await?;
             }
         }

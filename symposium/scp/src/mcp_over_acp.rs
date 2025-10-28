@@ -116,7 +116,13 @@ pub struct McpOverAcpRequest<R> {
 impl<R: JsonRpcRequest> JsonRpcMessage for McpOverAcpRequest<R> {
     fn into_untyped_message(self) -> Result<UntypedMessage, acp::Error> {
         let message = self.request.into_untyped_message()?;
-        UntypedMessage::new(METHOD_MCP_REQUEST, message)
+        UntypedMessage::new(
+            METHOD_MCP_REQUEST,
+            McpOverAcpRequest {
+                connection_id: self.connection_id,
+                request: message,
+            },
+        )
     }
 
     fn method(&self) -> &str {
@@ -174,7 +180,13 @@ pub struct McpOverAcpNotification<R> {
 impl<R: JsonRpcMessage> JsonRpcMessage for McpOverAcpNotification<R> {
     fn into_untyped_message(self) -> Result<UntypedMessage, acp::Error> {
         let params = self.notification.into_untyped_message()?;
-        UntypedMessage::new(METHOD_MCP_NOTIFICATION, params)
+        UntypedMessage::new(
+            METHOD_MCP_NOTIFICATION,
+            McpOverAcpNotification {
+                connection_id: self.connection_id,
+                notification: params,
+            },
+        )
     }
 
     fn method(&self) -> &str {
