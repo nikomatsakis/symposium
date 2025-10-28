@@ -8,8 +8,9 @@ use conductor::component::{Cleanup, ComponentProvider};
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 use rmcp::ServiceExt;
 use scp::{
-    JsonRpcConnection, JsonRpcConnectionCx, JsonRpcCxExt, McpConnectRequest, McpConnectResponse,
-    McpOverAcpNotification, McpOverAcpRequest, MetaCapabilityExt, Proxy, UntypedMessage,
+    AcpAgentToClientNotification, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcConnectionExt,
+    JsonRpcCxExt, McpConnectRequest, McpConnectResponse, McpOverAcpNotification, McpOverAcpRequest,
+    MetaCapabilityExt, Proxy, UntypedMessage,
 };
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 use tokio::sync::Mutex;
@@ -88,6 +89,7 @@ impl ComponentProvider for ProxyComponentProvider {
                                 },
                             )
                     })
+                    //
                     .on_receive_request({
                         let state = state.clone();
                         async move |request: McpConnectRequest, request_cx| {
@@ -249,6 +251,20 @@ impl ComponentProvider for ProxyComponentProvider {
                             Ok(())
                         }
                     })
+                    // All other notifications -- pass along to the predecessor
+                    .on_receive_request_from_successor(
+                        async move |request: McpOverAcpRequest<UntypedMessage>, request_cx| {
+                            request_cx
+                                .send_request(request)
+                                .forward_to_request_cx(request_cx)
+                        },
+                    )
+                    // All other notifications -- pass along to the predecessor
+                    .on_receive_notification_from_successor(
+                        async move |notification: UntypedMessage, cx| {
+                            cx.send_notification(notification)
+                        },
+                    )
                     .serve()
                     .await
             }

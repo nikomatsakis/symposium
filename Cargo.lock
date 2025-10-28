@@ -498,6 +498,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "clap",
+ "expect-test",
  "futures",
  "jsonrpcmsg",
  "rmcp",

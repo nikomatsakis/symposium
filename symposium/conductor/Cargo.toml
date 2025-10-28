@@ -25,3 +25,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "server", "transport-io"] }
 schemars = { workspace = true }
+expect-test = "1.5"

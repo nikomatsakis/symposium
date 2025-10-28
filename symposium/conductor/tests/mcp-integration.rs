@@ -8,10 +8,13 @@
 mod mcp_integration;
 
 use agent_client_protocol::{
-    self as acp, ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, TextContent,
+    self as acp, ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest,
+    SessionNotification, TextContent,
 };
 use conductor::component::ComponentProvider;
 use conductor::conductor::Conductor;
+use expect_test::expect;
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use scp::JsonRpcConnection;
 
 use tokio::io::duplex;
@@ -112,17 +115,43 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("conductor=debug".parse().unwrap()),
+                .add_directive("conductor=trace".parse().unwrap()),
         )
         .with_test_writer()
         .try_init();
 
-    run_test_with_components(
-        vec![
-            mcp_integration::proxy::create(),
-            mcp_integration::agent::create(),
-        ],
-        async |editor_cx| {
+    // Create channel to collect log events
+    let (mut log_tx, mut log_rx) = mpsc::unbounded();
+
+    // Set up editor <-> conductor communication with notification handling
+    let (editor, conductor) = duplex(1024);
+    let (editor_in, editor_out) = tokio::io::split(editor);
+    let (conductor_in, conductor_out) = tokio::io::split(conductor);
+
+    JsonRpcConnection::new(editor_out.compat_write(), editor_in.compat())
+        .name("editor-to-connector")
+        .on_receive_notification({
+            let mut log_tx = log_tx.clone();
+            async move |notification: SessionNotification, _cx| {
+                // Log the notification in debug format
+                log_tx
+                    .send(format!("{notification:?}"))
+                    .await
+                    .map_err(|_| acp::Error::internal_error())
+            }
+        })
+        .with_spawned(async move {
+            Conductor::run(
+                conductor_out.compat_write(),
+                conductor_in.compat(),
+                vec![
+                    mcp_integration::proxy::create(),
+                    mcp_integration::agent::create(),
+                ],
+            )
+            .await
+        })
+        .with_client(async |editor_cx| {
             // Initialize
             recv(editor_cx.send_request(InitializeRequest {
                 protocol_version: Default::default(),
@@ -153,20 +182,30 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
             }))
             .await?;
 
-            tracing::debug!(
-                stop_reason = ?prompt_response.stop_reason,
-                "Prompt response received"
-            );
-            assert_eq!(
-                prompt_response.stop_reason,
-                acp::StopReason::EndTurn,
-                "Expected EndTurn stop reason"
-            );
+            // Log the response
+            log_tx
+                .send(format!("{prompt_response:?}"))
+                .await
+                .map_err(|_| acp::Error::internal_error())?;
 
             Ok(())
-        },
-    )
-    .await?;
+        })
+        .await?;
+
+    // Drop the sender and collect all log entries
+    drop(log_tx);
+    let mut log_entries = Vec::new();
+    while let Some(entry) = log_rx.next().await {
+        log_entries.push(entry);
+    }
+
+    // Verify the output
+    let output = log_entries.join("\n");
+    expect![[r#"
+        "Foo",
+        "PromptResponse { stop_reason: EndTurn, meta: None }"
+    "#]]
+    .assert_debug_eq(&output);
 
     Ok(())
 }
