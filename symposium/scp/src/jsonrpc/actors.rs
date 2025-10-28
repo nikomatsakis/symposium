@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::panic::Location;
 use std::pin::pin;
 
 use agent_client_protocol as acp;
@@ -23,9 +24,14 @@ use crate::jsonrpc::ReplyMessage;
 
 use super::Handled;
 
+pub(crate) struct Task {
+    pub location: &'static Location<'static>,
+    pub future: BoxFuture<'static, Result<(), acp::Error>>,
+}
+
 /// The "task actor" manages other tasks
 pub(super) async fn task_actor(
-    mut task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, Result<(), acp::Error>>>,
+    mut task_rx: mpsc::UnboundedReceiver<Task>,
 ) -> Result<(), acp::Error> {
     let mut futures = FuturesUnordered::new();
 
@@ -33,7 +39,7 @@ pub(super) async fn task_actor(
         // If we have no futures to run, wait until we do.
         if futures.is_empty() {
             match task_rx.next().await {
-                Some(future) => futures.push(future),
+                Some(task) => futures.push(execute_task(task)),
                 None => return Ok(()),
             }
             continue;
@@ -54,12 +60,25 @@ pub(super) async fn task_actor(
             },
 
             task = task_rx.next() => {
-                if let Some(future) = task {
-                    futures.push(future);
+                if let Some(task) = task {
+                    futures.push(execute_task(task));
                 }
             }
         }
     }
+}
+
+async fn execute_task(task: Task) -> Result<(), agent_client_protocol::Error> {
+    let Task { location, future } = task;
+    future.await.map_err(|err| {
+        let data = err.data.clone();
+        err.with_data(serde_json::json! {
+            {
+                "spawned_at": format!("{}:{}:{}", location.file(), location.line(), location.column()),
+                "data": data,
+            }
+        })
+    })
 }
 
 /// The "reply actor" manages a queue of pending replies.

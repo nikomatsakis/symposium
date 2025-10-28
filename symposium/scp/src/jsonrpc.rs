@@ -4,6 +4,7 @@ use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Deref;
+use std::panic::Location;
 use tracing::Instrument as _;
 
 use boxfnonce::SendBoxFnOnce;
@@ -14,6 +15,8 @@ use futures::{AsyncRead, AsyncWrite, FutureExt};
 mod actors;
 mod handlers;
 pub use handlers::*;
+
+use crate::jsonrpc::actors::Task;
 
 /// Create a JsonRpcConnection. This can be the basis for either a server or a client.
 #[must_use]
@@ -36,10 +39,10 @@ pub struct JsonRpcConnection<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     handler: H,
 
     /// Receiver for new tasks.
-    new_task_rx: mpsc::UnboundedReceiver<BoxFuture<'static, Result<(), acp::Error>>>,
+    new_task_rx: mpsc::UnboundedReceiver<Task>,
 
     /// Sender to send messages to the "new task" actor.
-    new_task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
+    new_task_tx: mpsc::UnboundedSender<Task>,
 }
 
 impl<OB: AsyncWrite, IB: AsyncRead> JsonRpcConnection<OB, IB, NullHandler> {
@@ -143,6 +146,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
     }
 
     /// With a task that will be spawned on the server's executor when it is active.
+    #[track_caller]
     pub fn with_spawned(
         self,
         task: impl Future<Output = Result<(), acp::Error>> + Send + 'static,
@@ -162,16 +166,28 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
                 self.outgoing_rx,
                 reply_tx.clone(),
                 self.outgoing_bytes,
-            ).fuse() => r?,
+            ).fuse() => {
+                tracing::trace!(?r, "outgoing actor terminated");
+                r?;
+            }
             r = actors::incoming_actor(
                 &self.name,
                 &json_rpc_cx,
                 self.incoming_bytes,
                 reply_tx,
                 self.handler,
-            ).fuse() => r?,
-            r = actors::reply_actor(reply_rx).fuse() => r?,
-            r = actors::task_actor(self.new_task_rx).fuse() => r?,
+            ).fuse() => {
+                tracing::trace!(?r, "incoming actor terminated");
+                r?;
+            }
+            r = actors::reply_actor(reply_rx).fuse() => {
+                tracing::trace!(?r, "reply actor terminated");
+                r?;
+            }
+            r = actors::task_actor(self.new_task_rx).fuse() => {
+                tracing::trace!(?r, "task actor terminated");
+                r?;
+            }
         );
         Ok(())
     }
@@ -195,8 +211,6 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         let result = futures::future::select(Box::pin(self.serve()), Box::pin(main_fn(cx))).await;
 
         match result {
-            Either::Left((Ok(()), _)) => Err(acp::Error::internal_error()),
-
             Either::Left((result, _)) | Either::Right((result, _)) => result,
         }
     }
@@ -322,13 +336,13 @@ pub enum Handled<T> {
 #[derive(Clone, Debug)]
 pub struct JsonRpcConnectionCx {
     message_tx: mpsc::UnboundedSender<OutgoingMessage>,
-    task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
+    task_tx: mpsc::UnboundedSender<Task>,
 }
 
 impl JsonRpcConnectionCx {
     fn new(
         tx: mpsc::UnboundedSender<OutgoingMessage>,
-        task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
+        task_tx: mpsc::UnboundedSender<Task>,
     ) -> Self {
         Self {
             message_tx: tx,
@@ -338,12 +352,16 @@ impl JsonRpcConnectionCx {
 
     /// Spawns a task that will run so long as the JSON-RPC connection is being served.
     /// If the task returns an error, the server will shut down.
+    #[track_caller]
     pub fn spawn(
         &self,
         future: impl Future<Output = Result<(), acp::Error>> + Send + 'static,
     ) -> Result<(), acp::Error> {
         self.task_tx
-            .unbounded_send(Box::pin(future))
+            .unbounded_send(Task {
+                location: Location::caller(),
+                future: Box::pin(future),
+            })
             .map_err(acp::Error::into_internal_error)
     }
 
@@ -744,7 +762,7 @@ impl JsonRpcNotification for UntypedMessage {}
 pub struct JsonRpcResponse<R> {
     method: String,
     response_rx: oneshot::Receiver<Result<serde_json::Value, acp::Error>>,
-    task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
+    task_tx: mpsc::UnboundedSender<Task>,
     to_result: Box<dyn Fn(serde_json::Value) -> Result<R, acp::Error> + Send>,
 }
 
@@ -752,7 +770,7 @@ impl JsonRpcResponse<serde_json::Value> {
     fn new(
         method: String,
         response_rx: oneshot::Receiver<Result<serde_json::Value, acp::Error>>,
-        task_tx: mpsc::UnboundedSender<BoxFuture<'static, Result<(), acp::Error>>>,
+        task_tx: mpsc::UnboundedSender<Task>,
     ) -> Self {
         Self {
             method,
@@ -797,6 +815,7 @@ impl<R: JsonRpcResponsePayload> JsonRpcResponse<R> {
     /// because doing so can easily stall the event loop if done directly in the `on_receive` callback.
     ///
     /// If this task ultimately returns `Err`, the server will abort.
+    #[track_caller]
     pub fn await_when_response_received<F>(
         self,
         task: impl FnOnce(Result<R, acp::Error>) -> F + 'static + Send,
@@ -806,35 +825,38 @@ impl<R: JsonRpcResponsePayload> JsonRpcResponse<R> {
     {
         let current_span = tracing::Span::current();
         self.task_tx
-            .unbounded_send(Box::pin(
-                async move {
-                    let result = match self.response_rx.await {
-                        // We received a JSON value; transform it to our result type
-                        Ok(Ok(json_value)) => {
-                            tracing::trace!(?json_value, "received response to message");
-                            (self.to_result)(json_value)
-                        }
+            .unbounded_send(Task {
+                location: Location::caller(),
+                future: Box::pin(
+                    async move {
+                        let result = match self.response_rx.await {
+                            // We received a JSON value; transform it to our result type
+                            Ok(Ok(json_value)) => {
+                                tracing::trace!(?json_value, "received response to message");
+                                (self.to_result)(json_value)
+                            }
 
-                        // We got sent an error
-                        Ok(Err(e)) => Err(e),
+                            // We got sent an error
+                            Ok(Err(e)) => Err(e),
 
-                        // if the `response_tx` is dropped before we get a chance, that's weird
-                        Err(e) => Err(acp::Error::new((
-                            COMMUNICATION_FAILURE,
-                            format!(
-                                "reply of type `{}` never arrived: {e}",
-                                std::any::type_name::<R>()
-                            ),
-                        ))),
-                    };
-                    task(result).await
-                }
-                .instrument(tracing::info_span!(
-                    "receive_response",
-                    method = self.method
-                ))
-                .instrument(current_span),
-            ))
+                            // if the `response_tx` is dropped before we get a chance, that's weird
+                            Err(e) => Err(acp::Error::new((
+                                COMMUNICATION_FAILURE,
+                                format!(
+                                    "reply of type `{}` never arrived: {e}",
+                                    std::any::type_name::<R>()
+                                ),
+                            ))),
+                        };
+                        task(result).await
+                    }
+                    .instrument(tracing::info_span!(
+                        "receive_response",
+                        method = self.method
+                    ))
+                    .instrument(current_span),
+                ),
+            })
             .map_err(acp::Error::into_internal_error)
     }
 }

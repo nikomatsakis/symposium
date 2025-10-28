@@ -120,7 +120,7 @@ impl Conductor {
     pub async fn run<OB: AsyncWrite, IB: AsyncRead>(
         outgoing_bytes: OB,
         incoming_bytes: IB,
-        mut providers: Vec<Box<dyn ComponentProvider>>,
+        providers: Vec<Box<dyn ComponentProvider>>,
     ) -> Result<(), acp::Error> {
         Self::run_with_command(outgoing_bytes, incoming_bytes, providers, None).await
     }
