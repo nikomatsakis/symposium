@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::{
-    JsonRpcCxExt, McpConnectRequest, McpDisconnectNotification, McpOverAcpNotification,
-    McpOverAcpRequest,
+    JsonRpcCxExt, McpConnectRequest, McpConnectResponse, McpDisconnectNotification,
+    McpOverAcpNotification, McpOverAcpRequest, SuccessorNotification, SuccessorRequest,
 };
 
 /// Manages MCP services offered to successor proxies and agents.
@@ -123,11 +123,11 @@ impl McpServiceRegistry {
 
     async fn handle_connect_request(
         &self,
-        result: Result<McpConnectRequest, agent_client_protocol::Error>,
+        result: Result<SuccessorRequest<McpConnectRequest>, agent_client_protocol::Error>,
         request_cx: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
-        let request = match result {
+        let SuccessorRequest { request } = match result {
             Ok(request) => request,
             Err(err) => {
                 request_cx.respond_with_error(err)?;
@@ -139,6 +139,8 @@ impl McpServiceRegistry {
         let Some(registered_server) = self.get_registered_server_by_url(&request.acp_url) else {
             return Ok(Handled::No(request_cx));
         };
+
+        let request_cx = request_cx.cast::<McpConnectResponse>();
 
         // Create a unique connection ID and a channel for future communication
         let connection_id = format!("mcp-over-acp-connection:{}", uuid::Uuid::new_v4());
@@ -157,58 +159,73 @@ impl McpServiceRegistry {
         //
         // Every request/notification that is sent over `mcp_server_tx` we will
         // send to the MCP server.
-        request_cx.spawn(
-            JsonRpcConnection::new(mcp_client_write.compat_write(), mcp_client_read.compat())
-                .on_receive_request({
-                    let connection_id = connection_id.clone();
-                    let outer_cx = request_cx.json_rpc_cx();
-                    async move |mcp_request: UntypedMessage, mcp_request_cx| {
-                        outer_cx
-                            .send_request_to_successor(McpOverAcpRequest {
-                                connection_id: connection_id.clone(),
-                                request: mcp_request,
-                            })
-                            .forward_to_request_cx(mcp_request_cx)
-                    }
-                })
-                .on_receive_notification({
-                    let connection_id = connection_id.clone();
-                    let outer_cx = request_cx.json_rpc_cx();
-                    async move |mcp_notification: UntypedMessage, _| {
-                        outer_cx.send_notification_to_successor(McpOverAcpNotification {
-                            connection_id: connection_id.clone(),
-                            notification: mcp_notification,
-                        })
-                    }
-                })
-                .with_client({
-                    async move |mcp_cx| {
-                        while let Some(msg) = mcp_server_rx.next().await {
-                            mcp_cx.send_proxied_message(msg)?;
+        let spawn_results = request_cx
+            .spawn(
+                JsonRpcConnection::new(mcp_client_write.compat_write(), mcp_client_read.compat())
+                    .on_receive_request({
+                        let connection_id = connection_id.clone();
+                        let outer_cx = request_cx.json_rpc_cx();
+                        async move |mcp_request: UntypedMessage, mcp_request_cx| {
+                            outer_cx
+                                .send_request_to_successor(McpOverAcpRequest {
+                                    connection_id: connection_id.clone(),
+                                    request: mcp_request,
+                                })
+                                .forward_to_request_cx(mcp_request_cx)
                         }
-                        Ok(())
-                    }
-                }),
-        )?;
+                    })
+                    .on_receive_notification({
+                        let connection_id = connection_id.clone();
+                        let outer_cx = request_cx.json_rpc_cx();
+                        async move |mcp_notification: UntypedMessage, _| {
+                            outer_cx.send_notification_to_successor(McpOverAcpNotification {
+                                connection_id: connection_id.clone(),
+                                notification: mcp_notification,
+                            })
+                        }
+                    })
+                    .with_client({
+                        async move |mcp_cx| {
+                            while let Some(msg) = mcp_server_rx.next().await {
+                                mcp_cx.send_proxied_message(msg)?;
+                            }
+                            Ok(())
+                        }
+                    }),
+            )
+            .and_then(|()| {
+                // Spawn MCP server task
+                request_cx.spawn(async move {
+                    registered_server
+                        .spawn
+                        .spawn(Box::pin(mcp_server_write), Box::pin(mcp_server_read))
+                        .await
+                })
+            });
 
-        // Spawn MCP server task
-        request_cx.spawn(async move {
-            registered_server
-                .spawn
-                .spawn(Box::pin(mcp_server_write), Box::pin(mcp_server_read))
-                .await
-        })?;
+        match spawn_results {
+            Ok(()) => {
+                request_cx.respond(McpConnectResponse { connection_id })?;
+                Ok(Handled::Yes)
+            }
 
-        Ok(Handled::Yes)
+            Err(err) => {
+                request_cx.respond_with_error(err)?;
+                Ok(Handled::Yes)
+            }
+        }
     }
 
     async fn handle_mcp_over_acp_request(
         &self,
-        result: Result<McpOverAcpRequest<UntypedMessage>, agent_client_protocol::Error>,
+        result: Result<
+            SuccessorRequest<McpOverAcpRequest<UntypedMessage>>,
+            agent_client_protocol::Error,
+        >,
         request_cx: JsonRpcRequestCx<serde_json::Value>,
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
-        let request = match result {
+        let SuccessorRequest { request } = match result {
             Ok(request) => request,
             Err(err) => {
                 request_cx.respond_with_error(err)?;
@@ -231,11 +248,14 @@ impl McpServiceRegistry {
 
     async fn handle_mcp_over_acp_notification(
         &self,
-        result: Result<McpOverAcpNotification<UntypedMessage>, agent_client_protocol::Error>,
+        result: Result<
+            SuccessorNotification<McpOverAcpNotification<UntypedMessage>>,
+            agent_client_protocol::Error,
+        >,
         notification_cx: JsonRpcNotificationCx,
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
-        let request = match result {
+        let SuccessorNotification { notification } = match result {
             Ok(request) => request,
             Err(err) => {
                 notification_cx.send_error_notification(err)?;
@@ -244,12 +264,12 @@ impl McpServiceRegistry {
         };
 
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
-        let Some(mut mcp_server_tx) = self.get_connection(&request.connection_id) else {
+        let Some(mut mcp_server_tx) = self.get_connection(&notification.connection_id) else {
             return Ok(Handled::No(notification_cx));
         };
 
         mcp_server_tx
-            .send(ProxiedMessage::Notification(request.notification))
+            .send(ProxiedMessage::Notification(notification.notification))
             .await
             .map_err(acp::Error::into_internal_error)?;
 
@@ -258,11 +278,14 @@ impl McpServiceRegistry {
 
     async fn handle_mcp_disconnect_notification(
         &self,
-        result: Result<McpDisconnectNotification, agent_client_protocol::Error>,
+        result: Result<
+            SuccessorNotification<McpDisconnectNotification>,
+            agent_client_protocol::Error,
+        >,
         notification_cx: JsonRpcNotificationCx,
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
-        let request = match result {
+        let SuccessorNotification { notification } = match result {
             Ok(request) => request,
             Err(err) => {
                 notification_cx.send_error_notification(err)?;
@@ -271,7 +294,7 @@ impl McpServiceRegistry {
         };
 
         // Remove connection if we have it. Otherwise, do not handle the notification.
-        if self.remove_connection(&request.connection_id) {
+        if self.remove_connection(&notification.connection_id) {
             Ok(Handled::Yes)
         } else {
             Ok(Handled::No(notification_cx))
@@ -322,16 +345,19 @@ impl JsonRpcHandler for McpServiceRegistry {
         params: &(impl serde::Serialize + std::fmt::Debug),
     ) -> Result<scp::Handled<scp::JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error>
     {
-        if let Some(result) = McpConnectRequest::parse_request(cx.method(), params) {
+        if let Some(result) =
+            <SuccessorRequest<McpConnectRequest>>::parse_request(cx.method(), params)
+        {
             cx = match self.handle_connect_request(result, cx).await? {
                 Handled::Yes => return Ok(Handled::Yes),
                 Handled::No(cx) => cx,
             };
         }
 
-        if let Some(result) =
-            <McpOverAcpRequest<UntypedMessage>>::parse_request(cx.method(), params)
-        {
+        if let Some(result) = <SuccessorRequest<McpOverAcpRequest<UntypedMessage>>>::parse_request(
+            cx.method(),
+            params,
+        ) {
             cx = match self.handle_mcp_over_acp_request(result, cx).await? {
                 Handled::Yes => return Ok(Handled::Yes),
                 Handled::No(cx) => cx,
@@ -354,7 +380,10 @@ impl JsonRpcHandler for McpServiceRegistry {
         params: &(impl serde::Serialize + std::fmt::Debug),
     ) -> Result<scp::Handled<scp::JsonRpcNotificationCx>, agent_client_protocol::Error> {
         if let Some(result) =
-            <McpOverAcpNotification<UntypedMessage>>::parse_notification(cx.method(), params)
+            <SuccessorNotification<McpOverAcpNotification<UntypedMessage>>>::parse_notification(
+                cx.method(),
+                params,
+            )
         {
             cx = match self.handle_mcp_over_acp_notification(result, cx).await? {
                 Handled::Yes => return Ok(Handled::Yes),
@@ -362,7 +391,10 @@ impl JsonRpcHandler for McpServiceRegistry {
             };
         }
 
-        if let Some(result) = <McpDisconnectNotification>::parse_notification(cx.method(), params) {
+        if let Some(result) = <SuccessorNotification<McpDisconnectNotification>>::parse_notification(
+            cx.method(),
+            params,
+        ) {
             cx = match self.handle_mcp_disconnect_notification(result, cx).await? {
                 Handled::Yes => return Ok(Handled::Yes),
                 Handled::No(cx) => cx,
