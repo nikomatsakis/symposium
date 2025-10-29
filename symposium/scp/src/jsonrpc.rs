@@ -91,6 +91,28 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
         }
     }
 
+    /// Invoke the given closure when either a request or notification is received.
+    pub fn on_receive_message<R, N, F>(
+        self,
+        op: F,
+    ) -> JsonRpcConnection<OB, IB, ChainHandler<H, MessageHandler<R, N, F>>>
+    where
+        R: JsonRpcRequest,
+        N: JsonRpcNotification,
+        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), acp::Error>,
+    {
+        JsonRpcConnection {
+            name: self.name,
+            handler: ChainHandler::new(self.handler, MessageHandler::new(op)),
+            outgoing_bytes: self.outgoing_bytes,
+            incoming_bytes: self.incoming_bytes,
+            outgoing_rx: self.outgoing_rx,
+            outgoing_tx: self.outgoing_tx,
+            new_task_rx: self.new_task_rx,
+            new_task_tx: self.new_task_tx,
+        }
+    }
+
     /// Invoke the given closure when a request is received.
     pub fn on_receive_request<R, F>(
         self,
@@ -636,6 +658,31 @@ pub enum MessageAndCx<R: JsonRpcRequest = UntypedMessage, N: JsonRpcMessage = Un
 }
 
 impl<R: JsonRpcRequest, N: JsonRpcMessage> MessageAndCx<R, N> {
+    /// Map the request and notification types to new types.
+    pub fn map<R1, N1>(
+        self,
+        map_request: impl FnOnce(
+            R,
+            JsonRpcRequestCx<R::Response>,
+        ) -> (R1, JsonRpcRequestCx<R1::Response>),
+        map_notification: impl FnOnce(N, JsonRpcConnectionCx) -> (N1, JsonRpcConnectionCx),
+    ) -> MessageAndCx<R1, N1>
+    where
+        R1: JsonRpcRequest<Response: Send>,
+        N1: JsonRpcMessage,
+    {
+        match self {
+            MessageAndCx::Request(request, cx) => {
+                let (new_request, new_cx) = map_request(request, cx);
+                MessageAndCx::Request(new_request, new_cx)
+            }
+            MessageAndCx::Notification(notification, cx) => {
+                let (new_notification, new_cx) = map_notification(notification, cx);
+                MessageAndCx::Notification(new_notification, new_cx)
+            }
+        }
+    }
+
     /// Respond to the message with an error.
     ///
     /// If this message is a request, this error becomes the reply to the request.

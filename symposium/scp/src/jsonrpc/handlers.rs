@@ -155,6 +155,100 @@ where
 }
 
 /// Handler that tries H1 and then H2.
+
+pub struct MessageHandler<R, N, F>
+where
+    R: JsonRpcRequest,
+    N: JsonRpcNotification,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), acp::Error>,
+{
+    handler: F,
+    phantom: PhantomData<fn(R, N)>,
+}
+
+impl<R, N, F> MessageHandler<R, N, F>
+where
+    R: JsonRpcRequest,
+    N: JsonRpcNotification,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), acp::Error>,
+{
+    pub fn new(handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<R, N, F> JsonRpcHandler for MessageHandler<R, N, F>
+where
+    R: JsonRpcRequest,
+    N: JsonRpcNotification,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), acp::Error>,
+{
+    async fn handle_message(
+        &mut self,
+        message_cx: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, agent_client_protocol::Error> {
+        match message_cx {
+            MessageAndCx::Request(message, request_cx) => {
+                tracing::debug!(
+                    request_type = std::any::type_name::<R>(),
+                    message = ?message,
+                    "MessageHandler::handle_request"
+                );
+                match R::parse_request(&message.method, &message.params) {
+                    Some(Ok(req)) => {
+                        tracing::trace!(?req, "MessageHandler::handle_request: parse completed");
+                        let typed_message = MessageAndCx::Request(req, request_cx.cast());
+                        (self.handler)(typed_message).await?;
+                        Ok(Handled::Yes)
+                    }
+                    Some(Err(err)) => {
+                        tracing::trace!(?err, "MessageHandler::handle_request: parse errored");
+                        Err(err)
+                    }
+                    None => {
+                        tracing::trace!("MessageHandler::handle_request: parse failed");
+                        Ok(Handled::No(MessageAndCx::Request(message, request_cx)))
+                    }
+                }
+            }
+
+            MessageAndCx::Notification(message, cx) => {
+                tracing::debug!(
+                    notification_type = std::any::type_name::<N>(),
+                    message = ?message,
+                    "MessageHandler::handle_notification"
+                );
+                match N::parse_notification(&message.method, &message.params) {
+                    Some(Ok(notif)) => {
+                        tracing::trace!(
+                            ?notif,
+                            "MessageHandler::handle_notification: parse completed"
+                        );
+                        let typed_message = MessageAndCx::Notification(notif, cx);
+                        (self.handler)(typed_message).await?;
+                        Ok(Handled::Yes)
+                    }
+                    Some(Err(err)) => {
+                        tracing::trace!(?err, "MessageHandler::handle_notification: parse errored");
+                        Err(err)
+                    }
+                    None => {
+                        tracing::trace!("MessageHandler::handle_notification: parse failed");
+                        Ok(Handled::No(MessageAndCx::Notification(message, cx)))
+                    }
+                }
+            }
+        }
+    }
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!("({}, {})", std::any::type_name::<R>(), std::any::type_name::<N>())
+    }
+}
+
 pub struct ChainHandler<H1, H2>
 where
     H1: JsonRpcHandler,

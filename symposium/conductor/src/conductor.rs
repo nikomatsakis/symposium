@@ -240,25 +240,17 @@ impl Conductor {
             JsonRpcConnection::new(conductor_write.compat_write(), conductor_read.compat())
                 .name(format!("conductor-to-component({})", component_index))
                 // Intercept messages sent by a proxy component (acting as ACP client) to its successor agent.
-                .on_receive_request({
+                .on_receive_message({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |request: SuccessorRequest<UntypedMessage>, request_cx| {
+                    async move |message_cx: MessageAndCx<
+                        SuccessorRequest<UntypedMessage>,
+                        SuccessorNotification<UntypedMessage>,
+                    >| {
                         conductor_tx
                             .send(ConductorMessage::ClientToAgent {
                                 target_component_index: component_index + 1,
-                                message: MessageAndCx::Request(request.request, request_cx),
-                            })
-                            .await
-                            .map_err(scp::util::internal_error)
-                    }
-                })
-                .on_receive_notification({
-                    let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |notification: SuccessorNotification<UntypedMessage>, cx| {
-                        conductor_tx
-                            .send(ConductorMessage::ClientToAgent {
-                                target_component_index: component_index + 1,
-                                message: MessageAndCx::Notification(notification.notification, cx),
+                                message: message_cx
+                                    .map(|r, cx| (r.request, cx), |n, cx| (n.notification, cx)),
                             })
                             .await
                             .map_err(scp::util::internal_error)
@@ -269,25 +261,13 @@ impl Conductor {
                 // (i.e., an agent-to-client message),
                 // the conductor will forward that
                 // to the proxy's predecessor.
-                .on_receive_request({
+                .on_receive_message({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |request: UntypedMessage, request_cx| {
+                    async move |message_cx: MessageAndCx<UntypedMessage, UntypedMessage>| {
                         conductor_tx
                             .send(ConductorMessage::AgentToClient {
                                 source_component_index: component_index,
-                                message: MessageAndCx::Request(request, request_cx),
-                            })
-                            .await
-                            .map_err(scp::util::internal_error)
-                    }
-                })
-                .on_receive_notification({
-                    let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |notification: UntypedMessage, cx| {
-                        conductor_tx
-                            .send(ConductorMessage::AgentToClient {
-                                source_component_index: component_index,
-                                message: MessageAndCx::Notification(notification, cx),
+                                message: message_cx,
                             })
                             .await
                             .map_err(scp::util::internal_error)
