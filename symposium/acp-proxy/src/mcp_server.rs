@@ -231,7 +231,7 @@ impl McpServiceRegistry {
                 JsonRpcConnection::new(mcp_client_write.compat_write(), mcp_client_read.compat())
                     .on_receive_request({
                         let connection_id = connection_id.clone();
-                        let outer_cx = request_cx.json_rpc_cx();
+                        let outer_cx = request_cx.connection_cx();
                         async move |mcp_request: UntypedMessage, mcp_request_cx| {
                             outer_cx
                                 .send_request_to_successor(McpOverAcpRequest {
@@ -243,7 +243,7 @@ impl McpServiceRegistry {
                     })
                     .on_receive_notification({
                         let connection_id = connection_id.clone();
-                        let outer_cx = request_cx.json_rpc_cx();
+                        let outer_cx = request_cx.connection_cx();
                         async move |mcp_notification: UntypedMessage, _| {
                             outer_cx.send_notification_to_successor(McpOverAcpNotification {
                                 connection_id: connection_id.clone(),

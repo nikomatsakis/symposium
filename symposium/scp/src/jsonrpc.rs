@@ -507,7 +507,7 @@ pub struct JsonRpcRequestCx<T: JsonRpcResponsePayload> {
     /// Function to send the response `T` to a request with the given method and id.
     make_json: SendBoxFnOnce<
         'static,
-        ((String, jsonrpcmsg::Id), Result<T, acp::Error>),
+        (String, Result<T, acp::Error>),
         Result<serde_json::Value, acp::Error>,
     >,
 }
@@ -538,12 +538,12 @@ impl JsonRpcRequestCx<serde_json::Value> {
             cx: cx.clone(),
             method,
             id,
-            make_json: SendBoxFnOnce::new(move |_, value| value),
+            make_json: SendBoxFnOnce::new(move |_method, value| value),
         }
     }
 
     pub fn cast<T: JsonRpcResponsePayload>(self) -> JsonRpcRequestCx<T> {
-        self.wrap_params(move |(method, _), value| match value {
+        self.wrap_params(move |method, value| match value {
             Ok(value) => T::into_json(value, &method),
             Err(e) => Err(e),
         })
@@ -551,11 +551,6 @@ impl JsonRpcRequestCx<serde_json::Value> {
 }
 
 impl<T: JsonRpcResponsePayload> JsonRpcRequestCx<T> {
-    /// Get the ID of the request being responded to.
-    pub fn id(&self) -> &jsonrpcmsg::Id {
-        &self.id
-    }
-
     /// Method of the incoming request
     pub fn method(&self) -> &str {
         &self.method
@@ -565,7 +560,7 @@ impl<T: JsonRpcResponsePayload> JsonRpcRequestCx<T> {
     /// and which checks (dynamically) that the JSON value it receives
     /// can be converted to `T`.
     pub fn erase_to_json(self) -> JsonRpcRequestCx<serde_json::Value> {
-        self.wrap_params(|(method, _id), value| T::from_value(&method, value?))
+        self.wrap_params(|method, value| T::from_value(&method, value?))
     }
 
     /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
@@ -579,36 +574,32 @@ impl<T: JsonRpcResponsePayload> JsonRpcRequestCx<T> {
     }
 
     /// Return a new JsonRpcResponse that expects a response of type U and serializes it.
+    ///
+    /// `wrap_fn` will be invoked with the method name and the result of the wrapped function.
     pub fn wrap_params<U: JsonRpcResponsePayload>(
         self,
-        wrap_fn: impl FnOnce((String, jsonrpcmsg::Id), Result<U, acp::Error>) -> Result<T, acp::Error>
-        + Send
-        + 'static,
+        wrap_fn: impl FnOnce(&str, Result<U, acp::Error>) -> Result<T, acp::Error> + Send + 'static,
     ) -> JsonRpcRequestCx<U> {
         JsonRpcRequestCx {
             cx: self.cx,
             method: self.method,
             id: self.id,
-            make_json: SendBoxFnOnce::new(
-                move |args: (String, jsonrpcmsg::Id), input: Result<U, acp::Error>| {
-                    let t_value = wrap_fn(args.clone(), input);
-                    self.make_json.call(args, t_value)
-                },
-            ),
+            make_json: SendBoxFnOnce::new(move |method: String, input: Result<U, acp::Error>| {
+                let t_value = wrap_fn(&method, input);
+                self.make_json.call(method, t_value)
+            }),
         }
     }
 
     /// Get the underlying JSON RPC context.
-    pub fn json_rpc_cx(&self) -> JsonRpcConnectionCx {
+    pub fn connection_cx(&self) -> JsonRpcConnectionCx {
         self.cx.clone()
     }
 
     /// Respond to the JSON-RPC request with either a value (`Ok`) or an error (`Err`).
     pub fn respond_with_result(self, response: Result<T, acp::Error>) -> Result<(), acp::Error> {
         tracing::debug!(id = ?self.id, "respond called");
-        let json = self
-            .make_json
-            .call_tuple(((self.method.clone(), self.id.clone()), response));
+        let json = self.make_json.call_tuple((self.method.clone(), response));
         self.cx.send_raw_message(OutgoingMessage::Response {
             id: self.id,
             response: json,

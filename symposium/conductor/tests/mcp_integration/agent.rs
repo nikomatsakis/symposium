@@ -105,7 +105,7 @@ impl ComponentProvider for AgentComponentProvider {
                             );
 
                             // Run the rest out of turn so the loop stays responsive
-                            let connection_cx = request_cx.json_rpc_cx();
+                            let connection_cx = request_cx.connection_cx();
                             let state = state.clone();
                             connection_cx.spawn(Self::respond_to_prompt(state, request, request_cx))
                         }
@@ -131,7 +131,7 @@ impl AgentComponentProvider {
         };
         use tokio::process::Command;
 
-        let connection_cx = request_cx.json_rpc_cx();
+        let connection_cx = request_cx.connection_cx();
 
         // Send initial message
         connection_cx.send_notification(SessionNotification {
