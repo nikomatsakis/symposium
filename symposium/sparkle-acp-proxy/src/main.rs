@@ -78,6 +78,7 @@ use agent_client_protocol::{
     PromptResponse, SessionNotification, SessionUpdate, TextContent,
 };
 use scp::{JsonRpcConnection, JsonRpcRequestCx};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -14,7 +14,6 @@ use rmcp::{
 };
 use rust_embed::RustEmbed;
 use serde_json;
-use std::future::Future;
 use tracing::{debug, error, info, warn};
 
 use crate::dialect::DialectInterpreter;
