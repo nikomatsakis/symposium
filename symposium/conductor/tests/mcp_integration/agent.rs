@@ -69,7 +69,7 @@ impl ComponentProvider for AgentComponentProvider {
                                 ..
                             } = mcp_server
                             {
-                                assert_eq!(name, "eg");
+                                assert_eq!(name, "test");
                                 assert_eq!(command.to_str().unwrap(), "cargo");
                                 // Should be: ["run", "-p", "conductor", "--", "mcp", "<port>"]
                                 assert_eq!(args[0], "run");
