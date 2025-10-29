@@ -1,7 +1,6 @@
 use crate::jsonrpc::{Handled, JsonRpcHandler};
-use crate::{JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest};
+use crate::{JsonRpcConnectionCx, JsonRpcNotification, JsonRpcRequest, MessageAndCx};
 use agent_client_protocol as acp;
-use serde::Serialize;
 use std::marker::PhantomData;
 use std::ops::AsyncFnMut;
 
@@ -14,6 +13,13 @@ pub struct NullHandler {}
 impl JsonRpcHandler for NullHandler {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "(null)"
+    }
+
+    async fn handle_message(
+        &mut self,
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, agent_client_protocol::Error> {
+        Ok(Handled::No(message))
     }
 }
 
@@ -44,31 +50,35 @@ where
     R: JsonRpcRequest,
     F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
 {
-    async fn handle_request(
+    async fn handle_message(
         &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
-        tracing::debug!(
-            request_type = std::any::type_name::<R>(),
-            method = cx.method(),
-            params = ?params,
-            "RequestHandler::handle_request"
-        );
-        match R::parse_request(cx.method(), params) {
-            Some(Ok(req)) => {
-                tracing::trace!(?req, "RequestHandler::handle_request: parse completed");
-                (self.handler)(req, cx.cast()).await?;
-                Ok(Handled::Yes)
+        message_cx: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, agent_client_protocol::Error> {
+        match message_cx {
+            MessageAndCx::Request(message, request_cx) => {
+                tracing::debug!(
+                    request_type = std::any::type_name::<R>(),
+                    message = ?message,
+                    "RequestHandler::handle_request"
+                );
+                match R::parse_request(&message.method, &message.params) {
+                    Some(Ok(req)) => {
+                        tracing::trace!(?req, "RequestHandler::handle_request: parse completed");
+                        (self.handler)(req, request_cx.cast()).await?;
+                        Ok(Handled::Yes)
+                    }
+                    Some(Err(err)) => {
+                        tracing::trace!(?err, "RequestHandler::handle_request: parse errored");
+                        Err(err)
+                    }
+                    None => {
+                        tracing::trace!("RequestHandler::handle_request: parse failed");
+                        Ok(Handled::No(MessageAndCx::Request(message, request_cx)))
+                    }
+                }
             }
-            Some(Err(err)) => {
-                tracing::trace!(?err, "RequestHandler::handle_request: parse errored");
-                Err(err)
-            }
-            None => {
-                tracing::trace!("RequestHandler::handle_request: parse failed");
-                Ok(Handled::No(cx))
-            }
+
+            MessageAndCx::Notification(..) => Ok(Handled::No(message_cx)),
         }
     }
 
@@ -80,7 +90,7 @@ where
 pub struct NotificationHandler<N, F>
 where
     N: JsonRpcNotification,
-    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(N)>,
@@ -89,7 +99,7 @@ where
 impl<R, F> NotificationHandler<R, F>
 where
     R: JsonRpcNotification,
-    F: AsyncFnMut(R, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(R, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
     pub fn new(handler: F) -> Self {
         Self {
@@ -102,39 +112,40 @@ where
 impl<R, F> JsonRpcHandler for NotificationHandler<R, F>
 where
     R: JsonRpcNotification,
-    F: AsyncFnMut(R, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(R, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
-    async fn handle_notification(
+    async fn handle_message(
         &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        tracing::debug!(
-            type_name = std::any::type_name::<R>(),
-            method = cx.method(),
-            params = ?params,
-            "handle_notification"
-        );
-        match R::parse_notification(cx.method(), params) {
-            Some(Ok(req)) => {
-                tracing::trace!(
-                    ?req,
-                    "NotificationHandler::handle_notification: parse completed"
+        message_cx: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, agent_client_protocol::Error> {
+        match message_cx {
+            MessageAndCx::Notification(message, cx) => {
+                tracing::debug!(
+                    request_type = std::any::type_name::<R>(),
+                    message = ?message,
+                    "NotificationHandler::handle_message"
                 );
-                (self.handler)(req, cx).await?;
-                Ok(Handled::Yes)
+                match R::parse_notification(&message.method, &message.params) {
+                    Some(Ok(req)) => {
+                        tracing::trace!(
+                            ?req,
+                            "NotificationHandler::handle_notification: parse completed"
+                        );
+                        (self.handler)(req, cx).await?;
+                        Ok(Handled::Yes)
+                    }
+                    Some(Err(err)) => {
+                        tracing::trace!(?err, "RequestHandler::handle_request: parse errored");
+                        Err(err)
+                    }
+                    None => {
+                        tracing::trace!("RequestHandler::handle_request: parse failed");
+                        Ok(Handled::No(MessageAndCx::Notification(message, cx)))
+                    }
+                }
             }
-            Some(Err(err)) => {
-                tracing::trace!(
-                    ?err,
-                    "NotificationHandler::handle_notification: parse errored"
-                );
-                Err(err)
-            }
-            None => {
-                tracing::trace!("RequestHandler::handle_request: parse failed");
-                Ok(Handled::No(cx))
-            }
+
+            MessageAndCx::Request(..) => Ok(Handled::No(message_cx)),
         }
     }
 
@@ -168,28 +179,6 @@ where
     H1: JsonRpcHandler,
     H2: JsonRpcHandler,
 {
-    async fn handle_request(
-        &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
-        match self.handler1.handle_request(cx, params).await? {
-            Handled::Yes => Ok(Handled::Yes),
-            Handled::No(cx) => self.handler2.handle_request(cx, params).await,
-        }
-    }
-
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
-        match self.handler1.handle_notification(cx, params).await? {
-            Handled::Yes => Ok(Handled::Yes),
-            Handled::No(cx) => self.handler2.handle_notification(cx, params).await,
-        }
-    }
-
     fn describe_chain(&self) -> impl std::fmt::Debug {
         return DebugImpl {
             handler1: &self.handler1,
@@ -210,6 +199,16 @@ where
                     self.handler2.describe_chain()
                 )
             }
+        }
+    }
+
+    async fn handle_message(
+        &mut self,
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, agent_client_protocol::Error> {
+        match self.handler1.handle_message(message).await? {
+            Handled::Yes => Ok(Handled::Yes),
+            Handled::No(message) => self.handler2.handle_message(message).await,
         }
     }
 }

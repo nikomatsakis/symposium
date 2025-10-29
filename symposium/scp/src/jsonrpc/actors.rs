@@ -15,7 +15,8 @@ use futures::stream::FusedStream;
 use futures::stream::FuturesUnordered;
 use uuid::Uuid;
 
-use crate::JsonRpcNotificationCx;
+use crate::MessageAndCx;
+use crate::UntypedMessage;
 use crate::jsonrpc::JsonRpcConnectionCx;
 use crate::jsonrpc::JsonRpcHandler;
 use crate::jsonrpc::JsonRpcRequestCx;
@@ -204,32 +205,23 @@ async fn dispatch_request(
         "dispatch_request"
     );
 
-    if let Some(id) = request.id {
-        let method = request.method;
-        let request_cx = JsonRpcRequestCx::new(json_rpc_cx, method.clone(), id.clone());
-        let handled = handler.handle_request(request_cx, &request.params).await?;
+    let message = UntypedMessage::new(&request.method, &request.params).expect("well-formed JSON");
 
-        match handled {
-            Handled::Yes => {
-                tracing::debug!(method = %method, ?id, "Handler reported: Handled::Yes");
-            }
-            Handled::No(request_cx) => {
-                tracing::debug!(method = %method, ?id, "Handler reported: Handled::No, sending method_not_found");
-                request_cx.respond_with_error(agent_client_protocol::Error::method_not_found())?;
-            }
+    let message_cx = match &request.id {
+        Some(id) => MessageAndCx::Request(
+            message,
+            JsonRpcRequestCx::new(json_rpc_cx, request.method.clone(), id.clone()),
+        ),
+        None => MessageAndCx::Notification(message, json_rpc_cx.clone()),
+    };
+
+    match handler.handle_message(message_cx).await? {
+        Handled::Yes => {
+            tracing::debug!(method = request.method, ?request.id, "Handler reported: Handled::Yes");
         }
-    } else {
-        let notification_cx = JsonRpcNotificationCx::new(json_rpc_cx, request.method);
-        let handled = handler
-            .handle_notification(notification_cx, &request.params)
-            .await?;
-
-        match handled {
-            Handled::Yes => (),
-            Handled::No(notification_cx) => {
-                notification_cx
-                    .send_error_notification(agent_client_protocol::Error::method_not_found())?;
-            }
+        Handled::No(request_cx) => {
+            tracing::debug!(method = ?request.method, ?request.id, "Handler reported: Handled::No, sending method_not_found");
+            request_cx.respond_with_error(agent_client_protocol::Error::method_not_found())?;
         }
     }
 

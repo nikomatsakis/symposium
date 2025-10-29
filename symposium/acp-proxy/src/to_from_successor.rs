@@ -2,8 +2,8 @@ use agent_client_protocol::{self as acp, InitializeRequest, InitializeResponse};
 use futures::{AsyncRead, AsyncWrite};
 use scp::{
     ChainHandler, Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest, JsonRpcRequestCx,
-    MetaCapabilityExt, Proxy, UntypedMessage,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcRequestCx, MessageAndCx, MetaCapabilityExt, Proxy,
+    UntypedMessage,
 };
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -183,7 +183,7 @@ pub trait AcpProxyExt<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JsonRpcNotification,
-        F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>;
+        F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>;
 
     /// Installs a proxy layer that proxies all requests/notifications to/from the successor.
     /// This is typically the last component in the chain.
@@ -221,7 +221,7 @@ where
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JsonRpcNotification,
-        F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+        F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
     {
         self.chain_handler(NotificationFromSuccessorHandler::new(op))
     }
@@ -266,21 +266,23 @@ where
     R: JsonRpcRequest,
     F: AsyncFnMut(R, JsonRpcRequestCx<R::Response>) -> Result<(), acp::Error>,
 {
-    async fn handle_request(
+    async fn handle_message(
         &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
+        message: scp::MessageAndCx,
+    ) -> Result<Handled<scp::MessageAndCx>, agent_client_protocol::Error> {
+        let MessageAndCx::Request(request, cx) = message else {
+            return Ok(Handled::No(message));
+        };
+
         tracing::debug!(
             request_type = std::any::type_name::<R>(),
-            method = cx.method(),
-            params = ?params,
+            message = ?request,
             "RequestHandler::handle_request"
         );
-        match <SuccessorRequest<R>>::parse_request(cx.method(), params) {
-            Some(Ok(req)) => {
-                tracing::trace!(?req, "RequestHandler::handle_request: parse completed");
-                (self.handler)(req.request, cx.cast()).await?;
+        match <SuccessorRequest<R>>::parse_request(&request.method, &request.params) {
+            Some(Ok(request)) => {
+                tracing::trace!(?request, "RequestHandler::handle_request: parse completed");
+                (self.handler)(request.request, cx.cast()).await?;
                 Ok(Handled::Yes)
             }
             Some(Err(err)) => {
@@ -289,7 +291,7 @@ where
             }
             None => {
                 tracing::trace!("RequestHandler::handle_request: parse failed");
-                Ok(Handled::No(cx))
+                Ok(Handled::No(MessageAndCx::Request(request, cx)))
             }
         }
     }
@@ -303,7 +305,7 @@ where
 pub struct NotificationFromSuccessorHandler<N, F>
 where
     N: JsonRpcNotification,
-    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(N)>,
@@ -312,7 +314,7 @@ where
 impl<N, F> NotificationFromSuccessorHandler<N, F>
 where
     N: JsonRpcNotification,
-    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
     pub fn new(handler: F) -> Self {
         Self {
@@ -325,26 +327,23 @@ where
 impl<N, F> JsonRpcHandler for NotificationFromSuccessorHandler<N, F>
 where
     N: JsonRpcNotification,
-    F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+    F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
 {
-    async fn handle_notification(
+    async fn handle_message(
         &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        tracing::debug!(
-            request_type = std::any::type_name::<N>(),
-            method = cx.method(),
-            params = ?params,
-            "NotificationFromSuccessorHandler::handle_request"
-        );
-        match <SuccessorNotification<N>>::parse_notification(cx.method(), params) {
-            Some(Ok(req)) => {
+        message: scp::MessageAndCx,
+    ) -> Result<Handled<scp::MessageAndCx>, agent_client_protocol::Error> {
+        let MessageAndCx::Notification(message, cx) = message else {
+            return Ok(Handled::No(message));
+        };
+
+        match <SuccessorNotification<N>>::parse_notification(&message.method, &message.params) {
+            Some(Ok(notification)) => {
                 tracing::trace!(
-                    ?req,
+                    ?notification,
                     "NotificationFromSuccessorHandler::handle_request: parse completed"
                 );
-                (self.handler)(req.notification, cx).await?;
+                (self.handler)(notification.notification, cx).await?;
                 Ok(Handled::Yes)
             }
             Some(Err(err)) => {
@@ -356,7 +355,7 @@ where
             }
             None => {
                 tracing::trace!("NotificationFromSuccessorHandler::handle_request: parse failed");
-                Ok(Handled::No(cx))
+                Ok(Handled::No(MessageAndCx::Notification(message, cx)))
             }
         }
     }
@@ -370,77 +369,71 @@ where
 pub struct ProxyHandler {}
 
 impl JsonRpcHandler for ProxyHandler {
-    async fn handle_request(
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        "proxy"
+    }
+
+    async fn handle_message(
         &mut self,
-        request_cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
+        message: scp::MessageAndCx,
+    ) -> Result<Handled<scp::MessageAndCx>, agent_client_protocol::Error> {
         tracing::debug!(
-            method = request_cx.method(),
-            params = ?params,
+            message = ?message.message(),
             "ProxyHandler::handle_request"
         );
 
-        // If we receive a request from the successor, send it to our predecessor.
-        if let Some(result) =
-            <SuccessorRequest<UntypedMessage>>::parse_request(request_cx.method(), params)
-        {
-            let request = result?;
-            request_cx
-                .send_request(request.request)
-                .forward_to_request_cx(request_cx)?;
-            return Ok(Handled::Yes);
-        }
-
-        // If we receive "Initialize", require the proxy capability (and remove it)
-        if let Some(result) = InitializeRequest::parse_request(request_cx.method(), params) {
-            let request = result?;
-            return self
-                .forward_initialize(request, request_cx.cast())
-                .await
-                .map(|()| Handled::Yes);
-        }
-
-        // If we receive any other request, send it to our successor.
-        let request = UntypedMessage::new(request_cx.method(), params)?;
-        request_cx
-            .send_request_to_successor(request)
-            .forward_to_request_cx(request_cx)?;
-        Ok(Handled::Yes)
-    }
-
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &(impl Serialize + std::fmt::Debug),
-    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        tracing::debug!(
-            method = cx.method(),
-            params = ?params,
-            "ProxyHandler::handle_notification"
-        );
-
-        // If we receive a request from the successor, send it to our predecessor.
-        if let Some(result) =
-            <SuccessorNotification<UntypedMessage>>::parse_notification(cx.method(), params)
-        {
-            match result {
-                Ok(r) => {
-                    cx.send_notification(r.notification)?;
+        match message {
+            MessageAndCx::Request(request, request_cx) => {
+                // If we receive a request from the successor, send it to our predecessor.
+                if let Some(result) = <SuccessorRequest<UntypedMessage>>::parse_request(
+                    &request.method,
+                    &request.params,
+                ) {
+                    let request = result?;
+                    request_cx
+                        .send_request(request.request)
+                        .forward_to_request_cx(request_cx)?;
                     return Ok(Handled::Yes);
                 }
-                Err(err) => return Err(err),
+
+                // If we receive "Initialize", require the proxy capability (and remove it)
+                if let Some(result) =
+                    InitializeRequest::parse_request(&request.method, &request.params)
+                {
+                    let request = result?;
+                    return self
+                        .forward_initialize(request, request_cx.cast())
+                        .await
+                        .map(|()| Handled::Yes);
+                }
+
+                // If we receive any other request, send it to our successor.
+                request_cx
+                    .send_request_to_successor(request)
+                    .forward_to_request_cx(request_cx)?;
+                Ok(Handled::Yes)
+            }
+
+            MessageAndCx::Notification(notification, cx) => {
+                // If we receive a request from the successor, send it to our predecessor.
+                if let Some(result) = <SuccessorNotification<UntypedMessage>>::parse_notification(
+                    &notification.method,
+                    &notification.params,
+                ) {
+                    match result {
+                        Ok(r) => {
+                            cx.send_notification(r.notification)?;
+                            return Ok(Handled::Yes);
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+
+                // If we receive any other request, send it to our successor.
+                cx.send_notification_to_successor(notification)?;
+                Ok(Handled::Yes)
             }
         }
-
-        // If we receive any other request, send it to our successor.
-        let notification = UntypedMessage::new(cx.method(), params)?;
-        cx.send_notification_to_successor(notification)?;
-        Ok(Handled::Yes)
-    }
-
-    fn describe_chain(&self) -> impl std::fmt::Debug {
-        "proxy"
     }
 }
 

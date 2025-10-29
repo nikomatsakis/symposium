@@ -5,8 +5,8 @@ use futures::{SinkExt, StreamExt};
 use fxhash::FxHashMap;
 use rmcp::ServiceExt;
 use scp::{
-    Handled, JsonRpcConnection, JsonRpcHandler, JsonRpcMessage, JsonRpcNotificationCx,
-    JsonRpcRequestCx, ProxiedMessage, UntypedMessage,
+    Handled, JsonRpcConnection, JsonRpcConnectionCx, JsonRpcHandler, JsonRpcMessage,
+    JsonRpcRequestCx, MessageAndCx, UntypedMessage,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -36,8 +36,9 @@ pub struct McpServiceRegistry {
 struct McpServiceRegistryData {
     registered_by_name: FxHashMap<String, Arc<RegisteredMcpServer>>,
     registered_by_url: FxHashMap<String, Arc<RegisteredMcpServer>>,
-    connections: FxHashMap<String, mpsc::Sender<ProxiedMessage>>,
+    connections: FxHashMap<String, mpsc::Sender<MessageAndCx>>,
 }
+
 impl McpServiceRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -162,7 +163,7 @@ impl McpServiceRegistry {
             .cloned()
     }
 
-    fn insert_connection(&self, connection_id: &str, tx: mpsc::Sender<scp::ProxiedMessage>) {
+    fn insert_connection(&self, connection_id: &str, tx: mpsc::Sender<scp::MessageAndCx>) {
         self.data
             .lock()
             .expect("not poisoned")
@@ -170,7 +171,7 @@ impl McpServiceRegistry {
             .insert(connection_id.to_string(), tx);
     }
 
-    fn get_connection(&self, connection_id: &str) -> Option<mpsc::Sender<scp::ProxiedMessage>> {
+    fn get_connection(&self, connection_id: &str) -> Option<mpsc::Sender<scp::MessageAndCx>> {
         self.data
             .lock()
             .expect("not poisoned")
@@ -306,7 +307,7 @@ impl McpServiceRegistry {
         };
 
         mcp_server_tx
-            .send(ProxiedMessage::Request(request.request, request_cx))
+            .send(MessageAndCx::Request(request.request, request_cx))
             .await
             .map_err(acp::Error::into_internal_error)?;
 
@@ -319,7 +320,7 @@ impl McpServiceRegistry {
             SuccessorNotification<McpOverAcpNotification<UntypedMessage>>,
             agent_client_protocol::Error,
         >,
-        notification_cx: JsonRpcNotificationCx,
+        notification_cx: JsonRpcConnectionCx,
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
         let SuccessorNotification { notification } = match result {
@@ -336,7 +337,7 @@ impl McpServiceRegistry {
         };
 
         mcp_server_tx
-            .send(ProxiedMessage::Notification(notification.notification))
+            .send(MessageAndCx::Notification(notification.notification))
             .await
             .map_err(acp::Error::into_internal_error)?;
 

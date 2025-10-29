@@ -3,7 +3,6 @@
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::ops::Deref;
 use std::panic::Location;
 use tracing::Instrument as _;
 
@@ -120,7 +119,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> JsonRpcConnection<OB, IB,
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, NotificationHandler<N, F>>>
     where
         N: JsonRpcNotification,
-        F: AsyncFnMut(N, JsonRpcNotificationCx) -> Result<(), acp::Error>,
+        F: AsyncFnMut(N, JsonRpcConnectionCx) -> Result<(), acp::Error>,
     {
         JsonRpcConnection {
             name: self.name,
@@ -268,13 +267,13 @@ enum OutgoingMessage {
 /// (i.e., handle it). If they do not claim it, the request will be passed to the next handler.
 #[allow(async_fn_in_trait)]
 pub trait JsonRpcHandler {
-    /// Attempt to claim the incoming request (`method`/`params`).
+    /// Attempt to claim an incoming message (request or notification).
     ///
-    /// # Important
+    /// # Important: do not block
     ///
     /// The server will not process new messages until this handler returns.
     /// You should avoid blocking in this callback unless you wish to block the server (e.g., for rate limiting).
-    /// The recommended approach to manage expensive operations is to use a channel or spawn tasks.
+    /// The recommended approach to manage expensive operations is to the [`JsonRpcConnectionCx::spawn`] method available on the message context.
     ///
     /// # Parameters
     ///
@@ -283,44 +282,13 @@ pub trait JsonRpcHandler {
     ///
     /// # Returns
     ///
-    /// * `Ok(Handled::Yes)` if the request was claimed.
-    /// * `Ok(Handled::No(response))` if not.
+    /// * `Ok(Handled::Yes)` if the message was claimed. It will not be propagated further.
+    /// * `Ok(Handled::No(message))` if not; the (possibly changed) message will be passed to the remaining handlers.
     /// * `Err` if an internal error occurs (this will bring down the server).
-    #[allow(unused_variables)]
-    async fn handle_request(
+    async fn handle_message(
         &mut self,
-        cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl Serialize + Debug),
-    ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
-        Ok(Handled::No(cx))
-    }
-
-    /// Attempt to claim a notification (`method`/`params`).
-    ///
-    /// # Important
-    ///
-    /// The server will not process new messages until this handler returns.
-    /// You should avoid blocking in this callback unless you wish to block the server (e.g., for rate limiting).
-    /// The recommended approach to manage expensive operations is to use a channel or spawn tasks.
-    ///
-    /// # Parameters
-    ///
-    /// * `cx` - The JSON RPC context of the server. Can be used to send messages in response to the notification.
-    /// * `params` - The parameters of the request.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Handled::Yes)` if the request was claimed.
-    /// * `Ok(Handled::No(()))` if not.
-    /// * `Err` if an internal error occurs (this will bring down the server).
-    #[allow(unused_variables)]
-    async fn handle_notification(
-        &mut self,
-        cx: JsonRpcNotificationCx,
-        params: &(impl Serialize + Debug),
-    ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
-        Ok(Handled::No(cx))
-    }
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, acp::Error>;
 
     fn describe_chain(&self) -> impl std::fmt::Debug;
 }
@@ -366,12 +334,12 @@ impl JsonRpcConnectionCx {
     }
 
     /// Send a request/notification and forward the response appropriately.
-    pub fn send_proxied_message(&self, message: ProxiedMessage) -> Result<(), acp::Error> {
+    pub fn send_proxied_message(&self, message: MessageAndCx) -> Result<(), acp::Error> {
         match message {
-            ProxiedMessage::Request(request, request_cx) => {
+            MessageAndCx::Request(request, request_cx) => {
                 self.send_request(request).forward_to_request_cx(request_cx)
             }
-            ProxiedMessage::Notification(notification) => self.send_notification(notification),
+            MessageAndCx::Notification(notification, _) => self.send_notification(notification),
         }
     }
 
@@ -454,40 +422,6 @@ impl JsonRpcConnectionCx {
         self.message_tx
             .unbounded_send(message)
             .map_err(communication_failure)
-    }
-}
-
-/// The context to respond to an incoming request.
-/// Derefs to a [`JsonRpcCx`] which can be used to send other requests and notification.
-#[must_use]
-pub struct JsonRpcNotificationCx {
-    /// The context to use to send outgoing messages and replies.
-    cx: JsonRpcConnectionCx,
-
-    /// The method of the request.
-    method: String,
-}
-
-impl JsonRpcNotificationCx {
-    /// Create a new notification context.
-    pub fn new(cx: &JsonRpcConnectionCx, method: String) -> Self {
-        Self {
-            cx: cx.clone(),
-            method,
-        }
-    }
-
-    /// The method of the notification.
-    pub fn method(&self) -> &str {
-        &self.method
-    }
-}
-
-impl Deref for JsonRpcNotificationCx {
-    type Target = JsonRpcConnectionCx;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cx
     }
 }
 
@@ -681,12 +615,42 @@ pub trait JsonRpcRequest: JsonRpcMessage {
 
 /// An enum capturing an in-flight request or notification.
 /// In the case of a request, also includes the context used to respond to the request.
-pub enum ProxiedMessage {
+pub enum MessageAndCx {
     /// Incoming request and the context where the response should be sent.
     Request(UntypedMessage, JsonRpcRequestCx<serde_json::Value>),
 
     /// Incoming notification.
-    Notification(UntypedMessage),
+    Notification(UntypedMessage, JsonRpcConnectionCx),
+}
+
+impl MessageAndCx {
+    /// Returns the method of the message.
+    pub fn method(&self) -> &str {
+        match self {
+            MessageAndCx::Request(msg, _) => &msg.method,
+            MessageAndCx::Notification(msg, _) => &msg.method,
+        }
+    }
+
+    /// Returns the message of the message.
+    pub fn message(&self) -> &UntypedMessage {
+        match self {
+            MessageAndCx::Request(msg, _) => msg,
+            MessageAndCx::Notification(msg, _) => msg,
+        }
+    }
+
+    /// Respond to the message with an error.
+    ///
+    /// If this message is a request, this error becomes the reply to the request.
+    ///
+    /// If this message is a notification, the error is sent as a notification.
+    pub fn respond_with_error(self, error: acp::Error) -> Result<(), acp::Error> {
+        match self {
+            MessageAndCx::Request(_, cx) => cx.respond_with_error(error),
+            MessageAndCx::Notification(_, cx) => cx.send_error_notification(error),
+        }
+    }
 }
 
 /// An incoming JSON message without any typing. Can be a request or a notification.
