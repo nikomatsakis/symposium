@@ -77,13 +77,6 @@ rust-embed = "8.0"
 [dev-dependencies]
 tokio-test = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
-# Add client feature for testing
-rmcp = { version = "0.3.2", features = [
-    "server",
-    "transport-io",
-    "schemars",
-    "client",
-] }
 expect-test = "1.5.1"
 tempfile = "3.8"
 scopeguard = "1.2"

@@ -10,7 +10,7 @@ dependencies = [
  "futures",
  "fxhash",
  "jsonrpcmsg",
- "rmcp 0.3.2",
+ "rmcp",
  "scp",
  "serde",
  "serde_json",
@@ -532,7 +532,7 @@ dependencies = [
  "expect-test",
  "futures",
  "jsonrpcmsg",
- "rmcp 0.3.2",
+ "rmcp",
  "schemars",
  "scp",
  "serde",
@@ -2693,29 +2693,6 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f0d0d5493be0d181a62db489eab7838669b81885972ca00ceca893cf6ac2883"
-dependencies = [
- "base64",
- "chrono",
- "futures",
- "paste",
- "pin-project-lite",
- "process-wrap",
- "rmcp-macros 0.3.2",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.16",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rmcp"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fdad1258f7259fdc0f2dfc266939c82c3b5d1fd72bcde274d600cdc27e60243"
@@ -2725,27 +2702,16 @@ dependencies = [
  "futures",
  "paste",
  "pin-project-lite",
- "rmcp-macros 0.8.3",
+ "process-wrap",
+ "rmcp-macros",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aebc912b8fa7d54999adc4e45601d1d95fe458f97eb0a1277eddcd6382cf4b1"
-dependencies = [
- "darling 0.21.3",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn",
 ]
 
 [[package]]
@@ -3174,7 +3140,7 @@ version = "0.1.0"
 dependencies = [
  "acp-proxy",
  "agent-client-protocol",
- "rmcp 0.3.2",
+ "rmcp",
  "scp",
  "sparkle-mcp",
  "tokio",
@@ -3193,7 +3159,7 @@ dependencies = [
  "dirs",
  "feed-rs",
  "reqwest",
- "rmcp 0.8.3",
+ "rmcp",
  "schemars",
  "serde",
  "serde_json",
@@ -3278,7 +3244,7 @@ dependencies = [
  "pulldown-cmark-to-cmark",
  "regex",
  "reqwest",
- "rmcp 0.3.2",
+ "rmcp",
  "rust-embed",
  "schemars",
  "scopeguard",

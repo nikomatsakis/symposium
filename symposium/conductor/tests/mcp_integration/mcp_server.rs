@@ -3,12 +3,7 @@
 //! This module provides a simple MCP server that can be served over streams
 //! (not a separate process). It implements a basic "echo" tool for testing.
 
-use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
-    model::*,
-    tool, tool_handler, tool_router,
-};
+use rmcp::{handler::server::tool::ToolRouter, tool_router};
 use serde::{Deserialize, Serialize};
 
 /// Parameters for the echo tool
