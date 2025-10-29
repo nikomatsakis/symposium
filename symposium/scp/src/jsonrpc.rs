@@ -339,8 +339,7 @@ impl JsonRpcConnectionCx {
     /// enabling type-safe message forwarding.
     pub fn send_proxied_message<R, N>(&self, message: MessageAndCx<R, N>) -> Result<(), acp::Error>
     where
-        R: JsonRpcRequest,
-        R::Response: Send,
+        R: JsonRpcRequest<Response: Send>,
         N: JsonRpcNotification,
     {
         match message {
