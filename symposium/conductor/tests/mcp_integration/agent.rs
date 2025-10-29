@@ -1,9 +1,9 @@
 //! Agent component that verifies MCP server configuration and handles prompts
 
 use agent_client_protocol::{
-    self as acp, AgentCapabilities, ContentBlock, InitializeRequest, InitializeResponse, McpServer,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionNotification,
-    SessionUpdate, StopReason, TextContent,
+    self as acp, AgentCapabilities, ContentBlock, ContentChunk, InitializeRequest,
+    InitializeResponse, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use conductor::component::{Cleanup, ComponentProvider};
 use futures::{AsyncRead, AsyncWrite};
@@ -44,6 +44,7 @@ impl ComponentProvider for AgentComponentProvider {
                             agent_capabilities: AgentCapabilities::default(),
                             auth_methods: vec![],
                             meta: None,
+                            agent_info: None,
                         };
                         request_cx.respond(response)
                     })
@@ -135,13 +136,14 @@ impl AgentComponentProvider {
         // Send initial message
         connection_cx.send_notification(SessionNotification {
             session_id: request.session_id.clone(),
-            update: SessionUpdate::AgentMessageChunk {
+            update: SessionUpdate::AgentMessageChunk(ContentChunk {
                 content: ContentBlock::Text(TextContent {
                     annotations: None,
                     text: "Hello. I will now use the MCP tool".to_string(),
                     meta: None,
                 }),
-            },
+                meta: None,
+            }),
             meta: None,
         })?;
 
@@ -192,13 +194,14 @@ impl AgentComponentProvider {
                 // Send the tool result as a message
                 connection_cx.send_notification(SessionNotification {
                     session_id: request.session_id.clone(),
-                    update: SessionUpdate::AgentMessageChunk {
+                    update: SessionUpdate::AgentMessageChunk(ContentChunk {
                         content: ContentBlock::Text(TextContent {
                             annotations: None,
                             text: format!("MCP tool result: {:?}", tool_result),
                             meta: None,
                         }),
-                    },
+                        meta: None,
+                    }),
                     meta: None,
                 })?;
 

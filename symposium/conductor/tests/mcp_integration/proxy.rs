@@ -1,16 +1,18 @@
 //! Proxy component that provides MCP tools
 
+use acp_proxy::{
+    AcpProxyExt, JsonRpcCxExt, McpConnectRequest, McpConnectResponse, McpOverAcpNotification,
+    McpOverAcpRequest,
+};
 use agent_client_protocol::{
-    self as acp, InitializeRequest, McpServer, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse,
+    self as acp, InitializeRequest, McpServer, NewSessionRequest, PromptRequest, PromptResponse,
 };
 use conductor::component::{Cleanup, ComponentProvider};
 use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 use rmcp::ServiceExt;
 use scp::{
-    JsonRpcConnection, JsonRpcConnectionCx, JsonRpcConnectionExt, JsonRpcCxExt, JsonRpcRequestCx,
-    McpConnectRequest, McpConnectResponse, McpOverAcpNotification, McpOverAcpRequest,
-    MetaCapabilityExt, ProxiedMessage, Proxy, UntypedMessage,
+    JsonRpcConnection, JsonRpcConnectionCx, JsonRpcRequestCx, MetaCapabilityExt, ProxiedMessage,
+    Proxy, UntypedMessage,
 };
 use std::sync::Mutex;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
@@ -62,11 +64,7 @@ impl ComponentProvider for ProxyComponentProvider {
 
                     request_cx
                         .send_request_to_successor(request)
-                        .await_when_response_received(
-                            async move |response: Result<NewSessionResponse, acp::Error>| {
-                                request_cx.respond(response?)
-                            },
-                        )
+                        .forward_to_request_cx(request_cx)
                 })
                 .on_receive_request(async move |request: PromptRequest, request_cx| {
                     // Forward prompt requests to the agent

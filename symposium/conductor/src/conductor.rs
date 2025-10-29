@@ -62,6 +62,10 @@
 
 use std::{collections::HashMap, pin::Pin};
 
+use acp_proxy::{
+    McpConnectRequest, McpConnectResponse, McpDisconnectNotification, McpOverAcpNotification,
+    McpOverAcpRequest, SuccessorNotification, SuccessorRequest,
+};
 use agent_client_protocol::{
     self as acp, InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
 };
@@ -69,9 +73,8 @@ use futures::{AsyncRead, AsyncWrite, SinkExt, StreamExt, channel::mpsc};
 
 use scp::{
     JsonRpcConnection, JsonRpcConnectionCx, JsonRpcNotification, JsonRpcRequest, JsonRpcRequestCx,
-    JsonRpcResponse, McpConnectRequest, McpConnectResponse, McpDisconnectNotification,
-    McpOverAcpNotification, McpOverAcpRequest, MetaCapabilityExt, NullHandler, Proxy,
-    TypeNotification, TypeRequest, UntypedMessage,
+    JsonRpcResponse, MetaCapabilityExt, NullHandler, Proxy, TypeNotification, TypeRequest,
+    UntypedMessage,
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, info};
@@ -241,7 +244,7 @@ impl Conductor {
                 // Intercept messages sent by a proxy component (acting as ACP client) to its successor agent.
                 .on_receive_request({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |request: scp::ToSuccessorRequest<UntypedMessage>, request_cx| {
+                    async move |request: SuccessorRequest<UntypedMessage>, request_cx| {
                         conductor_tx
                             .send(ConductorMessage::ClientToAgentRequest {
                                 target_component_index: component_index + 1,
@@ -254,7 +257,7 @@ impl Conductor {
                 })
                 .on_receive_notification({
                     let mut conductor_tx = serve_args.conductor_tx.clone();
-                    async move |notification: scp::ToSuccessorNotification<UntypedMessage>, _| {
+                    async move |notification: SuccessorNotification<UntypedMessage>, _| {
                         conductor_tx
                             .send(ConductorMessage::ClientToAgentNotification {
                                 target_component_index: component_index + 1,
@@ -496,7 +499,7 @@ impl Conductor {
                 .send_request_to_predecessor_of(
                     client,
                     self.components.len() - 1,
-                    scp::McpOverAcpRequest {
+                    McpOverAcpRequest {
                         connection_id,
                         request,
                     },
@@ -510,7 +513,7 @@ impl Conductor {
             } => self.send_notification_to_predecessor_of(
                 client,
                 self.components.len() - 1,
-                scp::McpOverAcpNotification {
+                McpOverAcpNotification {
                     connection_id,
                     notification,
                 },
@@ -550,7 +553,7 @@ impl Conductor {
         } else {
             self.components[source_component_index - 1]
                 .agent_cx
-                .send_request(scp::FromSuccessorRequest { request })
+                .send_request(SuccessorRequest { request })
         }
     }
 
@@ -575,7 +578,7 @@ impl Conductor {
         } else {
             self.components[component_index - 1]
                 .agent_cx
-                .send_notification(scp::FromSuccessorNotification { notification })
+                .send_notification(SuccessorNotification { notification })
         }
     }
 

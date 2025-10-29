@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use agent_client_protocol as acp;
 use futures::{AsyncRead, AsyncWrite};
+use serde::Serialize;
 
 use crate::{
     ChainHandler, FromSuccessorNotification, FromSuccessorRequest, Handled, JsonRpcConnection,
@@ -131,7 +132,7 @@ where
     async fn handle_request(
         &mut self,
         cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
         tracing::debug!(
             request_type = std::any::type_name::<R>(),
@@ -191,7 +192,7 @@ where
     async fn handle_notification(
         &mut self,
         cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         tracing::debug!(
             request_type = std::any::type_name::<N>(),

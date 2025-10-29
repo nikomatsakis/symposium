@@ -1,12 +1,10 @@
 use std::{collections::HashMap, net::SocketAddr};
 
+use acp_proxy::McpDisconnectNotification;
 use agent_client_protocol as acp;
 use agent_client_protocol::McpServer;
 use futures::{SinkExt, StreamExt as _, channel::mpsc};
-use scp::{
-    JsonRpcConnection, JsonRpcConnectionCx, JsonRpcRequestCx, McpDisconnectNotification,
-    UntypedMessage,
-};
+use scp::{JsonRpcConnection, JsonRpcConnectionCx, JsonRpcRequestCx, UntypedMessage};
 use tokio::net::TcpStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 use tracing::info;

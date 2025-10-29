@@ -83,6 +83,7 @@ async fn test_proxy_provides_mcp_tools() -> Result<(), acp::Error> {
                 protocol_version: Default::default(),
                 client_capabilities: Default::default(),
                 meta: None,
+                client_info: None,
             }))
             .await;
 
@@ -168,6 +169,7 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
                 protocol_version: Default::default(),
                 client_capabilities: Default::default(),
                 meta: None,
+                client_info: None,
             }))
             .await?;
 
@@ -213,8 +215,8 @@ async fn test_agent_handles_prompt() -> Result<(), acp::Error> {
     // Verify the output
     expect![[r#"
         [
-            "SessionNotification { session_id: SessionId(\"test-session-123\"), update: AgentMessageChunk { content: Text(TextContent { annotations: None, text: \"Hello. I will now use the MCP tool\", meta: None }) }, meta: None }",
-            "SessionNotification { session_id: SessionId(\"test-session-123\"), update: AgentMessageChunk { content: Text(TextContent { annotations: None, text: \"MCP tool result: CallToolResult { content: [Annotated { raw: Text(RawTextContent { text: \\\"Echo: Hello from the agent!\\\" }), annotations: None }], is_error: Some(false) }\", meta: None }) }, meta: None }",
+            "SessionNotification { session_id: SessionId(\"test-session-123\"), update: AgentMessageChunk(ContentChunk { content: Text(TextContent { annotations: None, text: \"Hello. I will now use the MCP tool\", meta: None }), meta: None }), meta: None }",
+            "SessionNotification { session_id: SessionId(\"test-session-123\"), update: AgentMessageChunk(ContentChunk { content: Text(TextContent { annotations: None, text: \"MCP tool result: CallToolResult { content: [Annotated { raw: Text(RawTextContent { text: \\\"Echo: Hello from the agent!\\\" }), annotations: None }], is_error: Some(false) }\", meta: None }), meta: None }), meta: None }",
             "PromptResponse { stop_reason: EndTurn, meta: None }",
         ]
     "#]]

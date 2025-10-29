@@ -5,13 +5,17 @@ members = [
     "symposium/scp",
     "setup",
     "md-rfd-preprocessor",
-    "ci", "symposium/conductor", "symposium/sparkle-acp-proxy",
+    "ci",
+    "symposium/conductor",
+    "symposium/sparkle-acp-proxy",
+    "symposium/acp-proxy",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }
+agent-client-protocol = "0.7"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

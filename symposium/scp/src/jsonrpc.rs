@@ -290,7 +290,7 @@ pub trait JsonRpcHandler {
     async fn handle_request(
         &mut self,
         cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + Debug),
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
         Ok(Handled::No(cx))
     }
@@ -317,7 +317,7 @@ pub trait JsonRpcHandler {
     async fn handle_notification(
         &mut self,
         cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + Debug),
     ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
         Ok(Handled::No(cx))
     }
@@ -620,9 +620,9 @@ impl<T: JsonRpcResponsePayload> JsonRpcRequestCx<T> {
         self.respond_with_result(Ok(response))
     }
 
-    /// Respond to the JSON-RPC request with an internal error.
-    pub fn respond_with_internal_error(self) -> Result<(), acp::Error> {
-        self.respond_with_error(acp::Error::internal_error())
+    /// Respond to the JSON-RPC request with an internal error containing a message.
+    pub fn respond_with_internal_error(self, message: impl ToString) -> Result<(), acp::Error> {
+        self.respond_with_error(crate::util::internal_error(message))
     }
 
     /// Respond to the JSON-RPC request with an error.

@@ -1,6 +1,7 @@
 use crate::jsonrpc::{Handled, JsonRpcHandler};
 use crate::{JsonRpcNotification, JsonRpcNotificationCx, JsonRpcRequest};
 use agent_client_protocol as acp;
+use serde::Serialize;
 use std::marker::PhantomData;
 use std::ops::AsyncFnMut;
 
@@ -46,7 +47,7 @@ where
     async fn handle_request(
         &mut self,
         cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error> {
         tracing::debug!(
             request_type = std::any::type_name::<R>(),
@@ -106,7 +107,7 @@ where
     async fn handle_notification(
         &mut self,
         cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
         tracing::debug!(
             type_name = std::any::type_name::<R>(),
@@ -170,7 +171,7 @@ where
     async fn handle_request(
         &mut self,
         cx: JsonRpcRequestCx<serde_json::Value>,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcRequestCx<serde_json::Value>>, acp::Error> {
         match self.handler1.handle_request(cx, params).await? {
             Handled::Yes => Ok(Handled::Yes),
@@ -181,7 +182,7 @@ where
     async fn handle_notification(
         &mut self,
         cx: JsonRpcNotificationCx,
-        params: &Option<jsonrpcmsg::Params>,
+        params: &(impl Serialize + std::fmt::Debug),
     ) -> Result<Handled<JsonRpcNotificationCx>, acp::Error> {
         match self.handler1.handle_notification(cx, params).await? {
             Handled::Yes => Ok(Handled::Yes),

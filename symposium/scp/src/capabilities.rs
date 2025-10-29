@@ -160,6 +160,7 @@ mod tests {
             protocol_version: agent_client_protocol::VERSION,
             client_capabilities: agent_client_protocol::ClientCapabilities::default(),
             meta: None,
+            client_info: None,
         };
 
         let request = request.add_meta_capability(Proxy);
@@ -185,6 +186,7 @@ mod tests {
             protocol_version: agent_client_protocol::VERSION,
             client_capabilities,
             meta: None,
+            client_info: None,
         };
 
         let request = request.remove_meta_capability(Proxy);
@@ -205,6 +207,7 @@ mod tests {
             protocol_version: agent_client_protocol::VERSION,
             client_capabilities,
             meta: None,
+            client_info: None,
         };
 
         assert!(request.has_meta_capability(Proxy));
@@ -218,6 +221,7 @@ mod tests {
             agent_capabilities: agent_client_protocol::AgentCapabilities::default(),
             auth_methods: vec![],
             meta: None,
+            agent_info: None,
         };
 
         let response = response.add_meta_capability(McpAcpTransport);
