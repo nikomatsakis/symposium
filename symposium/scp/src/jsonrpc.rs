@@ -335,11 +335,12 @@ impl JsonRpcConnectionCx {
 
     /// Send a request/notification and forward the response appropriately.
     ///
-    /// Note: This works specifically with `MessageAndCx` that uses `JsonRpcRequestCx<serde_json::Value>`.
-    /// The request type R must have `Response = serde_json::Value`.
+    /// The request context's response type matches the request's response type,
+    /// enabling type-safe message forwarding.
     pub fn send_proxied_message<R, N>(&self, message: MessageAndCx<R, N>) -> Result<(), acp::Error>
     where
-        R: JsonRpcRequest<Response = serde_json::Value>,
+        R: JsonRpcRequest,
+        R::Response: Send,
         N: JsonRpcNotification,
     {
         match message {
@@ -625,16 +626,17 @@ pub trait JsonRpcRequest: JsonRpcMessage {
 ///
 /// Type parameters allow specifying the concrete request and notification types.
 /// By default, both are `UntypedMessage` for dynamic dispatch.
+/// The request context's response type matches the request's response type.
 #[derive(Debug)]
-pub enum MessageAndCx<R: JsonRpcMessage = UntypedMessage, N: JsonRpcMessage = UntypedMessage> {
+pub enum MessageAndCx<R: JsonRpcRequest = UntypedMessage, N: JsonRpcMessage = UntypedMessage> {
     /// Incoming request and the context where the response should be sent.
-    Request(R, JsonRpcRequestCx<serde_json::Value>),
+    Request(R, JsonRpcRequestCx<R::Response>),
 
     /// Incoming notification.
     Notification(N, JsonRpcConnectionCx),
 }
 
-impl<R: JsonRpcMessage, N: JsonRpcMessage> MessageAndCx<R, N> {
+impl<R: JsonRpcRequest, N: JsonRpcMessage> MessageAndCx<R, N> {
     /// Respond to the message with an error.
     ///
     /// If this message is a request, this error becomes the reply to the request.
