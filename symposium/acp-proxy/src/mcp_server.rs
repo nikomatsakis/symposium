@@ -321,7 +321,7 @@ impl McpServiceRegistry {
             agent_client_protocol::Error,
         >,
         notification_cx: JsonRpcConnectionCx,
-    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
+    ) -> Result<Handled<JsonRpcConnectionCx>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
         let SuccessorNotification { notification } = match result {
             Ok(request) => request,
@@ -337,7 +337,10 @@ impl McpServiceRegistry {
         };
 
         mcp_server_tx
-            .send(MessageAndCx::Notification(notification.notification))
+            .send(MessageAndCx::Notification(
+                notification.notification,
+                notification_cx.clone(),
+            ))
             .await
             .map_err(acp::Error::into_internal_error)?;
 
@@ -350,8 +353,8 @@ impl McpServiceRegistry {
             SuccessorNotification<McpDisconnectNotification>,
             agent_client_protocol::Error,
         >,
-        notification_cx: JsonRpcNotificationCx,
-    ) -> Result<Handled<JsonRpcNotificationCx>, agent_client_protocol::Error> {
+        notification_cx: JsonRpcConnectionCx,
+    ) -> Result<Handled<JsonRpcConnectionCx>, agent_client_protocol::Error> {
         // Check if we parsed this message successfully.
         let SuccessorNotification { notification } = match result {
             Ok(request) => request,
@@ -407,69 +410,74 @@ impl JsonRpcHandler for McpServiceRegistry {
         "McpServiceRegistry"
     }
 
-    async fn handle_request(
+    async fn handle_message(
         &mut self,
-        mut cx: scp::JsonRpcRequestCx<serde_json::Value>,
-        params: &(impl serde::Serialize + std::fmt::Debug),
-    ) -> Result<scp::Handled<scp::JsonRpcRequestCx<serde_json::Value>>, agent_client_protocol::Error>
-    {
-        if let Some(result) =
-            <SuccessorRequest<McpConnectRequest>>::parse_request(cx.method(), params)
-        {
-            cx = match self.handle_connect_request(result, cx).await? {
-                Handled::Yes => return Ok(Handled::Yes),
-                Handled::No(cx) => cx,
-            };
+        message: scp::MessageAndCx,
+    ) -> Result<scp::Handled<scp::MessageAndCx>, agent_client_protocol::Error> {
+        match message {
+            scp::MessageAndCx::Request(msg, mut cx) => {
+                let params = msg.params();
+
+                if let Some(result) =
+                    <SuccessorRequest<McpConnectRequest>>::parse_request(cx.method(), params)
+                {
+                    cx = match self.handle_connect_request(result, cx).await? {
+                        Handled::Yes => return Ok(Handled::Yes),
+                        Handled::No(cx) => cx,
+                    };
+                }
+
+                if let Some(result) =
+                    <SuccessorRequest<McpOverAcpRequest<UntypedMessage>>>::parse_request(
+                        cx.method(),
+                        params,
+                    )
+                {
+                    cx = match self.handle_mcp_over_acp_request(result, cx).await? {
+                        Handled::Yes => return Ok(Handled::Yes),
+                        Handled::No(cx) => cx,
+                    };
+                }
+
+                if let Some(result) = <NewSessionRequest>::parse_request(cx.method(), params) {
+                    cx = match self.handle_new_session_request(result, cx).await? {
+                        Handled::Yes => return Ok(Handled::Yes),
+                        Handled::No(cx) => cx,
+                    };
+                }
+
+                Ok(Handled::No(scp::MessageAndCx::Request(msg, cx)))
+            }
+            scp::MessageAndCx::Notification(msg, mut cx) => {
+                let params = msg.params();
+
+                if let Some(result) =
+                    <SuccessorNotification<McpOverAcpNotification<UntypedMessage>>>::parse_notification(
+                        msg.method(),
+                        params,
+                    )
+                {
+                    cx = match self.handle_mcp_over_acp_notification(result, cx).await? {
+                        Handled::Yes => return Ok(Handled::Yes),
+                        Handled::No(cx) => cx,
+                    };
+                }
+
+                if let Some(result) =
+                    <SuccessorNotification<McpDisconnectNotification>>::parse_notification(
+                        msg.method(),
+                        params,
+                    )
+                {
+                    cx = match self.handle_mcp_disconnect_notification(result, cx).await? {
+                        Handled::Yes => return Ok(Handled::Yes),
+                        Handled::No(cx) => cx,
+                    };
+                }
+
+                Ok(scp::Handled::No(scp::MessageAndCx::Notification(msg, cx)))
+            }
         }
-
-        if let Some(result) = <SuccessorRequest<McpOverAcpRequest<UntypedMessage>>>::parse_request(
-            cx.method(),
-            params,
-        ) {
-            cx = match self.handle_mcp_over_acp_request(result, cx).await? {
-                Handled::Yes => return Ok(Handled::Yes),
-                Handled::No(cx) => cx,
-            };
-        }
-
-        if let Some(result) = <NewSessionRequest>::parse_request(cx.method(), params) {
-            cx = match self.handle_new_session_request(result, cx).await? {
-                Handled::Yes => return Ok(Handled::Yes),
-                Handled::No(cx) => cx,
-            };
-        }
-
-        Ok(Handled::No(cx))
-    }
-
-    async fn handle_notification(
-        &mut self,
-        mut cx: scp::JsonRpcNotificationCx,
-        params: &(impl serde::Serialize + std::fmt::Debug),
-    ) -> Result<scp::Handled<scp::JsonRpcNotificationCx>, agent_client_protocol::Error> {
-        if let Some(result) =
-            <SuccessorNotification<McpOverAcpNotification<UntypedMessage>>>::parse_notification(
-                cx.method(),
-                params,
-            )
-        {
-            cx = match self.handle_mcp_over_acp_notification(result, cx).await? {
-                Handled::Yes => return Ok(Handled::Yes),
-                Handled::No(cx) => cx,
-            };
-        }
-
-        if let Some(result) = <SuccessorNotification<McpDisconnectNotification>>::parse_notification(
-            cx.method(),
-            params,
-        ) {
-            cx = match self.handle_mcp_disconnect_notification(result, cx).await? {
-                Handled::Yes => return Ok(Handled::Yes),
-                Handled::No(cx) => cx,
-            };
-        }
-
-        Ok(scp::Handled::No(cx))
     }
 }
 
