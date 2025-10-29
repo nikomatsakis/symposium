@@ -43,6 +43,31 @@ impl McpServiceRegistry {
         Self::default()
     }
 
+    /// Add the MCP server to the registry and return `self`. Useful for chaining.
+    /// Equivalent to [`Self::add_rmcp_server`].
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The name of the server.
+    /// - `make_service`: A function that creates the service (e.g., `YourService::new`).
+    pub fn with_rmcp_server<S>(
+        self,
+        name: impl ToString,
+        make_service: impl Fn() -> S + 'static + Send + Sync,
+    ) -> Result<Self, acp::Error>
+    where
+        S: rmcp::Service<rmcp::RoleServer>,
+    {
+        self.add_rmcp_server(name, make_service)?;
+        Ok(self)
+    }
+
+    /// Add an MCP server implemented using the rmcp crate.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The name of the server.
+    /// - `make_service`: A function that creates the service (e.g., `YourService::new`).
     pub fn add_rmcp_server<S>(
         &self,
         name: impl ToString,
@@ -51,6 +76,48 @@ impl McpServiceRegistry {
     where
         S: rmcp::Service<rmcp::RoleServer>,
     {
+        struct SpawnRmcpService<F> {
+            make_service: F,
+        }
+
+        impl<F, S> DynSpawnMcpServer for SpawnRmcpService<F>
+        where
+            F: Fn() -> S + Send + Sync + 'static,
+            S: rmcp::Service<rmcp::RoleServer>,
+        {
+            fn spawn(
+                &self,
+                outgoing_bytes: Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
+                incoming_bytes: Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+            ) -> BoxFuture<'static, Result<(), acp::Error>> {
+                let server = (self.make_service)();
+                async move {
+                    let running_server = server
+                        .serve((incoming_bytes, outgoing_bytes))
+                        .await
+                        .map_err(acp::Error::into_internal_error)?;
+
+                    // Keep the server alive by waiting for it to finish
+                    running_server
+                        .waiting()
+                        .await
+                        .map(|_quit_reason| ())
+                        .map_err(acp::Error::into_internal_error)
+                }
+                .boxed()
+            }
+        }
+
+        let name = name.to_string();
+        self.add_mcp_service(name, Arc::new(SpawnRmcpService { make_service }))
+    }
+
+    /// Internal helper for adding services, independent of how they are implemented
+    fn add_mcp_service(
+        &self,
+        name: String,
+        spawn: Arc<dyn DynSpawnMcpServer>,
+    ) -> Result<(), acp::Error> {
         let name = name.to_string();
         if let Some(_) = self.get_registered_server_by_name(&name) {
             return Err(scp::util::internal_error(format!(
@@ -63,7 +130,7 @@ impl McpServiceRegistry {
         let service = Arc::new(RegisteredMcpServer {
             name,
             url: format!("acp:{uuid}"),
-            spawn: Arc::new(SpawnRmcpService { make_service }),
+            spawn,
         });
         self.insert_registered_server(service);
         Ok(())
@@ -439,54 +506,8 @@ trait DynSpawnMcpServer: 'static + Send + Sync {
     ) -> BoxFuture<'static, Result<(), acp::Error>>;
 }
 
-impl<S> DynSpawnMcpServer for S
-where
-    S: SpawnMcpServer,
-{
-    fn spawn(
-        &self,
-        outgoing_bytes: Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
-        incoming_bytes: Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-    ) -> BoxFuture<'static, Result<(), agent_client_protocol::Error>> {
-        S::spawn(self, outgoing_bytes, incoming_bytes).boxed()
-    }
-}
-
-trait SpawnMcpServer: 'static + Send + Sync {
-    fn spawn(
-        &self,
-        outgoing_bytes: Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
-        incoming_bytes: Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-    ) -> impl Future<Output = Result<(), acp::Error>> + Send + 'static;
-}
-
-struct SpawnRmcpService<F> {
-    make_service: F,
-}
-
-impl<F, S> SpawnMcpServer for SpawnRmcpService<F>
-where
-    F: Fn() -> S + Send + Sync + 'static,
-    S: rmcp::Service<rmcp::RoleServer>,
-{
-    fn spawn(
-        &self,
-        outgoing_bytes: Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
-        incoming_bytes: Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-    ) -> impl Future<Output = Result<(), acp::Error>> + Send + 'static {
-        let server = (self.make_service)();
-        async move {
-            let running_server = server
-                .serve((incoming_bytes, outgoing_bytes))
-                .await
-                .map_err(acp::Error::into_internal_error)?;
-
-            // Keep the server alive by waiting for it to finish
-            running_server
-                .waiting()
-                .await
-                .map(|_quit_reason| ())
-                .map_err(acp::Error::into_internal_error)
-        }
+impl AsRef<McpServiceRegistry> for McpServiceRegistry {
+    fn as_ref(&self) -> &McpServiceRegistry {
+        self
     }
 }

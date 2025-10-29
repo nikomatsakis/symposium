@@ -194,7 +194,7 @@ pub trait AcpProxyExt<OB: AsyncWrite, IB: AsyncRead, H: JsonRpcHandler> {
     /// (unless you intercept them earlier).
     fn provide_mcp(
         self,
-        registry: &McpServiceRegistry,
+        registry: impl AsRef<McpServiceRegistry>,
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, McpServiceRegistry>>;
 }
 
@@ -232,9 +232,9 @@ where
 
     fn provide_mcp(
         self,
-        registry: &McpServiceRegistry,
+        registry: impl AsRef<McpServiceRegistry>,
     ) -> JsonRpcConnection<OB, IB, ChainHandler<H, McpServiceRegistry>> {
-        self.chain_handler(registry.clone())
+        self.chain_handler(registry.as_ref().clone())
     }
 }
 
