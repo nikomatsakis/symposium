@@ -12,8 +12,8 @@ resolver = "2"
 [workspace.dependencies]
 sacp = { version = "1.0.0-alpha.4" }
 sacp-proxy = { version = "1.0.0-alpha.4" }
-sacp-tokio = { version = "1.0.0-alpha.4" }
-sacp-conductor = { version = "1.0.0-alpha.4" }
+sacp-tokio = { version = "1.0.0-alpha.5" }
+sacp-conductor = { version = "1.0.0-alpha.5" }
 jsonrpcmsg = "0.1.2"
 
 # Core async runtime

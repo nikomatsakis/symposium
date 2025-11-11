@@ -36,7 +36,7 @@ pub async fn run() -> Result<()> {
         .name("rust-crate-sources-proxy")
         .provide_mcp(mcp_registry)
         .proxy()
-        .connect_to(sacp_tokio::Stdio::default())?
+        .connect_to(sacp_tokio::Stdio)?
         .serve()
         .await?;
 
