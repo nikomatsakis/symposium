@@ -11,39 +11,40 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
+/// A JSON-RPC message representation for logging
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcMessage {
+    Request {
+        id: serde_json::Value,
+        #[serde(flatten)]
+        message: sacp::UntypedMessage,
+    },
+    Notification {
+        #[serde(flatten)]
+        message: sacp::UntypedMessage,
+    },
+    Reply {
+        id: serde_json::Value,
+        result: serde_json::Value,
+    },
+}
+
 /// A log entry representing a message passing through the proxy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
-    /// Timestamp of the log entry
     pub timestamp: String,
-    /// Direction: "upstream" (from successor) or "downstream" (to successor)
     pub direction: String,
-    /// Message type: "request" or "notification"
-    pub message_type: String,
-    /// The method name
-    pub method: String,
-    /// The message parameters/payload
-    pub params: serde_json::Value,
-    /// For requests, the response (if this is a response log entry)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response: Option<serde_json::Value>,
+    pub message: JsonRpcMessage,
 }
 
 impl LogEntry {
-    fn new(direction: &str, message_type: &str, method: &str, params: serde_json::Value) -> Self {
+    fn new(direction: &str, message: JsonRpcMessage) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
             direction: direction.to_string(),
-            message_type: message_type.to_string(),
-            method: method.to_string(),
-            params,
-            response: None,
+            message,
         }
-    }
-
-    fn with_response(mut self, response: serde_json::Value) -> Self {
-        self.response = Some(response);
-        self
     }
 }
 
@@ -115,26 +116,30 @@ impl JrMessageHandler for TeeHandler {
         match message {
             MessageAndCx::Request(request, request_cx) => {
                 // Log the outgoing request
-                let params =
-                    serde_json::to_value(&request.params).unwrap_or(serde_json::Value::Null);
-
-                let entry = LogEntry::new("downstream", "request", &request.method, params);
+                // Note: We don't have access to the actual request ID from JrRequestCx,
+                // so we use null as a placeholder
+                let json_msg = JsonRpcMessage::Request {
+                    id: serde_json::Value::Null,
+                    message: request.clone(),
+                };
+                let entry = LogEntry::new("downstream", json_msg);
                 self.log_entry(entry);
 
                 // Wrap the request context to log the response when it comes back
                 let log_tx = self.log_tx.clone();
-                let method = request.method.clone();
 
                 let wrapped_cx = request_cx.wrap_params(move |_method, result| {
                     // Log the response
-                    let response_value = match &result {
+                    let result_value = match &result {
                         Ok(value) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
                         Err(e) => serde_json::json!({ "error": e.to_string() }),
                     };
 
-                    let entry =
-                        LogEntry::new("upstream", "response", &method, serde_json::Value::Null)
-                            .with_response(response_value);
+                    let json_msg = JsonRpcMessage::Reply {
+                        id: serde_json::Value::Null,
+                        result: result_value,
+                    };
+                    let entry = LogEntry::new("upstream", json_msg);
 
                     let _ = log_tx.send(entry);
 
@@ -146,11 +151,10 @@ impl JrMessageHandler for TeeHandler {
             }
             MessageAndCx::Notification(notification, cx) => {
                 // Log the notification
-                let params =
-                    serde_json::to_value(&notification.params).unwrap_or(serde_json::Value::Null);
-
-                let entry =
-                    LogEntry::new("downstream", "notification", &notification.method, params);
+                let json_msg = JsonRpcMessage::Notification {
+                    message: notification.clone(),
+                };
+                let entry = LogEntry::new("downstream", json_msg);
                 self.log_entry(entry);
 
                 // Return unhandled so it continues down the chain
