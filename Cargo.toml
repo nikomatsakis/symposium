@@ -40,6 +40,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # MCP SDK
 rmcp = { version = "0.8", features = ["server", "transport-io", "schemars"] }
 
+# Sparkle integration
+sparkle = { package = "sparkle-mcp", git = "https://github.com/nikomatsakis/sparkle.git", branch = "main" }
+
 # CLI parsing
 clap = { version = "4.0", features = ["derive"] }
 

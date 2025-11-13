@@ -8,11 +8,11 @@ use clap::Parser;
 #[command(about = "Symposium ACP meta proxy - orchestrates dynamic component chains")]
 struct Cli {
     #[command(flatten)]
-    logging: symposium_acp::LoggingArgs,
+    args: symposium_acp::SymposiumArgs,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    symposium_acp::run(&cli.logging).await
+    symposium_acp::run(&cli.args).await
 }

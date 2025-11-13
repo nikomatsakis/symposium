@@ -755,6 +755,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "feed-rs"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4c0591d23efd0d595099af69a31863ac1823046b1b021e3b06ba3aae7e00991"
+dependencies = [
+ "chrono",
+ "mediatype",
+ "quick-xml",
+ "regex",
+ "serde",
+ "serde_json",
+ "siphasher",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1600,10 +1617,19 @@ dependencies = [
  "shlex",
  "tempfile",
  "tokio",
- "toml",
+ "toml 0.5.11",
  "topological-sort",
  "tower-http",
  "walkdir",
+]
+
+[[package]]
+name = "mediatype"
+version = "0.19.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33746aadcb41349ec291e7f2f0a3aa6834d1d7c58066fb4b01f68efc4c4b7631"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2084,6 +2110,16 @@ name = "pulldown-cmark-escape"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd348ff538bc9caeda7ee8cad2d1d48236a1f443c1fa3913c6a02fe0043b1dd3"
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "encoding_rs",
+ "memchr",
+]
 
 [[package]]
 name = "quote"
@@ -2618,6 +2654,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2729,6 +2774,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sparkle-mcp"
+version = "0.1.0"
+source = "git+https://github.com/nikomatsakis/sparkle.git?branch=main#6f19b4d075d8d77ec713ace337b2125d13349a3b"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dirs",
+ "feed-rs",
+ "futures",
+ "reqwest",
+ "rmcp",
+ "sacp",
+ "sacp-proxy",
+ "sacp-tokio",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2786,6 +2858,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sparkle-mcp",
  "symposium-crate-sources-proxy",
  "tokio",
  "tokio-util",
@@ -3102,6 +3175,47 @@ checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "topological-sort"
@@ -3841,6 +3955,15 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "0.7.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winsafe"

@@ -17,7 +17,11 @@ use anyhow::Result;
 use sacp_conductor::conductor::Conductor;
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-pub struct LoggingArgs {
+pub struct SymposiumArgs {
+    /// Enable Sparkle integration
+    #[arg(long, default_value = "true")]
+    pub sparkle: bool,
+
     /// Enable logging of input messages (from editor/client)
     #[arg(long)]
     log_input: bool,
@@ -31,7 +35,7 @@ pub struct LoggingArgs {
     log_path: PathBuf,
 }
 
-impl LoggingArgs {
+impl SymposiumArgs {
     /// Path where input messages are logged; creates log directory if necessary
     fn log_input_path(&self) -> Result<Option<PathBuf>> {
         if self.log_input {
@@ -64,7 +68,7 @@ impl LoggingArgs {
 /// - Listens for the Initialize request
 /// - Uses conductor with lazy initialization to build the proxy chain
 /// - Forwards all messages bidirectionally
-pub async fn run(logging: &LoggingArgs) -> Result<()> {
+pub async fn run(args: &SymposiumArgs) -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -76,16 +80,16 @@ pub async fn run(logging: &LoggingArgs) -> Result<()> {
     tracing::info!("Starting Symposium ACP meta proxy");
 
     // Create conductor with lazy initialization
-    symposium_conductor(logging)?.run(sacp_tokio::Stdio).await?;
+    symposium_conductor(args)?.run(sacp_tokio::Stdio).await?;
 
     Ok(())
 }
 
 /// Create and return the "symposium conductor", which assembles the symposium libraries together.
-pub fn symposium_conductor(logging: &LoggingArgs) -> Result<Conductor> {
+pub fn symposium_conductor(args: &SymposiumArgs) -> Result<Conductor> {
     // Create conductor with lazy initialization using ComponentList trait
     // The closure receives the Initialize request and returns components to spawn
-    let logging = logging.clone();
+    let args = args.clone();
     let conductor = Conductor::new(
         "symposium".to_string(),
         |init_req| async move {
@@ -95,7 +99,7 @@ pub fn symposium_conductor(logging: &LoggingArgs) -> Result<Conductor> {
 
             let mut components = vec![];
 
-            if let Some(input_path) = logging.log_input_path()? {
+            if let Some(input_path) = args.log_input_path()? {
                 components.push(sacp::DynComponent::new(sacp_tee::Tee::new(input_path)));
             }
 
@@ -103,12 +107,16 @@ pub fn symposium_conductor(logging: &LoggingArgs) -> Result<Conductor> {
                 symposium_crate_sources_proxy::CrateSourcesProxy {},
             ));
 
+            if args.sparkle {
+                components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
+            }
+
             // TODO: Add more components based on capabilities
             // - Check for IDE operation capabilities
             // - Spawn ide-ops adapter if missing
             // - Spawn ide-ops component to provide MCP tools
 
-            if let Some(output_path) = logging.log_output_path()? {
+            if let Some(output_path) = args.log_output_path()? {
                 components.push(sacp::DynComponent::new(sacp_tee::Tee::new(output_path)));
             }
 
