@@ -5,14 +5,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "symposium.chatView";
   private static readonly STATE_KEY = "symposium.chatState";
   private _view?: vscode.WebviewView;
-  private _actor: HomerActor;
+  private _sessions: Map<string, HomerActor> = new Map();
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _context: vscode.ExtensionContext,
-  ) {
-    this._actor = new HomerActor();
-  }
+  ) {}
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -31,9 +29,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
+        case "new-tab":
+          // Create a new session for this tab
+          console.log(`Creating new session for tab ${message.tabId}`);
+          this._sessions.set(message.tabId, new HomerActor());
+          break;
+
         case "prompt":
+          // Get the session for this tab
+          const session = this._sessions.get(message.tabId);
+          if (!session) {
+            console.error(`No session found for tab ${message.tabId}`);
+            return;
+          }
+
           // Stream the response progressively
-          for await (const chunk of this._actor.processPrompt(message.prompt)) {
+          for await (const chunk of session.processPrompt(message.prompt)) {
             webviewView.webview.postMessage({
               type: "response-chunk",
               tabId: message.tabId,

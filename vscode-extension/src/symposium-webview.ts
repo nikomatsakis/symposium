@@ -31,6 +31,14 @@ function initializeMynahUI(savedTabs?: any) {
         tabTitle: "Symposium",
       },
     },
+    onTabAdd: (tabId: string) => {
+      // Notify extension that a new tab was created
+      console.log("New tab created:", tabId);
+      vscode.postMessage({
+        type: "new-tab",
+        tabId: tabId,
+      });
+    },
     onChatPrompt: (tabId: string, prompt: any) => {
       // Generate UUID for this message
       const messageId = uuidv4();
