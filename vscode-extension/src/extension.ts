@@ -1,11 +1,20 @@
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chatViewProvider";
+import { v4 as uuidv4 } from "uuid";
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("Symposium extension is now active");
 
+  // Generate session ID for this VSCode session
+  const sessionId = uuidv4();
+  console.log(`Generated session ID: ${sessionId}`);
+
   // Register the webview view provider
-  const provider = new ChatViewProvider(context.extensionUri, context);
+  const provider = new ChatViewProvider(
+    context.extensionUri,
+    context,
+    sessionId,
+  );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewType,

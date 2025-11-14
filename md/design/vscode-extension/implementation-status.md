@@ -33,6 +33,8 @@ This chapter tracks what's been implemented, what's in progress, and what's plan
 ## State Management
 
 - [x] Webview state persistence within session
+- [x] Chat history persistence across hide/show cycles
+- [ ] Draft text persistence (FIXME: partially typed prompts are lost on hide/show)
 - [ ] Session restoration after VSCode restart
 - [ ] Workspace-specific state persistence
 - [ ] Tab history and conversation export
