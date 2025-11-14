@@ -50,13 +50,44 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       },
     });
 
-    // Initialize the ACP connection
-    this.#agent.initialize("elizacp").catch((err) => {
-      console.error("Failed to initialize ACP agent:", err);
-      vscode.window.showErrorMessage(
-        `Failed to initialize agent: ${err.message}`,
-      );
+    // Get agent configuration from settings
+    const config = vscode.workspace.getConfiguration("symposium");
+    const agents = config.get<
+      Record<
+        string,
+        { command: string; args?: string[]; env?: Record<string, string> }
+      >
+    >("agents", {
+      ElizACP: { command: "elizacp", args: [], env: {} },
     });
+    const currentAgentName = config.get<string>("currentAgent", "ElizACP");
+
+    // Find the current agent configuration
+    const currentAgent = agents[currentAgentName];
+    if (!currentAgent) {
+      vscode.window.showErrorMessage(
+        `Agent "${currentAgentName}" not found in configured agents`,
+      );
+      return;
+    }
+
+    console.log(
+      `Initializing agent: ${currentAgentName} (${currentAgent.command})`,
+    );
+
+    // Initialize the ACP connection
+    this.#agent
+      .initialize(
+        currentAgent.command,
+        currentAgent.args || [],
+        currentAgent.env,
+      )
+      .catch((err) => {
+        console.error("Failed to initialize ACP agent:", err);
+        vscode.window.showErrorMessage(
+          `Failed to initialize agent: ${err.message}`,
+        );
+      });
   }
 
   public resolveWebviewView(

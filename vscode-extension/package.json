@@ -20,6 +20,61 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Symposium",
+      "properties": {
+        "symposium.agents": {
+          "type": "object",
+          "patternProperties": {
+            ".*": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "Command to launch the agent"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [],
+                  "description": "Arguments to pass to the agent command"
+                },
+                "env": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "default": {},
+                  "description": "Environment variables for the agent process"
+                },
+                "default_mode": {
+                  "type": "string",
+                  "description": "Default permission mode (for future use)"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            }
+          },
+          "default": {
+            "ElizACP": {
+              "command": "elizacp",
+              "args": [],
+              "env": {}
+            }
+          },
+          "description": "Configured ACP agents (keyed by agent name)"
+        },
+        "symposium.currentAgent": {
+          "type": "string",
+          "default": "ElizACP",
+          "description": "Name of the currently selected agent"
+        }
+      }
+    },
     "commands": [
       {
         "command": "symposium.openChat",

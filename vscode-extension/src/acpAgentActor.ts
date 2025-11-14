@@ -114,12 +114,17 @@ export class AcpAgentActor {
   async initialize(
     agentCommand: string = "elizacp",
     agentArgs: string[] = [],
+    agentEnv?: Record<string, string>,
   ): Promise<void> {
     console.log(`Spawning ACP agent: ${agentCommand} ${agentArgs.join(" ")}`);
+
+    // Merge environment variables
+    const env = agentEnv ? { ...process.env, ...agentEnv } : process.env;
 
     // Spawn the agent process
     this.agentProcess = spawn(agentCommand, agentArgs, {
       stdio: ["pipe", "pipe", "inherit"],
+      env: env as NodeJS.ProcessEnv,
     });
 
     // Create streams for communication
