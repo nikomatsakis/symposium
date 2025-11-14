@@ -127,7 +127,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.#sendToWebview({
               type: "set-tab-title",
               tabId: message.tabId,
-              title: config.describe(),
+              title: config.agentName,
             });
 
             console.log(
