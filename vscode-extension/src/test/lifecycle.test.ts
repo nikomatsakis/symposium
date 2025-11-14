@@ -1,10 +1,18 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
+import { logger } from "../extension";
+import { LogEvent } from "../logger";
 
 suite("Webview Lifecycle Tests", () => {
   test("Chat view should persist tabs across hide/show", async function () {
     // This test may need more time for webview operations and agent spawning
     this.timeout(20000);
+
+    // Capture log events
+    const logEvents: LogEvent[] = [];
+    const logDisposable = logger.onLog((event) => {
+      logEvents.push(event);
+    });
 
     // Activate the extension
     const extension = vscode.extensions.getExtension("symposium.symposium");
@@ -55,5 +63,43 @@ suite("Webview Lifecycle Tests", () => {
       tabs.includes("test-tab-1"),
       "Tab should persist after view hide/show",
     );
+
+    // Clean up
+    logDisposable.dispose();
+
+    // Assert on log events to verify lifecycle
+    const webviewCreated = logEvents.filter(
+      (e) =>
+        e.category === "webview" &&
+        e.message === "Webview resolved and created",
+    );
+    const webviewHidden = logEvents.filter(
+      (e) => e.category === "webview" && e.message === "Webview became hidden",
+    );
+    const webviewVisible = logEvents.filter(
+      (e) => e.category === "webview" && e.message === "Webview became visible",
+    );
+    const agentSpawned = logEvents.filter(
+      (e) => e.category === "agent" && e.message === "Spawning new agent actor",
+    );
+    const sessionCreated = logEvents.filter(
+      (e) => e.category === "agent" && e.message === "Agent session created",
+    );
+
+    assert.ok(webviewCreated.length >= 1, "Webview should be created");
+    assert.ok(webviewHidden.length >= 1, "Webview should be hidden");
+    assert.ok(
+      webviewVisible.length >= 1,
+      "Webview should become visible again",
+    );
+    assert.ok(agentSpawned.length === 1, "Should spawn exactly one agent");
+    assert.ok(sessionCreated.length === 1, "Should create exactly one session");
+
+    console.log(`\nLog event summary:`);
+    console.log(`- Webview created: ${webviewCreated.length}`);
+    console.log(`- Webview hidden: ${webviewHidden.length}`);
+    console.log(`- Webview visible: ${webviewVisible.length}`);
+    console.log(`- Agent spawned: ${agentSpawned.length}`);
+    console.log(`- Session created: ${sessionCreated.length}`);
   });
 });

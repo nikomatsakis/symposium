@@ -32,6 +32,12 @@ const currentExtensionActivationId = window.SYMPOSIUM_EXTENSION_ACTIVATION_ID;
 console.log(`Extension activation ID: ${currentExtensionActivationId}`);
 
 // Load saved state and check if we need to clear it
+vscode.postMessage({
+  type: "log",
+  message: "Getting saved state",
+  data: { extensionActivationId: currentExtensionActivationId },
+});
+
 const savedState = vscode.getState() as WebviewState | undefined;
 let lastSeenIndex: { [tabId: string]: number } = {};
 let mynahTabs: any = undefined;
@@ -42,9 +48,19 @@ if (
   savedState.extensionActivationId !== currentExtensionActivationId
 ) {
   if (savedState) {
-    console.log(
-      `Extension activation ID mismatch or missing (saved: ${savedState.extensionActivationId}, current: ${currentExtensionActivationId}), clearing state`,
-    );
+    vscode.postMessage({
+      type: "log",
+      message: "Extension activation ID mismatch - clearing state",
+      data: {
+        savedId: savedState.extensionActivationId,
+        currentId: currentExtensionActivationId,
+      },
+    });
+  } else {
+    vscode.postMessage({
+      type: "log",
+      message: "No saved state found - starting fresh",
+    });
   }
   // Clear persisted state
   vscode.setState(undefined);
@@ -55,9 +71,12 @@ if (
   // Keep existing state - extension activation ID matches
   lastSeenIndex = savedState.lastSeenIndex ?? {};
   mynahTabs = savedState.mynahTabs;
-  if (mynahTabs) {
-    console.log("Restoring mynah tabs from saved state");
-  }
+  const tabCount = mynahTabs ? Object.keys(mynahTabs).length : 0;
+  vscode.postMessage({
+    type: "log",
+    message: "Restoring state from previous session",
+    data: { tabCount, hasLastSeenIndex: Object.keys(lastSeenIndex).length },
+  });
 }
 
 const config: any = {
@@ -146,10 +165,16 @@ function saveState() {
     mynahTabs: currentTabs,
   };
   vscode.setState(state);
-  console.log(
-    "Saved state with extension activation ID:",
-    currentExtensionActivationId,
-  );
+
+  vscode.postMessage({
+    type: "log",
+    message: "Saved state",
+    data: {
+      extensionActivationId: currentExtensionActivationId,
+      tabCount: currentTabs ? Object.keys(currentTabs).length : 0,
+      lastSeenIndexCount: Object.keys(lastSeenIndex).length,
+    },
+  });
 }
 
 // Handle messages from the extension

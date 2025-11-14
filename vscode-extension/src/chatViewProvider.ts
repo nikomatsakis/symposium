@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { AcpAgentActor } from "./acpAgentActor";
 import { AgentConfiguration } from "./agentConfiguration";
+import { logger } from "./extension";
 
 interface IndexedMessage {
   index: number;
@@ -40,8 +41,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Return existing actor if we have one for this config
     const existing = this.#configToActor.get(key);
     if (existing) {
+      logger.info("agent", "Reusing existing agent actor", {
+        configKey: key,
+        agentName: config.agentName,
+      });
       return existing;
     }
+
+    logger.info("agent", "Spawning new agent actor", {
+      configKey: key,
+      agentName: config.agentName,
+      components: config.components,
+    });
 
     // Create a new actor with callbacks
     const actor = new AcpAgentActor({
@@ -89,13 +100,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.#getHtmlForWebview(webviewView.webview);
 
+    logger.info("webview", "Webview resolved and created");
+
     // Handle webview visibility changes
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
-        console.log("Webview became visible");
+        logger.info("webview", "Webview became visible");
         this.#onWebviewVisible();
       } else {
-        console.log("Webview became hidden");
+        logger.info("webview", "Webview became hidden");
         this.#onWebviewHidden();
       }
     });
@@ -183,6 +196,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // Webview is initialized and ready to receive messages
           console.log("Webview ready - replaying queued messages");
           this.#replayQueuedMessages();
+          break;
+
+        case "log":
+          // Webview sending a log message
+          logger.info("webview", message.message, message.data);
           break;
       }
     });
@@ -351,9 +369,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.#tabToAgentSession.set(message.tabId, agentSessionId);
           this.#agentSessionToTab.set(agentSessionId, message.tabId);
 
-          console.log(
-            `Created agent session ${agentSessionId} for tab ${message.tabId} using ${config.describe()}`,
-          );
+          logger.info("agent", "Agent session created", {
+            tabId: message.tabId,
+            agentSessionId,
+            agentName: config.agentName,
+            components: config.components,
+          });
         } catch (err) {
           console.error("Failed to create agent session:", err);
         }

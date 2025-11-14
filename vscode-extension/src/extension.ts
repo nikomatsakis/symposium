@@ -1,7 +1,11 @@
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chatViewProvider";
 import { SettingsViewProvider } from "./settingsViewProvider";
+import { Logger } from "./logger";
 import { v4 as uuidv4 } from "uuid";
+
+// Global logger instance
+export const logger = new Logger("Symposium");
 
 // Export for testing
 let chatProviderForTesting: ChatViewProvider | undefined;
