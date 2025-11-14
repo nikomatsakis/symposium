@@ -4,7 +4,7 @@ import { MynahUI, ChatItem, ChatItemType } from "@aws/mynah-ui";
 // Browser API declarations for webview context
 declare const acquireVsCodeApi: any;
 declare const window: any & {
-  SYMPOSIUM_SESSION_ID: string;
+  SYMPOSIUM_EXTENSION_ACTIVATION_ID: string;
 };
 
 // Import uuid - note: webpack will bundle this for browser
@@ -14,16 +14,22 @@ const vscode = acquireVsCodeApi();
 
 let mynahUI: MynahUI;
 
+// Track accumulated agent response per tab
+const tabAgentResponses: { [tabId: string]: string } = {};
+
+// Track current message ID per tab (for MynahUI)
+const tabCurrentMessageId: { [tabId: string]: string } = {};
+
 // Track which messages we've seen per tab and mynah UI state
 interface WebviewState {
-  sessionId: string;
+  extensionActivationId: string;
   lastSeenIndex: { [tabId: string]: number };
   mynahTabs?: any; // Mynah UI tabs state
 }
 
-// Get session ID from window (embedded by extension)
-const currentSessionId = window.SYMPOSIUM_SESSION_ID;
-console.log(`Session ID: ${currentSessionId}`);
+// Get extension activation ID from window (embedded by extension)
+const currentExtensionActivationId = window.SYMPOSIUM_EXTENSION_ACTIVATION_ID;
+console.log(`Extension activation ID: ${currentExtensionActivationId}`);
 
 // Load saved state and check if we need to clear it
 const savedState = vscode.getState() as WebviewState | undefined;
@@ -32,12 +38,12 @@ let mynahTabs: any = undefined;
 
 if (
   !savedState ||
-  !savedState.sessionId ||
-  savedState.sessionId !== currentSessionId
+  !savedState.extensionActivationId ||
+  savedState.extensionActivationId !== currentExtensionActivationId
 ) {
   if (savedState) {
     console.log(
-      `Session ID mismatch or missing (saved: ${savedState.sessionId}, current: ${currentSessionId}), clearing state`,
+      `Extension activation ID mismatch or missing (saved: ${savedState.extensionActivationId}, current: ${currentExtensionActivationId}), clearing state`,
     );
   }
   // Clear persisted state
@@ -46,7 +52,7 @@ if (
   lastSeenIndex = {};
   mynahTabs = undefined;
 } else {
-  // Keep existing state - session ID matches
+  // Keep existing state - extension activation ID matches
   lastSeenIndex = savedState.lastSeenIndex ?? {};
   mynahTabs = savedState.mynahTabs;
   if (mynahTabs) {
@@ -84,14 +90,10 @@ const config: any = {
     saveState();
   },
   onChatPrompt: (tabId: string, prompt: any) => {
-    // Generate UUID for this message
-    const messageId = uuidv4();
-
-    // Send prompt to extension with tabId and messageId
+    // Send prompt to extension with tabId
     vscode.postMessage({
       type: "prompt",
       tabId: tabId,
-      messageId: messageId,
       prompt: prompt.prompt,
     });
 
@@ -100,6 +102,13 @@ const config: any = {
       type: ChatItemType.PROMPT,
       body: prompt.prompt,
     });
+
+    // Initialize empty response for this tab
+    tabAgentResponses[tabId] = "";
+
+    // Generate message ID for MynahUI tracking
+    const messageId = uuidv4();
+    tabCurrentMessageId[tabId] = messageId;
 
     // Add placeholder for the streaming answer
     mynahUI.addChatItem(tabId, {
@@ -131,12 +140,15 @@ function saveState() {
   const currentTabs = mynahUI?.getAllTabs();
 
   const state: WebviewState = {
-    sessionId: currentSessionId,
+    extensionActivationId: currentExtensionActivationId,
     lastSeenIndex,
     mynahTabs: currentTabs,
   };
   vscode.setState(state);
-  console.log("Saved state with session ID:", currentSessionId);
+  console.log(
+    "Saved state with extension activation ID:",
+    currentExtensionActivationId,
+  );
 }
 
 // Handle messages from the extension
@@ -153,14 +165,25 @@ window.addEventListener("message", (event: MessageEvent) => {
   }
 
   // Process the message
-  if (message.type === "response-chunk") {
-    // Update the streaming answer with the new chunk
-    mynahUI.updateChatAnswerWithMessageId(message.tabId, message.messageId, {
-      body: message.chunk,
+  if (message.type === "agent-text") {
+    // Append text to accumulated response
+    tabAgentResponses[message.tabId] =
+      (tabAgentResponses[message.tabId] || "") + message.text;
+
+    // Update the chat UI with accumulated text
+    mynahUI.updateLastChatAnswer(message.tabId, {
+      body: tabAgentResponses[message.tabId],
     });
-  } else if (message.type === "response-complete") {
-    // Mark the stream as complete
-    mynahUI.endMessageStream(message.tabId, message.messageId);
+  } else if (message.type === "agent-complete") {
+    // Mark the stream as complete using the message ID
+    const messageId = tabCurrentMessageId[message.tabId];
+    if (messageId) {
+      mynahUI.endMessageStream(message.tabId, messageId);
+    }
+
+    // Clear accumulated response and message ID
+    delete tabAgentResponses[message.tabId];
+    delete tabCurrentMessageId[message.tabId];
   }
 
   // Update lastSeenIndex and save state

@@ -1,33 +1,62 @@
 import * as vscode from "vscode";
-import { HomerActor } from "./homerActor";
+import { AcpAgentActor } from "./acpAgentActor";
 
 interface IndexedMessage {
   index: number;
   type: string;
   tabId: string;
-  messageId: string;
-  chunk?: string;
+  text?: string;
 }
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "symposium.chatView";
   #view?: vscode.WebviewView;
-  #agent: HomerActor;
-  #tabToSession: Map<string, string> = new Map(); // tabId → sessionId
+  #agent: AcpAgentActor;
+  #tabToAgentSession: Map<string, string> = new Map(); // tabId → agentSessionId
+  #agentSessionToTab: Map<string, string> = new Map(); // agentSessionId → tabId
   #messageQueues: Map<string, IndexedMessage[]> = new Map(); // tabId → queue of unacked messages
   #nextMessageIndex: Map<string, number> = new Map(); // tabId → next index to assign
   #extensionUri: vscode.Uri;
-  #sessionId: string;
+  #extensionActivationId: string;
 
   constructor(
     extensionUri: vscode.Uri,
     context: vscode.ExtensionContext,
-    sessionId: string,
+    extensionActivationId: string,
   ) {
     this.#extensionUri = extensionUri;
-    this.#sessionId = sessionId;
-    // Create singleton agent
-    this.#agent = new HomerActor();
+    this.#extensionActivationId = extensionActivationId;
+
+    // Create agent with callbacks
+    this.#agent = new AcpAgentActor({
+      onAgentText: (agentSessionId, text) => {
+        const tabId = this.#agentSessionToTab.get(agentSessionId);
+        if (tabId) {
+          this.#sendToWebview({
+            type: "agent-text",
+            tabId,
+            text,
+          });
+        }
+      },
+      onAgentComplete: (agentSessionId) => {
+        const tabId = this.#agentSessionToTab.get(agentSessionId);
+        if (tabId) {
+          this.#sendToWebview({
+            type: "agent-complete",
+            tabId,
+          });
+        }
+      },
+    });
+
+    // Initialize the ACP connection
+    this.#agent.initialize("elizacp").catch((err) => {
+      console.error("Failed to initialize ACP agent:", err);
+      vscode.window.showErrorMessage(
+        `Failed to initialize agent: ${err.message}`,
+      );
+    });
   }
 
   public resolveWebviewView(
@@ -59,15 +88,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case "new-tab":
-          // Create a new session for this tab
-          const sessionId = this.#agent.createSession();
-          this.#tabToSession.set(message.tabId, sessionId);
+          try {
+            // Create a new agent session for this tab
+            const agentSessionId = await this.#agent.createSession();
+            this.#tabToAgentSession.set(message.tabId, agentSessionId);
+            this.#agentSessionToTab.set(agentSessionId, message.tabId);
 
-          // Initialize message tracking for this tab
-          this.#messageQueues.set(message.tabId, []);
-          this.#nextMessageIndex.set(message.tabId, 0);
+            // Initialize message tracking for this tab
+            this.#messageQueues.set(message.tabId, []);
+            this.#nextMessageIndex.set(message.tabId, 0);
 
-          console.log(`Created session ${sessionId} for tab ${message.tabId}`);
+            console.log(
+              `Created agent session ${agentSessionId} for tab ${message.tabId}`,
+            );
+          } catch (err) {
+            console.error("Failed to create agent session:", err);
+          }
           break;
 
         case "message-ack":
@@ -76,42 +112,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "prompt":
-          console.log(
-            `Received prompt for tab ${message.tabId}, message ${message.messageId}`,
-          );
+          console.log(`Received prompt for tab ${message.tabId}`);
 
-          // Get the session for this tab
-          const promptSessionId = this.#tabToSession.get(message.tabId);
-          if (!promptSessionId) {
-            console.error(`No session found for tab ${message.tabId}`);
+          // Get the agent session for this tab
+          const agentSessionId = this.#tabToAgentSession.get(message.tabId);
+          if (!agentSessionId) {
+            console.error(`No agent session found for tab ${message.tabId}`);
             return;
           }
 
-          console.log(`Processing prompt with session ${promptSessionId}`);
+          console.log(`Sending prompt to agent session ${agentSessionId}`);
 
-          // Stream the response progressively
-          for await (const chunk of this.#agent.processPrompt(
-            promptSessionId,
-            message.prompt,
-          )) {
-            console.log(`Sending chunk for message ${message.messageId}`);
-            this.#sendToWebview({
-              type: "response-chunk",
-              tabId: message.tabId,
-              messageId: message.messageId,
-              chunk: chunk,
-            });
+          // Send prompt to agent (responses come via callbacks)
+          try {
+            await this.#agent.sendPrompt(agentSessionId, message.prompt);
+          } catch (err) {
+            console.error("Failed to send prompt:", err);
+            // TODO: Send error message to webview
           }
-
-          // Send final message to indicate streaming is complete
-          console.log(
-            `Sending response-complete for message ${message.messageId}`,
-          );
-          this.#sendToWebview({
-            type: "response-complete",
-            tabId: message.tabId,
-            messageId: message.messageId,
-          });
           break;
 
         case "webview-ready":
@@ -222,11 +240,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
     <div id="mynah-root"></div>
     <script>
-        // Embed session ID so it's available immediately
-        window.SYMPOSIUM_SESSION_ID = "${this.#sessionId}";
+        // Embed extension activation ID so it's available immediately
+        window.SYMPOSIUM_EXTENSION_ACTIVATION_ID = "${this.#extensionActivationId}";
     </script>
     <script src="${scriptUri}"></script>
 </body>
 </html>`;
+  }
+
+  dispose() {
+    this.#agent.dispose();
   }
 }
