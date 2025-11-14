@@ -22,6 +22,7 @@
 - [VSCode Extension](./design/vscode-extension/architecture.md)
     - [Architecture](./design/vscode-extension/architecture.md)
     - [Message Protocol](./design/vscode-extension/message-protocol.md)
+    - [Tool Authorization](./design/vscode-extension/tool-authorization.md)
     - [State Persistence](./design/vscode-extension/state-persistence.md)
     - [Webview Lifecycle](./design/vscode-extension/webview-lifecycle.md)
     - [Testing](./design/vscode-extension/testing.md)

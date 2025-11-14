@@ -25,10 +25,11 @@ This chapter tracks what's been implemented, what's in progress, and what's plan
 
 ## ACP Integration
 
-- [ ] Replace HomerActor with real ACP agent
-- [ ] ACP message protocol implementation
-- [ ] ACP capability negotiation
-- [ ] Tool calls from agent to extension
+- [x] Replace HomerActor with real ACP agent (AcpAgentActor implemented)
+- [x] ACP message protocol implementation
+- [x] ACP capability negotiation
+- [x] Tool permission requests with user approval UI
+- [x] Per-agent bypass permissions settings
 
 ## State Management
 
