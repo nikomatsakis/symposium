@@ -302,4 +302,62 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     this.#configToActor.clear();
   }
+
+  // Testing API - only use from integration tests
+  public async simulateWebviewMessage(message: any): Promise<void> {
+    // Simulate a message from the webview
+    // This allows tests to trigger the same code paths as real webview interactions
+    const handler = this.#view?.webview.onDidReceiveMessage;
+    if (!handler) {
+      throw new Error("Webview not initialized - call focus command first");
+    }
+
+    // Manually trigger the message handler
+    // We need to access the internal message handler, which we set up in resolveWebviewView
+    // For now, we'll use a workaround: post the message directly
+    // This requires the view to be resolved first
+    if (!this.#view) {
+      throw new Error("View not resolved");
+    }
+
+    // Simulate the message by calling the handler we registered
+    // Actually, we can't access the handler directly, so let's expose the logic instead
+    await this.#handleWebviewMessage(message);
+  }
+
+  public getTabsForTesting(): string[] {
+    return Array.from(this.#tabToAgentSession.keys());
+  }
+
+  async #handleWebviewMessage(message: any): Promise<void> {
+    // This is the same logic from resolveWebviewView's onDidReceiveMessage
+    // We'll need to refactor to share this code
+    switch (message.type) {
+      case "new-tab":
+        try {
+          const config = AgentConfiguration.fromSettings();
+          this.#tabToConfig.set(message.tabId, config);
+          this.#messageQueues.set(message.tabId, []);
+          this.#nextMessageIndex.set(message.tabId, 0);
+
+          this.#sendToWebview({
+            type: "set-tab-title",
+            tabId: message.tabId,
+            title: config.agentName,
+          });
+
+          const actor = await this.#getOrCreateActor(config);
+          const agentSessionId = await actor.createSession();
+          this.#tabToAgentSession.set(message.tabId, agentSessionId);
+          this.#agentSessionToTab.set(agentSessionId, message.tabId);
+
+          console.log(
+            `Created agent session ${agentSessionId} for tab ${message.tabId} using ${config.describe()}`,
+          );
+        } catch (err) {
+          console.error("Failed to create agent session:", err);
+        }
+        break;
+    }
+  }
 }

@@ -3,6 +3,13 @@ import { ChatViewProvider } from "./chatViewProvider";
 import { SettingsViewProvider } from "./settingsViewProvider";
 import { v4 as uuidv4 } from "uuid";
 
+// Export for testing
+let chatProviderForTesting: ChatViewProvider | undefined;
+
+export function getChatProviderForTesting(): ChatViewProvider | undefined {
+  return chatProviderForTesting;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log("Symposium extension is now active");
 
@@ -16,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
     context,
     extensionActivationId,
   );
+  chatProviderForTesting = chatProvider; // Store for testing
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewType,
@@ -49,6 +57,22 @@ export function activate(context: vscode.ExtensionContext) {
         language: "json",
       });
       await vscode.window.showTextDocument(doc);
+    }),
+  );
+
+  // Testing commands - only for integration tests
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "symposium.test.simulateNewTab",
+      async (tabId: string) => {
+        await chatProvider.simulateWebviewMessage({ type: "new-tab", tabId });
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("symposium.test.getTabs", () => {
+      return chatProvider.getTabsForTesting();
     }),
   );
 }
