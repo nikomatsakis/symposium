@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
+import * as acp from "@agentclientprotocol/sdk";
 import { AcpAgentActor } from "./acpAgentActor";
 import { AgentConfiguration } from "./agentConfiguration";
 import { logger } from "./extension";
+import { v4 as uuidv4 } from "uuid";
 
 interface IndexedMessage {
   index: number;
@@ -21,6 +23,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   #nextMessageIndex: Map<string, number> = new Map(); // tabId → next index to assign
   #extensionUri: vscode.Uri;
   #extensionActivationId: string;
+  #pendingApprovals: Map<
+    string,
+    {
+      resolve: (response: any) => void;
+      reject: (error: Error) => void;
+      agentName: string;
+    }
+  > = new Map(); // approvalId → promise resolvers
 
   constructor(
     extensionUri: vscode.Uri,
@@ -79,6 +89,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             tabId,
           });
         }
+      },
+      onRequestPermission: async (
+        params: acp.RequestPermissionRequest,
+      ): Promise<acp.RequestPermissionResponse> => {
+        // Check if this agent has bypass permissions enabled
+        const vsConfig = vscode.workspace.getConfiguration("symposium");
+        const agents = vsConfig.get<Record<string, any>>("agents", {});
+        const agentConfig = agents[config.agentName];
+        const bypassPermissions = agentConfig?.bypassPermissions || false;
+
+        if (bypassPermissions) {
+          // Auto-approve - find the "allow_once" option
+          const allowOption = params.options.find(
+            (opt) => opt.kind === "allow_once",
+          );
+          if (allowOption) {
+            logger.info(
+              "approval",
+              "Auto-approved (bypass permissions enabled)",
+              {
+                agent: config.agentName,
+                tool: params.toolCall.title,
+              },
+            );
+            return {
+              outcome: { outcome: "selected", optionId: allowOption.optionId },
+            };
+          }
+        }
+
+        // Need user approval - send request to webview and wait for response
+        return this.#requestUserApproval(params, config.agentName);
       },
     });
 
@@ -207,6 +249,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // Webview sending a log message
           logger.info("webview", message.message, message.data);
           break;
+
+        case "approval-response":
+          // User responded to approval request
+          const pending = this.#pendingApprovals.get(message.approvalId);
+          if (pending) {
+            this.#pendingApprovals.delete(message.approvalId);
+
+            // Handle "bypass all" option - update settings for this agent
+            if (message.bypassAll) {
+              const vsConfig = vscode.workspace.getConfiguration("symposium");
+              const agents = vsConfig.get<Record<string, any>>("agents", {});
+
+              // Update the agent's bypassPermissions setting
+              if (agents[pending.agentName]) {
+                agents[pending.agentName].bypassPermissions = true;
+                await vsConfig.update(
+                  "agents",
+                  agents,
+                  vscode.ConfigurationTarget.Global,
+                );
+                logger.info("approval", "Bypass permissions enabled by user", {
+                  agent: pending.agentName,
+                });
+              }
+            }
+
+            // Resolve the promise with the response
+            pending.resolve(message.response);
+          } else {
+            logger.error("approval", "No pending approval found", {
+              approvalId: message.approvalId,
+            });
+          }
+          break;
       }
     });
   }
@@ -224,6 +300,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     console.log(
       `Acked message ${ackedIndex} for tab ${tabId}, ${remaining.length} messages remain in queue`,
     );
+  }
+
+  async #requestUserApproval(
+    params: acp.RequestPermissionRequest,
+    agentName: string,
+  ): Promise<acp.RequestPermissionResponse> {
+    // Generate unique approval ID
+    const approvalId = uuidv4();
+
+    // Find the tab for this session (we don't have sessionId in params, so we'll send to all tabs)
+    // For now, we'll use the first tab - TODO: improve this to target the right tab
+    const tabIds = Array.from(this.#tabToAgentSession.keys());
+    if (tabIds.length === 0) {
+      logger.error("approval", "No tabs available for approval request");
+      // Fallback: deny
+      const rejectOption = params.options.find(
+        (opt) => opt.kind === "reject_once",
+      );
+      if (rejectOption) {
+        return {
+          outcome: { outcome: "selected", optionId: rejectOption.optionId },
+        };
+      }
+      return { outcome: { outcome: "cancelled" } };
+    }
+
+    const tabId = tabIds[0]; // Use first tab for now
+
+    logger.info("approval", "Requesting user approval", {
+      approvalId,
+      tabId,
+      agent: agentName,
+      toolCall: params.toolCall,
+    });
+
+    // Create a promise that will be resolved when user responds
+    const approvalPromise = new Promise<acp.RequestPermissionResponse>(
+      (resolve, reject) => {
+        this.#pendingApprovals.set(approvalId, { resolve, reject, agentName });
+      },
+    );
+
+    // Send approval request to webview
+    this.#sendToWebview({
+      type: "approval-request",
+      tabId,
+      approvalId,
+      agentName,
+      toolCall: params.toolCall,
+      options: params.options,
+    });
+
+    // Wait for user response
+    return approvalPromise;
   }
 
   #replayQueuedMessages() {
@@ -440,6 +570,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await tabActor.sendPrompt(agentSessionId, message.prompt);
         } catch (err) {
           logger.error("agent", "Failed to send prompt", { error: err });
+        }
+        break;
+
+      case "approval-response":
+        // User responded to approval request
+        const pending = this.#pendingApprovals.get(message.approvalId);
+        if (pending) {
+          this.#pendingApprovals.delete(message.approvalId);
+
+          // Handle "bypass all" option - update settings for this agent
+          if (message.bypassAll) {
+            const vsConfig = vscode.workspace.getConfiguration("symposium");
+            const agents = vsConfig.get<Record<string, any>>("agents", {});
+
+            // Update the agent's bypassPermissions setting
+            if (agents[pending.agentName]) {
+              agents[pending.agentName].bypassPermissions = true;
+              await vsConfig.update(
+                "agents",
+                agents,
+                vscode.ConfigurationTarget.Global,
+              );
+              logger.info("approval", "Bypass permissions enabled by user", {
+                agent: pending.agentName,
+              });
+            }
+          }
+
+          // Resolve the promise with the response
+          pending.resolve(message.response);
+        } else {
+          logger.error("approval", "No pending approval found", {
+            approvalId: message.approvalId,
+          });
         }
         break;
     }

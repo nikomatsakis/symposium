@@ -49,9 +49,10 @@
                   "default": {},
                   "description": "Environment variables for the agent process"
                 },
-                "default_mode": {
-                  "type": "string",
-                  "description": "Default permission mode (for future use)"
+                "bypassPermissions": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Automatically approve all tool execution requests for this agent"
                 }
               },
               "required": [

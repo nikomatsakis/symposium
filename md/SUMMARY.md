@@ -36,6 +36,7 @@
     you might want.
 -->
 
+- [MynahUI GUI Capabilities](./references/mynah-ui-guide.md)
 - [VSCode Webview Lifecycle](./references/vscode-webview-lifecycle.md)
 - [Language Server Protocol Overview](./research/lsp-overview/README.md)
     - [Base Protocol](./research/lsp-overview/base-protocol.md)
