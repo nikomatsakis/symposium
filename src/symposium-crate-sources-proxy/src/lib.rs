@@ -7,9 +7,9 @@ mod crate_research_mcp;
 mod crate_sources_mcp;
 mod eg;
 mod research_agent;
+mod state;
 
 use anyhow::Result;
-use fxhash::FxHashSet;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
@@ -20,7 +20,8 @@ use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 use sacp_rmcp::McpServiceRegistryRmcpExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use state::ResearchState;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Run the proxy as a standalone binary connected to stdio
@@ -63,9 +64,7 @@ impl Component for CrateSourcesProxy {
             .with_rmcp_server("rust-crate-sources", RustCrateSourcesService::new)?;
 
         // Create shared state for tracking active research sessions
-        let state = Arc::new(ResearchState {
-            active_research_session_ids: Mutex::new(FxHashSet::default()),
-        });
+        let state = Arc::new(ResearchState::new());
 
         sacp::JrHandlerChain::new()
             .name("rust-crate-sources-proxy")
@@ -90,22 +89,6 @@ impl Component for CrateSourcesProxy {
             .serve()
             .await
     }
-}
-
-/// Shared state tracking active research sessions.
-///
-/// This state is shared between:
-/// - The main event loop (in Component::serve) which uses it to identify research sessions
-///   when handling RequestPermissionRequest, tool calls, etc.
-/// - The handle_research_request functions which register/unregister session_ids
-///
-/// Note: The oneshot::Sender for sending responses back is NOT stored here.
-/// It's owned by the handle_research_request function and used directly when
-/// return_response_to_user is called.
-pub struct ResearchState {
-    /// Set of session IDs that correspond to active research requests.
-    /// The main loop checks this to decide how to handle session-specific messages.
-    pub active_research_session_ids: Mutex<FxHashSet<String>>,
 }
 
 /// Parameters for the get_rust_crate_source tool

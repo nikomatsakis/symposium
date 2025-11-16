@@ -7,7 +7,7 @@
 //! 3. Waits for the sub-agent to complete its investigation
 //! 4. Returns the findings to the original caller
 
-use crate::{crate_research_mcp, ResearchState};
+use crate::{crate_research_mcp, state::ResearchState};
 use sacp::{
     schema::{NewSessionRequest, NewSessionResponse},
     JrConnectionCx,
@@ -50,10 +50,7 @@ pub async fn run(
     tracing::info!("Research session created: {}", session_id);
 
     // Register this session_id in shared state so the main loop knows it's a research session
-    {
-        let mut active_sessions = state.active_research_session_ids.lock().unwrap();
-        active_sessions.insert(session_id.to_string());
-    }
+    state.register_session(session_id.to_string());
 
     // TODO: Implementation steps:
     // 1. Send NewSessionRequest with sub-agent MCP server
