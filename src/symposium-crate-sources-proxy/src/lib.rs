@@ -23,6 +23,7 @@ use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 use sacp_rmcp::McpServiceRegistryRmcpExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use tokio::sync::mpsc;
 
 /// Run the proxy as a standalone binary connected to stdio
@@ -42,7 +43,16 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Handle a single research request by spawning a sub-agent session
+/// Handle a single research request by spawning a sub-agent session.
+///
+/// This function:
+/// 1. Sends NewSessionRequest with the sub-agent MCP server (containing get_rust_crate_source + return_response_to_user)
+/// 2. Receives session_id from the agent
+/// 3. Registers the session_id in shared ResearchState so the main loop knows this is a research session
+/// 4. Sends PromptRequest with the user's research prompt
+/// 5. Waits for the sub-agent to call return_response_to_user
+/// 6. Sends the response back through request.response_tx (owned by this function)
+/// 7. Cleans up the session_id from ResearchState
 async fn handle_research_request(
     cx: JrConnectionCx,
     request: user_facing::ResearchRequest,
@@ -102,6 +112,9 @@ impl Component for CrateSourcesProxy {
                 user_facing::CrateQueryService::new(research_tx_clone.clone())
             })?;
 
+        // MCP registry for research sub-agent sessions.
+        // This registry is cloned and attached to each NewSessionRequest created by handle_research_request.
+        // It provides the tools the sub-agent needs: get_rust_crate_source and return_response_to_user.
         let research_agent_mcp_registry = McpServiceRegistry::default()
             .with_rmcp_server("rust-crate-sources", RustCrateSourcesService::new)?;
 
@@ -128,8 +141,20 @@ impl Component for CrateSourcesProxy {
     }
 }
 
+/// Shared state tracking active research sessions.
+///
+/// This state is shared between:
+/// - The main event loop (in Component::serve) which uses it to identify research sessions
+///   when handling RequestPermissionRequest, tool calls, etc.
+/// - The handle_research_request functions which register/unregister session_ids
+///
+/// Note: The oneshot::Sender for sending responses back is NOT stored here.
+/// It's owned by the handle_research_request function and used directly when
+/// return_response_to_user is called.
 struct ResearchState {
-    active_research_session_ids: FxHashSet<String>,
+    /// Set of session IDs that correspond to active research requests.
+    /// The main loop checks this to decide how to handle session-specific messages.
+    active_research_session_ids: Mutex<FxHashSet<String>>,
 }
 
 /// Parameters for the get_rust_crate_source tool
