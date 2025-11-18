@@ -12,7 +12,6 @@ mod state;
 use anyhow::Result;
 use sacp::component::Component;
 use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
-use sacp_rmcp::McpServiceRegistryRmcpExt;
 use state::ResearchState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -44,11 +43,10 @@ impl Component for CrateSourcesProxy {
             mpsc::channel::<crate_research_mcp::ResearchRequest>(32);
 
         // Create MCP service registry with the user-facing service
-        let research_tx_clone = research_tx.clone();
-        let mcp_registry = McpServiceRegistry::default()
-            .with_rmcp_server("rust-crate-query", move || {
-                crate_research_mcp::CrateQueryService::new(research_tx_clone.clone())
-            })?;
+        let mcp_registry = McpServiceRegistry::default().with_mcp_server(
+            "rust-crate-query",
+            crate_research_mcp::build_server(research_tx.clone()),
+        )?;
 
         // Create shared state for tracking active research sessions
         let state = Arc::new(ResearchState::new());

@@ -7,11 +7,6 @@
 //! This service is attached to NewSessionRequest when spawning research sessions.
 
 use crate::eg;
-use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -33,117 +28,90 @@ pub struct ReturnResponseParams {
     pub response: serde_json::Value,
 }
 
-/// MCP service that provides tools for sub-agent research sessions.
+/// Output from get_rust_crate_source tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct GetRustCrateSourceOutput {
+    crate_name: String,
+    version: String,
+    checkout_path: String,
+    message: String,
+}
+
+/// Output from return_response_to_user tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct ReturnResponseOutput {
+    message: String,
+}
+
+/// Build the MCP server for sub-agent research sessions.
 ///
 /// Each instance is created for a specific research session and holds a channel
 /// to send responses back to the waiting research agent.
-#[derive(Clone)]
-pub struct SubAgentService {
-    tool_router: ToolRouter<SubAgentService>,
-    /// Channel for sending research responses back to the research agent.
-    /// Responses are accumulated as a vector in case the agent sends multiple.
-    response_tx: mpsc::Sender<serde_json::Value>,
-}
+pub fn build_server(response_tx: mpsc::Sender<serde_json::Value>) -> sacp_proxy::McpServer {
+    use sacp_proxy::McpServer;
 
-impl SubAgentService {
-    /// Create a new SubAgentService instance with a response channel
-    pub fn new(response_tx: mpsc::Sender<serde_json::Value>) -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            response_tx,
-        }
-    }
-}
+    McpServer::new()
+        .instructions("Provides tools for researching Rust crate sources: get_rust_crate_source to locate crates, return_response_to_user to deliver findings")
+        .tool_fn(
+            "get_rust_crate_source",
+            "Locate and extract Rust crate sources from crates.io. Returns the local path where the crate sources are available for reading.",
+            async move |input: GetRustCrateSourceParams, _context| {
+                let GetRustCrateSourceParams { crate_name, version } = input;
 
-#[tool_router]
-impl SubAgentService {
-    /// Get Rust crate source location
-    #[tool(
-        description = "Locate and extract Rust crate sources from crates.io. Returns the local path where the crate sources are available for reading."
-    )]
-    async fn get_rust_crate_source(
-        &self,
-        Parameters(GetRustCrateSourceParams {
-            crate_name,
-            version,
-        }): Parameters<GetRustCrateSourceParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::debug!(
-            "Getting Rust crate source for '{}' version: {:?}",
-            crate_name,
-            version,
-        );
+                tracing::debug!(
+                    "Getting Rust crate source for '{}' version: {:?}",
+                    crate_name,
+                    version,
+                );
 
-        let mut search = eg::Eg::rust_crate(&crate_name);
+                let mut search = eg::Eg::rust_crate(&crate_name);
 
-        // Use version resolver for semver range support and project detection
-        if let Some(version_spec) = version {
-            search = search.version(&version_spec);
-        }
+                // Use version resolver for semver range support and project detection
+                if let Some(version_spec) = version {
+                    search = search.version(&version_spec);
+                }
 
-        let search_result = search.search().await.map_err(|e| {
-            let error_msg = format!("Search failed: {}", e);
-            McpError::internal_error(error_msg, None)
-        })?;
+                let search_result = search.search().await.map_err(|e| {
+                    anyhow::anyhow!("Search failed: {}", e)
+                })?;
 
-        // Format the result
-        let result = serde_json::json!({
-            "crate_name": crate_name,
-            "version": search_result.version,
-            "checkout_path": search_result.checkout_path.display().to_string(),
-            "message": format!(
-                "Crate '{}' version {} extracted to {}",
-                crate_name,
-                search_result.version,
-                search_result.checkout_path.display()
-            ),
-        });
+                let message = format!(
+                    "Crate '{}' version {} extracted to {}",
+                    crate_name,
+                    search_result.version,
+                    search_result.checkout_path.display()
+                );
 
-        let content_text = serde_json::to_string_pretty(&result)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(content_text)]))
-    }
-
-    /// Return research findings to the waiting user
-    #[tool(
-        description = "Return your research findings to complete the crate query. This ends the research session and delivers your response to the agent that initiated the query."
-    )]
-    async fn return_response_to_user(
-        &self,
-        Parameters(ReturnResponseParams { response }): Parameters<ReturnResponseParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!("Research complete, returning response");
-        tracing::debug!("Response: {}", response);
-
-        // Send the response through the channel to the waiting research agent
-        self.response_tx.send(response.clone()).await.map_err(|_| {
-            McpError::internal_error("Failed to send response: channel closed".to_string(), None)
-        })?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            "Response delivered to waiting agent.".to_string(),
-        )]))
-    }
-}
-
-#[tool_handler]
-impl ServerHandler for SubAgentService {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "rust-crate-research".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                icons: None,
-                title: None,
-                website_url: None,
+                Ok(GetRustCrateSourceOutput {
+                    crate_name,
+                    version: search_result.version.clone(),
+                    checkout_path: search_result.checkout_path.display().to_string(),
+                    message,
+                })
             },
-            instructions: Some(
-                "Provides tools for researching Rust crate sources: get_rust_crate_source to locate crates, return_response_to_user to deliver findings"
-                    .to_string(),
-            ),
-        }
-    }
+            |f, args, cx| Box::pin(f(args, cx)),
+        )
+        .tool_fn(
+            "return_response_to_user",
+            "Record the results that will be returned to the user. If invoked multiple times, the results will be appended to the previous response.",
+            {
+                let response_tx = response_tx.clone();
+                async move |input: ReturnResponseParams, _context| {
+                    let ReturnResponseParams { response } = input;
+
+                    tracing::info!("Research complete, returning response");
+                    tracing::debug!("Response: {}", response);
+
+                    // Send the response through the channel to the waiting research agent
+                    response_tx.send(response.clone()).await.map_err(|_| {
+                        anyhow::anyhow!("Failed to send response: channel closed")
+                    })?;
+
+                    Ok(ReturnResponseOutput {
+                        message: "Response delivered to waiting agent.".to_string(),
+                    })
+                }
+            },
+            |f, args, cx| Box::pin(f(args, cx)),
+        )
 }

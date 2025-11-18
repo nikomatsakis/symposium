@@ -2410,9 +2410,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f145aa6b9458ba7a65aea5b280831dfcb497d57bccad369a569dca1f70ba9fe"
+checksum = "742edbba22f9b6e0b4463a40c325544a1802424e59af87f127ae8d1d9d976117"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -2420,7 +2420,7 @@ dependencies = [
  "clap",
  "futures",
  "sacp",
- "sacp-proxy",
+ "sacp-proxy 2.0.0",
  "sacp-tokio",
  "serde",
  "serde_json",
@@ -2453,6 +2453,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sacp-proxy"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59f842ec88b231341ba10d4de161f27a9ecf7a1bdf3b0bfe71c39b1f11965f86"
+dependencies = [
+ "agent-client-protocol-schema",
+ "futures",
+ "fxhash",
+ "rmcp",
+ "sacp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sacp-rmcp"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2461,7 +2481,7 @@ dependencies = [
  "futures",
  "rmcp",
  "sacp",
- "sacp-proxy",
+ "sacp-proxy 1.1.0",
  "tokio",
  "tokio-util",
 ]
@@ -2474,7 +2494,7 @@ dependencies = [
  "chrono",
  "clap",
  "sacp",
- "sacp-proxy",
+ "sacp-proxy 2.0.0",
  "sacp-tokio",
  "serde",
  "serde_json",
@@ -2778,7 +2798,7 @@ dependencies = [
  "reqwest",
  "rmcp",
  "sacp",
- "sacp-proxy",
+ "sacp-proxy 1.1.0",
  "sacp-rmcp",
  "sacp-tokio",
  "schemars",
@@ -2883,11 +2903,9 @@ dependencies = [
  "jsonrpcmsg",
  "regex",
  "reqwest",
- "rmcp",
  "sacp",
  "sacp-conductor",
- "sacp-proxy",
- "sacp-rmcp",
+ "sacp-proxy 2.0.0",
  "sacp-tokio",
  "schemars",
  "semver",

@@ -12,10 +12,6 @@ path = "src/main.rs"
 sacp-proxy.workspace = true
 sacp.workspace = true
 sacp-conductor.workspace = true
-sacp-rmcp.workspace = true
-
-# MCP SDK
-rmcp = { workspace = true, features = ["server"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

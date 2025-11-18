@@ -17,7 +17,6 @@ use sacp::{
     Handled, JrConnectionCx, JrMessageHandler, MessageAndCx,
 };
 use sacp_proxy::McpServiceRegistry;
-use sacp_rmcp::McpServiceRegistryRmcpExt;
 use std::{pin::pin, sync::Arc};
 use tokio::sync::mpsc;
 
@@ -102,11 +101,11 @@ pub async fn run(
     let (response_tx, mut response_rx) = mpsc::channel::<serde_json::Value>(32);
 
     // Create a fresh MCP service registry for this research session
-    // The SubAgentService instance holds the response_tx to send findings back
-    let sub_agent_mcp_registry = McpServiceRegistry::default()
-        .with_rmcp_server("rust-crate-sources", move || {
-            crate_sources_mcp::SubAgentService::new(response_tx.clone())
-        })?;
+    // The build_server function creates an MCP server that holds the response_tx to send findings back
+    let sub_agent_mcp_registry = McpServiceRegistry::default().with_mcp_server(
+        "rust-crate-sources",
+        crate_sources_mcp::build_server(response_tx.clone()),
+    )?;
 
     // Spawn the sub-agent session with the per-instance MCP registry
     let NewSessionResponse {
