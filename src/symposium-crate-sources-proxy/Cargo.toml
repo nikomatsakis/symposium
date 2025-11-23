@@ -51,3 +51,4 @@ fxhash.workspace = true
 [dev-dependencies]
 elizacp = { path = "../../../symposium-acp/src/elizacp" }
 yopo = "1.0"
+expect-test = "1.5"

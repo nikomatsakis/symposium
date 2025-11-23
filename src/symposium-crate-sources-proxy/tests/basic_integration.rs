@@ -1,6 +1,7 @@
 //! Basic integration tests for the crate sources proxy using ElizACP.
 
 use anyhow::Result;
+use expect_test::expect;
 use sacp::{ByteStreams, DynComponent};
 use sacp_conductor::conductor::Conductor;
 use symposium_crate_sources_proxy::CrateSourcesProxy;
@@ -59,19 +60,10 @@ async fn test_rust_crate_query_with_elizacp() -> Result<()> {
     )
     .await?;
 
-    tracing::info!("Response received: {} chars", response.len());
-    tracing::debug!("Response content: {}", response);
-
-    // Verify we got a response (even if it's nonsense from Eliza)
-    assert!(!response.is_empty(), "Should receive a response");
-
-    // The response should indicate either success (OK:) or error (ERROR:)
-    // from ElizACP's tool execution
-    assert!(
-        response.contains("OK:") || response.contains("ERROR:"),
-        "Response should indicate tool execution result: {}",
-        response
-    );
+    // Verify the response matches expected output
+    // ElizACP will attempt to execute the tool but fail because it can't
+    // actually spawn the research session, so we expect an error message
+    expect![[r#"ERROR: connection closed: initialize response"#]].assert_eq(&response);
 
     // Clean up
     conductor_handle.await??;
