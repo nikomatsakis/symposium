@@ -5,16 +5,19 @@ members = [
     "ci",
     "src/symposium-acp",
     "src/symposium-crate-sources-proxy",
-    "src/cli-agent-util", "src/symposium-benchmark",
+    "src/symposium-math",
+    "src/cli-agent-util",
+    "src/symposium-benchmark",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-sacp = { version = "1.1.1" }
-sacp-proxy = { version = "2.0.2" }
-sacp-tokio = { version = "2.0.1" }
-sacp-conductor = { version = "3.0.0" }
-sacp-rmcp = { version = "0.8.4" }
+sacp = { git = "https://github.com/nikomatsakis/symposium-acp" }
+sacp-proxy = { git = "https://github.com/nikomatsakis/symposium-acp" }
+sacp-tokio = { git = "https://github.com/nikomatsakis/symposium-acp" }
+sacp-conductor = { git = "https://github.com/nikomatsakis/symposium-acp" }
+sacp-rmcp = { git = "https://github.com/nikomatsakis/symposium-acp" }
+sacp-tee = { git = "https://github.com/nikomatsakis/symposium-acp" }
 jsonrpcmsg = "0.1.2"
 
 # Core async runtime

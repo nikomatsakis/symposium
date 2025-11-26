@@ -829,7 +829,7 @@ dependencies = [
  "rand 0.9.2",
  "regex",
  "rmcp",
- "sacp",
+ "sacp 1.1.1",
  "sacp-tokio 2.0.1",
  "serde",
  "serde_json",
@@ -885,7 +885,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2012,7 +2012,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2446,7 +2446,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2707,7 +2707,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2759,6 +2759,23 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
 name = "sacp"
+version = "1.1.0"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "agent-client-protocol-schema",
+ "anyhow",
+ "boxfnonce",
+ "futures",
+ "jsonrpcmsg",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sacp"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2509266e0b0940ff748fb73bd402c323a6c5dc4238342b3ebc04a9218acd41f6"
@@ -2777,9 +2794,8 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bc01434f78742f35b144b17ba674f1a88606485c49424b38ae7f00cca369d21"
+version = "2.1.1"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -2791,9 +2807,9 @@ dependencies = [
  "futures-concurrency",
  "fxhash",
  "hyper",
- "sacp",
- "sacp-proxy",
- "sacp-tokio 2.0.1",
+ "sacp 1.1.0",
+ "sacp-proxy 2.0.1",
+ "sacp-tokio 2.0.0",
  "serde",
  "serde_json",
  "shell-words",
@@ -2810,6 +2826,25 @@ dependencies = [
 
 [[package]]
 name = "sacp-proxy"
+version = "2.0.1"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "agent-client-protocol-schema",
+ "futures",
+ "fxhash",
+ "rmcp",
+ "sacp 1.1.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sacp-proxy"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82985d61d08fd90e5319f65026558247261767820718219626ea83fcbdbc76ea"
@@ -2818,7 +2853,7 @@ dependencies = [
  "futures",
  "fxhash",
  "rmcp",
- "sacp",
+ "sacp 1.1.1",
  "schemars",
  "serde",
  "serde_json",
@@ -2836,8 +2871,21 @@ checksum = "1bd072d4a8677e1fc5b372db843eddb5eed26a50b44e1a0d3764ef06c4b3d61d"
 dependencies = [
  "futures",
  "rmcp",
- "sacp",
- "sacp-proxy",
+ "sacp 1.1.1",
+ "sacp-proxy 2.0.2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "sacp-rmcp"
+version = "0.8.3"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "futures",
+ "rmcp",
+ "sacp 1.1.0",
+ "sacp-proxy 2.0.1",
  "tokio",
  "tokio-util",
 ]
@@ -2851,9 +2899,27 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "sacp",
- "sacp-proxy",
+ "sacp 1.1.1",
+ "sacp-proxy 2.0.2",
  "sacp-tokio 2.0.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sacp-tee"
+version = "0.1.2"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "sacp 1.1.0",
+ "sacp-proxy 2.0.1",
+ "sacp-tokio 2.0.0",
  "serde",
  "serde_json",
  "tokio",
@@ -2868,7 +2934,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba2387261f8823bfa658a200a6faa3ad913addb4bedf502fedf40e319fd3a5d1"
 dependencies = [
  "futures",
- "sacp",
+ "sacp 1.1.1",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "sacp-tokio"
+version = "2.0.0"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "futures",
+ "sacp 1.1.0",
  "serde",
  "serde_json",
  "shell-words",
@@ -2883,7 +2963,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31cc5a0d76cfe932a113f5bb80cbeaa7a03090992f21204456f7424f4b698138"
 dependencies = [
  "futures",
- "sacp",
+ "sacp 1.1.1",
  "serde",
  "serde_json",
  "shell-words",
@@ -3177,9 +3257,9 @@ dependencies = [
  "futures",
  "reqwest",
  "rmcp",
- "sacp",
- "sacp-proxy",
- "sacp-rmcp",
+ "sacp 1.1.1",
+ "sacp-proxy 2.0.2",
+ "sacp-rmcp 0.8.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "sacp-tokio 1.0.0",
  "schemars",
  "serde",
@@ -3271,10 +3351,10 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
- "sacp",
+ "sacp 1.1.0",
  "sacp-conductor",
- "sacp-tee",
- "sacp-tokio 2.0.1",
+ "sacp-tee 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sacp-tokio 2.0.0",
  "schemars",
  "serde",
  "serde_json",
@@ -3293,15 +3373,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "sacp",
+ "dirs",
+ "sacp 1.1.0",
  "sacp-conductor",
- "sacp-tokio 2.0.1",
+ "sacp-tee 0.1.2 (git+https://github.com/nikomatsakis/symposium-acp)",
+ "sacp-tokio 2.0.0",
  "symposium-crate-sources-proxy",
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
- "yopo",
+ "yopo 1.2.0 (git+https://github.com/nikomatsakis/symposium-acp)",
 ]
 
 [[package]]
@@ -3330,10 +3413,10 @@ dependencies = [
  "jsonrpcmsg",
  "regex",
  "reqwest",
- "sacp",
+ "sacp 1.1.0",
  "sacp-conductor",
- "sacp-proxy",
- "sacp-tokio 2.0.1",
+ "sacp-proxy 2.0.1",
+ "sacp-tokio 2.0.0",
  "schemars",
  "semver",
  "serde",
@@ -3344,7 +3427,24 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "yopo",
+ "yopo 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "symposium-math"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rmcp",
+ "sacp 1.1.0",
+ "sacp-proxy 2.0.1",
+ "sacp-rmcp 0.8.3 (git+https://github.com/nikomatsakis/symposium-acp)",
+ "sacp-tokio 2.0.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3420,7 +3520,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4596,8 +4696,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77a2822a4da3e1b985b0054c996b56a29148996ba580547f36067b3ad6f4ec1b"
 dependencies = [
  "clap",
- "sacp",
+ "sacp 1.1.1",
  "sacp-tokio 2.0.1",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "yopo"
+version = "1.2.0"
+source = "git+https://github.com/nikomatsakis/symposium-acp#2604440721fa2f9821b2e197cd55ef535a63be78"
+dependencies = [
+ "clap",
+ "sacp 1.1.0",
+ "sacp-tokio 2.0.0",
  "tokio",
  "tracing",
  "tracing-subscriber",

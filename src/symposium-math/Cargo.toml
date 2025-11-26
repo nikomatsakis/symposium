@@ -1,0 +1,32 @@
+[package]
+name = "symposium-math"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "symposium-math"
+path = "src/main.rs"
+
+[dependencies]
+# MCP server
+rmcp = { workspace = true }
+
+# ACP integration
+sacp.workspace = true
+sacp-proxy.workspace = true
+sacp-rmcp.workspace = true
+sacp-tokio.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# CLI
+clap.workspace = true

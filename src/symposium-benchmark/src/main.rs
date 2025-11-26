@@ -6,7 +6,7 @@
 use anyhow::Result;
 use clap::Parser;
 use sacp::{ByteStreams, Component, DynComponent};
-use sacp_conductor::conductor::Conductor;
+use sacp_conductor::Conductor;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -28,6 +28,10 @@ struct Args {
     /// List available benchmarks
     #[arg(short, long)]
     list: bool,
+
+    /// Enable logging for specific targets (comma-separated, e.g., "sacp,sacp_conductor")
+    #[arg(long)]
+    log: Option<String>,
 }
 
 struct Benchmark {
@@ -38,8 +42,9 @@ struct Benchmark {
 
 const BENCHMARKS: &[Benchmark] = &[Benchmark {
     name: "serde_from_value",
-    prompt: "Please use the rust_crate_query tool to research the signature of the \
-                 serde_json::from_value API and describe what inputs it accepts",
+    prompt: "Please use the `rust_crate_query` tool from the `rust-crate-sources` MCP server \
+             to research the signature of the serde_json::from_value API and describe what \
+             inputs it accepts. Do not try to read files from disk - use the MCP tool.",
     expected: "The response should describe that serde_json::from_value takes a \
                    serde_json::Value and deserializes it into a type T. It should mention \
                    that it returns a Result<T, Error>.",
@@ -49,13 +54,27 @@ const BENCHMARKS: &[Benchmark] = &[Benchmark {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+    // Initialize tracing based on --log argument
+    if let Some(log_targets) = &args.log {
+        let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+        for target in log_targets.split(',') {
+            let target = target.trim();
+            if !target.is_empty() {
+                // If target already has a level (contains '='), use as-is; otherwise default to debug
+                let directive = if target.contains('=') {
+                    target.to_string()
+                } else {
+                    format!("{}=debug", target)
+                };
+                filter = filter.add_directive(directive.parse().unwrap());
+            }
+        }
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
+        tracing::info!("Logging enabled for: {}", log_targets);
+    }
 
     // List benchmarks if requested
     if args.list {
@@ -104,13 +123,15 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     let (editor_write, conductor_read) = duplex(8192);
     let (conductor_write, editor_read) = duplex(8192);
 
-    // Spawn conductor with proxy + agent chain
+    // Spawn conductor with proxy + agent chain (with tees for debugging)
     let conductor_handle = tokio::spawn(async move {
         Conductor::new(
             "benchmark-conductor".to_string(),
             vec![DynComponent::new(proxy), DynComponent::new(claude_agent)],
             Default::default(),
         )
+        .trace_to_path("killme.jsons")
+        .map_err(sacp::util::internal_error)?
         .run(ByteStreams::new(
             conductor_write.compat_write(),
             conductor_read.compat(),

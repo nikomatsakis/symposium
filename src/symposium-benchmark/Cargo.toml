@@ -11,7 +11,8 @@ symposium-crate-sources-proxy = { path = "../symposium-crate-sources-proxy" }
 sacp.workspace = true
 sacp-tokio.workspace = true
 sacp-conductor.workspace = true
-yopo = "1.0"
+sacp-tee.workspace = true
+yopo = { git = "https://github.com/nikomatsakis/symposium-acp" }
 
 # Async runtime
 tokio.workspace = true
@@ -23,6 +24,10 @@ anyhow.workspace = true
 # Logging
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender = "0.2"
 
 # CLI parsing
 clap.workspace = true
+
+# Utilities
+dirs = "5"
