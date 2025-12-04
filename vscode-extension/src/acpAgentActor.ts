@@ -13,6 +13,18 @@ import { AgentConfiguration } from "./agentConfiguration";
 import { logger } from "./extension";
 
 /**
+ * Tool call information passed to callbacks
+ */
+export interface ToolCallInfo {
+  toolCallId: string;
+  title: string;
+  status: acp.ToolCallStatus;
+  kind?: acp.ToolKind;
+  rawInput?: Record<string, unknown>;
+  rawOutput?: Record<string, unknown>;
+}
+
+/**
  * Callback interface for agent events
  */
 export interface AcpAgentCallbacks {
@@ -21,6 +33,8 @@ export interface AcpAgentCallbacks {
   onRequestPermission?: (
     params: acp.RequestPermissionRequest,
   ) => Promise<acp.RequestPermissionResponse>;
+  onToolCall?: (agentSessionId: string, toolCall: ToolCallInfo) => void;
+  onToolCallUpdate?: (agentSessionId: string, toolCall: ToolCallInfo) => void;
 }
 
 /**
@@ -77,15 +91,35 @@ class SymposiumClient implements acp.Client {
         break;
       case "tool_call":
         logger.info("agent", "Tool call", {
+          toolCallId: update.toolCallId,
           title: update.title,
           status: update.status,
         });
+        if (this.callbacks.onToolCall && update.status) {
+          this.callbacks.onToolCall(params.sessionId, {
+            toolCallId: update.toolCallId,
+            title: update.title,
+            status: update.status,
+            kind: update.kind,
+            rawInput: update.rawInput,
+            rawOutput: update.rawOutput,
+          });
+        }
         break;
       case "tool_call_update":
         logger.info("agent", "Tool call update", {
           toolCallId: update.toolCallId,
           status: update.status,
         });
+        if (this.callbacks.onToolCallUpdate && update.status) {
+          this.callbacks.onToolCallUpdate(params.sessionId, {
+            toolCallId: update.toolCallId,
+            title: update.title ?? "",
+            status: update.status,
+            rawInput: update.rawInput,
+            rawOutput: update.rawOutput,
+          });
+        }
         break;
     }
   }

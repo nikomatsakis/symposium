@@ -20,6 +20,22 @@ const tabAgentResponses: { [tabId: string]: string } = {};
 // Track current message ID per tab (for MynahUI)
 const tabCurrentMessageId: { [tabId: string]: string } = {};
 
+// Track active tool calls per tab: toolCallId → messageId
+const tabToolCalls: { [tabId: string]: { [toolCallId: string]: string } } = {};
+
+// Tool call status type (matches ACP)
+type ToolCallStatus = "pending" | "running" | "completed" | "errored";
+
+// Tool call info from extension
+interface ToolCallInfo {
+  toolCallId: string;
+  title: string;
+  status: ToolCallStatus;
+  kind?: string;
+  rawInput?: Record<string, unknown>;
+  rawOutput?: Record<string, unknown>;
+}
+
 // Track which messages we've seen per tab and mynah UI state
 interface WebviewState {
   extensionActivationId: string;
@@ -128,6 +144,147 @@ function handleApprovalResponse(
     approvalId,
     response,
     bypassAll,
+  });
+}
+
+// Get status icon for tool call
+function getToolStatusIcon(status: ToolCallStatus): string {
+  switch (status) {
+    case "pending":
+      return "⏳";
+    case "running":
+      return "⚙️";
+    case "completed":
+      return "✓";
+    case "errored":
+      return "✗";
+    default:
+      return "•";
+  }
+}
+
+// Get MynahUI status for tool call
+function getToolStatus(
+  status: ToolCallStatus,
+): "info" | "success" | "warning" | "error" | undefined {
+  switch (status) {
+    case "completed":
+      return "success";
+    case "errored":
+      return "error";
+    case "running":
+      return "info";
+    default:
+      return undefined;
+  }
+}
+
+// Format tool output for display
+function formatToolOutput(
+  rawOutput: Record<string, unknown> | undefined,
+): string {
+  if (!rawOutput) return "";
+  try {
+    return "```json\n" + JSON.stringify(rawOutput, null, 2) + "\n```";
+  } catch {
+    return String(rawOutput);
+  }
+}
+
+// Format tool input for display
+function formatToolInput(
+  rawInput: Record<string, unknown> | undefined,
+): string {
+  if (!rawInput) return "";
+  try {
+    return "```json\n" + JSON.stringify(rawInput, null, 2) + "\n```";
+  } catch {
+    return String(rawInput);
+  }
+}
+
+// Handle tool call from extension
+function handleToolCall(tabId: string, toolCall: ToolCallInfo) {
+  // Initialize tool tracking for this tab if needed
+  if (!tabToolCalls[tabId]) {
+    tabToolCalls[tabId] = {};
+  }
+
+  // Check if we already have a card for this tool call
+  const existingMessageId = tabToolCalls[tabId][toolCall.toolCallId];
+  if (existingMessageId) {
+    // Update existing card
+    updateToolCallCard(tabId, existingMessageId, toolCall);
+    return;
+  }
+
+  // Create new card for this tool call
+  const messageId = `tool-${toolCall.toolCallId}`;
+  tabToolCalls[tabId][toolCall.toolCallId] = messageId;
+
+  const icon = getToolStatusIcon(toolCall.status);
+  const shimmer =
+    toolCall.status === "running" || toolCall.status === "pending";
+
+  // Build expanded content
+  let expandedBody = "";
+  if (toolCall.rawInput) {
+    expandedBody +=
+      "**Input:**\n" + formatToolInput(toolCall.rawInput) + "\n\n";
+  }
+  if (toolCall.rawOutput) {
+    expandedBody += "**Output:**\n" + formatToolOutput(toolCall.rawOutput);
+  }
+
+  mynahUI.addChatItem(tabId, {
+    type: ChatItemType.ANSWER,
+    messageId,
+    body: `${icon} \`${toolCall.title}\``,
+    status: getToolStatus(toolCall.status),
+    shimmer,
+    summary: expandedBody
+      ? {
+          isCollapsed: true,
+          content: {
+            body: expandedBody,
+          },
+        }
+      : undefined,
+  });
+}
+
+// Update an existing tool call card
+function updateToolCallCard(
+  tabId: string,
+  messageId: string,
+  toolCall: ToolCallInfo,
+) {
+  const icon = getToolStatusIcon(toolCall.status);
+  const shimmer =
+    toolCall.status === "running" || toolCall.status === "pending";
+
+  // Build expanded content
+  let expandedBody = "";
+  if (toolCall.rawInput) {
+    expandedBody +=
+      "**Input:**\n" + formatToolInput(toolCall.rawInput) + "\n\n";
+  }
+  if (toolCall.rawOutput) {
+    expandedBody += "**Output:**\n" + formatToolOutput(toolCall.rawOutput);
+  }
+
+  mynahUI.updateChatAnswerWithMessageId(tabId, messageId, {
+    body: `${icon} \`${toolCall.title}\``,
+    status: getToolStatus(toolCall.status),
+    shimmer,
+    summary: expandedBody
+      ? {
+          isCollapsed: true,
+          content: {
+            body: expandedBody,
+          },
+        }
+      : undefined,
   });
 }
 
@@ -349,6 +506,12 @@ window.addEventListener("message", (event: MessageEvent) => {
   } else if (message.type === "approval-request") {
     // Display approval request UI
     handleApprovalRequest(message);
+  } else if (message.type === "tool-call") {
+    // Handle tool call notification
+    handleToolCall(message.tabId, message.toolCall);
+  } else if (message.type === "tool-call-update") {
+    // Handle tool call update
+    handleToolCall(message.tabId, message.toolCall);
   }
 
   // Update lastSeenIndex and save state

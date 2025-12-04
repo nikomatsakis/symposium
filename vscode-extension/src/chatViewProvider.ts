@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as acp from "@agentclientprotocol/sdk";
-import { AcpAgentActor } from "./acpAgentActor";
+import { AcpAgentActor, ToolCallInfo } from "./acpAgentActor";
 import { AgentConfiguration } from "./agentConfiguration";
 import { logger } from "./extension";
 import { v4 as uuidv4 } from "uuid";
@@ -132,6 +132,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // Need user approval - send request to webview and wait for response
         return this.#requestUserApproval(params, config.agentName);
+      },
+      onToolCall: (agentSessionId: string, toolCall: ToolCallInfo) => {
+        const tabId = this.#agentSessionToTab.get(agentSessionId);
+        if (tabId) {
+          this.#sendToWebview({
+            type: "tool-call",
+            tabId,
+            toolCall,
+          });
+        }
+      },
+      onToolCallUpdate: (agentSessionId: string, toolCall: ToolCallInfo) => {
+        const tabId = this.#agentSessionToTab.get(agentSessionId);
+        if (tabId) {
+          this.#sendToWebview({
+            type: "tool-call-update",
+            tabId,
+            toolCall,
+          });
+        }
       },
     });
 
