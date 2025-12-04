@@ -390,6 +390,14 @@ const config: any = {
     console.log("Tab removed:", tabId);
     saveState();
   },
+  onTabChange: (tabId: string) => {
+    // Notify extension when user switches tabs
+    console.log("Tab changed:", tabId);
+    vscode.postMessage({
+      type: "tab-change",
+      tabId: tabId,
+    });
+  },
   onContextSelected: (contextItem: any, tabId: string) => {
     // User selected a file from the @ context menu
     // The command field contains the file path

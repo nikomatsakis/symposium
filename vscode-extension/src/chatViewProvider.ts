@@ -52,6 +52,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   } | null = null;
   #selectionDisposable: vscode.Disposable | null = null;
 
+  // Track the active/selected tab in the webview
+  #activeTabId: string | null = null;
+
   constructor(
     extensionUri: vscode.Uri,
     context: vscode.ExtensionContext,
@@ -534,6 +537,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Store the configuration for this tab
             this.#tabToConfig.set(message.tabId, config);
 
+            // New tab becomes the active tab
+            this.#activeTabId = message.tabId;
+
             // Initialize message tracking for this tab
             this.#messageQueues.set(message.tabId, []);
             this.#nextMessageIndex.set(message.tabId, 0);
@@ -749,6 +755,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case "log":
           // Webview sending a log message
           logger.info("webview", message.message, message.data);
+          break;
+
+        case "tab-change":
+          // User switched tabs in the webview
+          this.#activeTabId = message.tabId;
+          logger.info("webview", "Active tab changed", {
+            tabId: message.tabId,
+          });
           break;
 
         case "approval-response":
@@ -1014,14 +1028,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     endLine: number;
     text: string;
   }): void {
-    // Get the first/active tab (for now, use the first one - could be improved)
+    // Use the active tab, or fall back to the first available tab
     const tabIds = Array.from(this.#tabToAgentSession.keys());
     if (tabIds.length === 0) {
       logger.error("context", "No tabs available to add selection to");
       return;
     }
 
-    const tabId = tabIds[0];
+    const tabId =
+      this.#activeTabId && tabIds.includes(this.#activeTabId)
+        ? this.#activeTabId
+        : tabIds[0];
 
     // Send message to webview to add this as a custom context item
     this.#sendToWebview({
