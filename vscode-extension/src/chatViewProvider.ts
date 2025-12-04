@@ -42,6 +42,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // Track which tabs are subscribed to which file index
   #tabToFileIndex: Map<string, WorkspaceFileIndex> = new Map();
 
+  // Current editor selection state
+  #currentSelection: {
+    filePath: string;
+    relativePath: string;
+    startLine: number;
+    endLine: number;
+    text: string;
+  } | null = null;
+  #selectionDisposable: vscode.Disposable | null = null;
+
   constructor(
     extensionUri: vscode.Uri,
     context: vscode.ExtensionContext,
@@ -188,6 +198,110 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * Get or create a file index for the given workspace folder.
    * File indexes are shared across tabs in the same workspace.
    */
+  /**
+   * Set up tracking for editor selection changes.
+   * Broadcasts selection updates to all tabs when selection changes.
+   */
+  #setupSelectionTracking(): void {
+    // Clean up any existing listener
+    this.#selectionDisposable?.dispose();
+
+    // Track selection changes
+    this.#selectionDisposable = vscode.window.onDidChangeTextEditorSelection(
+      (event) => {
+        const editor = event.textEditor;
+        const selection = event.selections[0]; // Use primary selection
+
+        // Check if there's a non-empty selection
+        if (selection.isEmpty) {
+          if (this.#currentSelection !== null) {
+            this.#currentSelection = null;
+            this.#broadcastSelectionUpdate();
+          }
+          return;
+        }
+
+        // Get the selected text
+        const text = editor.document.getText(selection);
+        if (text.length === 0) {
+          if (this.#currentSelection !== null) {
+            this.#currentSelection = null;
+            this.#broadcastSelectionUpdate();
+          }
+          return;
+        }
+
+        // Get file path info
+        const filePath = editor.document.uri.fsPath;
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(
+          editor.document.uri,
+        );
+        let relativePath = filePath;
+        if (workspaceFolder) {
+          const prefix = workspaceFolder.uri.fsPath;
+          if (filePath.startsWith(prefix)) {
+            relativePath = filePath.slice(prefix.length);
+            if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
+              relativePath = relativePath.slice(1);
+            }
+          }
+        }
+
+        // Update current selection (1-indexed lines for display)
+        this.#currentSelection = {
+          filePath,
+          relativePath,
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+          text,
+        };
+
+        this.#broadcastSelectionUpdate();
+      },
+    );
+
+    // Also check current selection immediately
+    const editor = vscode.window.activeTextEditor;
+    if (editor && !editor.selection.isEmpty) {
+      const selection = editor.selection;
+      const text = editor.document.getText(selection);
+      if (text.length > 0) {
+        const filePath = editor.document.uri.fsPath;
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(
+          editor.document.uri,
+        );
+        let relativePath = filePath;
+        if (workspaceFolder) {
+          const prefix = workspaceFolder.uri.fsPath;
+          if (filePath.startsWith(prefix)) {
+            relativePath = filePath.slice(prefix.length);
+            if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
+              relativePath = relativePath.slice(1);
+            }
+          }
+        }
+
+        this.#currentSelection = {
+          filePath,
+          relativePath,
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+          text,
+        };
+      }
+    }
+  }
+
+  /**
+   * Broadcast selection update to all tabs.
+   */
+  #broadcastSelectionUpdate(): void {
+    // Send to all tabs that have file indexes
+    for (const [tabId, index] of this.#tabToFileIndex.entries()) {
+      this.#sendFileListToTab(tabId, index);
+    }
+  }
+
   async #getOrCreateFileIndex(
     workspaceFolder: vscode.WorkspaceFolder,
     tabId: string,
@@ -358,11 +472,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       tabId,
       files,
       symbols,
+      selection: this.#currentSelection,
     });
     logger.info("context", "Sent context to tab", {
       tabId,
       fileCount: files.length,
       symbolCount: symbols.length,
+      hasSelection: this.#currentSelection !== null,
     });
   }
 
@@ -392,6 +508,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.#getHtmlForWebview(webviewView.webview);
 
     logger.info("webview", "Webview resolved and created");
+
+    // Set up selection tracking
+    this.#setupSelectionTracking();
 
     // Handle webview visibility changes
     webviewView.onDidChangeVisibility(() => {
@@ -573,6 +692,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                   error: err,
                 });
               }
+            }
+          }
+
+          // Add selection context as EmbeddedResource blocks
+          if (
+            message.contextSelections &&
+            Array.isArray(message.contextSelections)
+          ) {
+            for (const sel of message.contextSelections) {
+              // Selection already contains the text, no need to read file
+              const ext =
+                sel.relativePath.split(".").pop()?.toLowerCase() || "";
+              const mimeType = this.#getMimeType(ext);
+
+              contentBlocks.push({
+                type: "resource",
+                resource: {
+                  uri: `file://${sel.filePath}#L${sel.startLine}-L${sel.endLine}`,
+                  text: sel.text,
+                  mimeType,
+                },
+              });
+              logger.info("context", "Added selection context", {
+                path: sel.relativePath,
+                lines: `${sel.startLine}-${sel.endLine}`,
+                size: sel.text.length,
+              });
             }
           }
 

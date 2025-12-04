@@ -408,7 +408,7 @@ const config: any = {
       promptText = prompt.command + (promptText ? " " + promptText : "");
     }
 
-    // Extract context (file and symbol references from @ mentions)
+    // Extract context (file, symbol, and selection references from @ mentions)
     // context can be string[] or QuickActionCommand[]
     const contextFiles: string[] = [];
     const contextSymbols: Array<{
@@ -421,6 +421,13 @@ const config: any = {
         endChar: number;
       };
     }> = [];
+    const contextSelections: Array<{
+      filePath: string;
+      relativePath: string;
+      startLine: number;
+      endLine: number;
+      text: string;
+    }> = [];
 
     if (prompt.context && Array.isArray(prompt.context)) {
       for (const item of prompt.context) {
@@ -428,7 +435,7 @@ const config: any = {
           // Plain string - treat as file path
           contextFiles.push(item);
         } else if (item.id) {
-          // Has id field - check if it's an encoded symbol reference
+          // Has id field - check if it's an encoded reference
           try {
             const decoded = JSON.parse(atob(item.id));
             if (decoded.type === "symbol") {
@@ -436,6 +443,14 @@ const config: any = {
                 name: decoded.name,
                 location: decoded.location,
                 range: decoded.range,
+              });
+            } else if (decoded.type === "selection") {
+              contextSelections.push({
+                filePath: decoded.filePath,
+                relativePath: decoded.relativePath,
+                startLine: decoded.startLine,
+                endLine: decoded.endLine,
+                text: decoded.text,
               });
             } else {
               // Unknown type, treat command as file
@@ -461,6 +476,9 @@ const config: any = {
     if (contextSymbols.length > 0) {
       console.log("With context symbols:", contextSymbols);
     }
+    if (contextSelections.length > 0) {
+      console.log("With context selections:", contextSelections);
+    }
 
     // Send prompt to extension with tabId and context
     vscode.postMessage({
@@ -469,6 +487,8 @@ const config: any = {
       prompt: promptText,
       contextFiles: contextFiles.length > 0 ? contextFiles : undefined,
       contextSymbols: contextSymbols.length > 0 ? contextSymbols : undefined,
+      contextSelections:
+        contextSelections.length > 0 ? contextSelections : undefined,
     });
 
     // Show loading/thinking indicator
@@ -659,6 +679,13 @@ window.addEventListener("message", (event: MessageEvent) => {
         endChar: number;
       };
     }>;
+    const selection = message.selection as {
+      filePath: string;
+      relativePath: string;
+      startLine: number;
+      endLine: number;
+      text: string;
+    } | null;
 
     // Symbol kind names (subset of vscode.SymbolKind)
     const symbolKindNames: Record<number, string> = {
@@ -677,6 +704,33 @@ window.addEventListener("message", (event: MessageEvent) => {
 
     // Build context command groups
     const contextCommands = [];
+
+    // Selection group (shown first when available)
+    if (selection) {
+      const lineRange =
+        selection.startLine === selection.endLine
+          ? `L${selection.startLine}`
+          : `L${selection.startLine}-${selection.endLine}`;
+      // Encode selection info for resolution
+      const selectionRef = JSON.stringify({
+        type: "selection",
+        filePath: selection.filePath,
+        relativePath: selection.relativePath,
+        startLine: selection.startLine,
+        endLine: selection.endLine,
+        text: selection.text,
+      });
+      contextCommands.push({
+        groupName: "Selection",
+        commands: [
+          {
+            command: "Current Selection",
+            description: `${selection.relativePath}:${lineRange}`,
+            id: btoa(selectionRef),
+          },
+        ],
+      });
+    }
 
     // Files group
     if (files.length > 0) {
@@ -718,7 +772,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     }
 
     console.log(
-      `Setting context commands: ${files.length} files, ${symbols.length} symbols`,
+      `Setting context commands: ${files.length} files, ${symbols.length} symbols, selection: ${selection !== null}`,
     );
 
     // Update the tab store with the context commands
