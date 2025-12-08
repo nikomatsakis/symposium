@@ -11,150 +11,64 @@
 //! 4. Forward Initialize through the chain
 //! 5. Bidirectionally forward all subsequent messages
 
-use std::fs::File;
-use std::path::PathBuf;
-
 use anyhow::Result;
-use sacp_conductor::Conductor;
+use sacp::Component;
+use sacp_conductor::{Conductor, McpBridgeMode};
 
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-pub struct SymposiumArgs {
-    /// Enable Sparkle integration
-    #[arg(long, default_value = "true")]
-    pub sparkle: bool,
-
-    /// Enable logging of input messages (from editor/client)
-    #[arg(long)]
-    log_input: bool,
-
-    /// Enable logging of output messages (to agent/server)
-    #[arg(long)]
-    log_output: bool,
-
-    /// Directory path for log files
-    #[arg(long, default_value = ".symposium/logs")]
-    log_path: PathBuf,
-
-    /// Redirect tracing output to a file instead of stderr
-    #[arg(long)]
-    log_to: Option<PathBuf>,
-
-    /// Set tracing filter (e.g., "info", "debug", "foo=trace,bar=debug")
-    #[arg(long)]
-    log: Option<String>,
+pub struct Symposium {
+    crate_sources_proxy: bool,
+    sparkle: bool,
 }
 
-impl SymposiumArgs {
-    /// Path where input messages are logged; creates log directory if necessary
-    fn log_input_path(&self) -> Result<Option<PathBuf>> {
-        if self.log_input {
-            self.create_log_dir()?;
-            Ok(Some(self.log_path.join("log_in.txt")))
-        } else {
-            Ok(None)
+impl Symposium {
+    pub fn new() -> Self {
+        Symposium {
+            sparkle: true,
+            crate_sources_proxy: true,
         }
     }
 
-    /// Path where output messages are logged; creates log directory if necessary
-    fn log_output_path(&self) -> Result<Option<PathBuf>> {
-        if self.log_output {
-            self.create_log_dir()?;
-            Ok(Some(self.log_path.join("log_out.txt")))
-        } else {
-            Ok(None)
-        }
+    pub fn sparkle(mut self, enable: bool) -> Self {
+        self.sparkle = enable;
+        self
     }
 
-    fn create_log_dir(&self) -> Result<()> {
-        Ok(std::fs::create_dir_all(&self.log_path)?)
+    pub fn crate_sources_proxy(mut self, enable: bool) -> Self {
+        self.crate_sources_proxy = enable;
+        self
     }
 }
 
-/// Run the Symposium ACP meta proxy
-///
-/// This is the main entry point that:
-/// - Creates session logging infrastructure
-/// - Listens for the Initialize request
-/// - Uses conductor with lazy initialization to build the proxy chain
-/// - Forwards all messages bidirectionally
-pub async fn run(args: &SymposiumArgs) -> Result<()> {
-    // Determine the tracing filter
-    let filter = if let Some(ref log_filter) = args.log {
-        tracing_subscriber::EnvFilter::new(log_filter)
-    } else {
-        tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-    };
+impl sacp::Component for Symposium {
+    async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
+        let Self { crate_sources_proxy, sparkle } = self;
+        Conductor::new(
+            "symposium".to_string(),
+            move |init_req| async move {
+                tracing::info!("Building proxy chain based on capabilities");
 
-    // Initialize tracing - either to a file or to stderr
-    if let Some(ref log_file) = args.log_to {
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = log_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+                // TODO: Examine init_req.capabilities to determine what's needed
 
-        let file = File::create(log_file)?;
-        tracing_subscriber::fmt()
-            .with_writer(file)
-            .with_env_filter(filter)
-            .with_ansi(false) // Disable ANSI colors for file output
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_env_filter(filter)
-            .init();
+                let mut components = vec![];
+
+                if crate_sources_proxy {
+                    components.push(sacp::DynComponent::new(
+                        symposium_crate_sources_proxy::CrateSourcesProxy {},
+                    ));
+                }
+
+                if sparkle {
+                    components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
+                }
+
+                // TODO: Add more components based on capabilities
+                // -car Check for IDE operation capabilities
+                // - Spawn ide-ops adapter if missing
+                // - Spawn ide-ops component to provide MCP tools
+
+                Ok((init_req, components))
+            },
+            McpBridgeMode::default(),
+        ).run(client).await
     }
-
-    tracing::info!("Starting Symposium ACP meta proxy");
-
-    // Create conductor with lazy initialization
-    symposium_conductor(args)?
-        .run(sacp_tokio::Stdio::new())
-        .await?;
-
-    Ok(())
-}
-
-/// Create and return the "symposium conductor", which assembles the symposium libraries together.
-pub fn symposium_conductor(args: &SymposiumArgs) -> Result<Conductor> {
-    // Create conductor with lazy initialization using ComponentList trait
-    // The closure receives the Initialize request and returns components to spawn
-    let args = args.clone();
-    let conductor = Conductor::new(
-        "symposium".to_string(),
-        |init_req| async move {
-            tracing::info!("Building proxy chain based on capabilities");
-
-            // TODO: Examine init_req.capabilities to determine what's needed
-
-            let mut components = vec![];
-
-            if let Some(input_path) = args.log_input_path()? {
-                components.push(sacp::DynComponent::new(sacp_tee::Tee::new(input_path)));
-            }
-
-            components.push(sacp::DynComponent::new(
-                symposium_crate_sources_proxy::CrateSourcesProxy {},
-            ));
-
-            if args.sparkle {
-                components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
-            }
-
-            // TODO: Add more components based on capabilities
-            // -car Check for IDE operation capabilities
-            // - Spawn ide-ops adapter if missing
-            // - Spawn ide-ops component to provide MCP tools
-
-            if let Some(output_path) = args.log_output_path()? {
-                components.push(sacp::DynComponent::new(sacp_tee::Tee::new(output_path)));
-            }
-
-            Ok((init_req, components))
-        },
-        Default::default(),
-    );
-
-    Ok(conductor)
 }

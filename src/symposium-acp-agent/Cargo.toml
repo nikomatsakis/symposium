@@ -2,6 +2,11 @@
 name = "symposium-acp-agent"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "Symposium-enriched ACP agent that wraps downstream agents with enhanced capabilities"
+repository = "https://github.com/symposium-dev/symposium"
+homepage = "https://symposium-dev.github.io/symposium/"
+readme = "README.md"
 
 [[bin]]
 name = "symposium-acp-agent"
@@ -18,5 +23,4 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 
 # Symposium components
-symposium-crate-sources-proxy = { path = "../symposium-crate-sources-proxy" }
-sparkle.workspace = true
+symposium-acp-proxy = { path = "../symposium-acp-proxy", version = "0.1.0" }

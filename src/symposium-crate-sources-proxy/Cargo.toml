@@ -2,6 +2,11 @@
 name = "symposium-crate-sources-proxy"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "ACP proxy component providing Rust crate source code research tools"
+repository = "https://github.com/symposium-dev/symposium"
+homepage = "https://symposium-dev.github.io/symposium/"
+readme = "README.md"
 
 [[bin]]
 name = "symposium-crate-sources-proxy"
