@@ -79,6 +79,7 @@
             "Claude Code": {
               "command": "npx",
               "args": [
+                "-y",
                 "@zed-industries/claude-code-acp"
               ],
               "env": {}
