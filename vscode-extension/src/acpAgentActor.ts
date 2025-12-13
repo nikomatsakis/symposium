@@ -388,6 +388,25 @@ export class AcpAgentActor {
   }
 
   /**
+   * Cancel an ongoing prompt turn for a session.
+   *
+   * Sends a session/cancel notification to the agent. The agent should:
+   * - Stop all language model requests as soon as possible
+   * - Abort all tool call invocations in progress
+   * - Respond to the original prompt with stopReason: "cancelled"
+   *
+   * @param agentSessionId - Agent session identifier
+   */
+  async cancelSession(agentSessionId: string): Promise<void> {
+    if (!this.connection) {
+      throw new Error("ACP connection not initialized");
+    }
+
+    logger.debug("agent", "Cancelling session", { agentSessionId });
+    await this.connection.cancel({ sessionId: agentSessionId });
+  }
+
+  /**
    * Cleanup - kill the agent process
    */
   dispose(): void {
