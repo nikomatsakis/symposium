@@ -18,12 +18,16 @@ pub fn build_and_install_extension(repo_root: &Path, dry_run: bool) -> Result<()
     println!("📦 Building VSCode extension...");
 
     if dry_run {
+        println!("   Would build symposium-acp-agent (cargo build --release)");
         println!("   Would copy binary to extension bin/ directory");
         println!("   Would install dependencies (npm install)");
         println!("   Would build extension (npm run webpack-dev)");
         println!("   Would package extension (npx vsce package)");
         println!("   Would install extension (code --install-extension)");
     } else {
+        // Build the release binary
+        build_agent_binary(repo_root)?;
+
         // Copy the symposium-acp-agent binary into the extension
         copy_binary_to_extension(repo_root, &extension_dir)?;
 
@@ -44,6 +48,23 @@ pub fn build_and_install_extension(repo_root: &Path, dry_run: bool) -> Result<()
     Ok(())
 }
 
+/// Build the symposium-acp-agent binary in release mode
+fn build_agent_binary(repo_root: &Path) -> Result<()> {
+    println!("🔧 Building symposium-acp-agent (release)...");
+
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", "symposium-acp-agent"])
+        .current_dir(repo_root)
+        .status()
+        .context("Failed to execute cargo build")?;
+
+    if !status.success() {
+        return Err(anyhow!("❌ Failed to build symposium-acp-agent"));
+    }
+
+    Ok(())
+}
+
 /// Copy the symposium-acp-agent binary into the extension's bin directory
 fn copy_binary_to_extension(repo_root: &Path, extension_dir: &Path) -> Result<()> {
     println!("📋 Copying symposium-acp-agent binary...");
@@ -55,19 +76,15 @@ fn copy_binary_to_extension(repo_root: &Path, extension_dir: &Path) -> Result<()
         "symposium-acp-agent"
     };
 
-    // Source: target/release or target/debug
-    let release_binary = repo_root.join("target").join("release").join(binary_name);
-    let debug_binary = repo_root.join("target").join("debug").join(binary_name);
+    // Source: target/release (we just built it)
+    let source = repo_root.join("target").join("release").join(binary_name);
 
-    let source = if release_binary.exists() {
-        release_binary
-    } else if debug_binary.exists() {
-        debug_binary
-    } else {
+    if !source.exists() {
         return Err(anyhow!(
-            "❌ symposium-acp-agent binary not found.\n   Please run 'cargo build -p symposium-acp-agent' first."
+            "❌ symposium-acp-agent binary not found at {}",
+            source.display()
         ));
-    };
+    }
 
     // Destination: vscode-extension/bin/<platform>-<arch>/
     let platform = std::env::consts::OS;
