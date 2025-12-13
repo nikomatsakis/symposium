@@ -80,7 +80,7 @@
               "command": "npx",
               "args": [
                 "-y",
-                "@zed-industries/claude-code-acp"
+                "@zed-industries/claude-code-acp@latest"
               ],
               "env": {}
             }
