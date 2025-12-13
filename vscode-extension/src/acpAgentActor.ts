@@ -205,16 +205,15 @@ export class AcpAgentActor {
 
   /**
    * Initialize the ACP connection by spawning the agent process
+   * @param config - Agent configuration
+   * @param conductorCommand - Path to the conductor/agent binary
    */
-  async initialize(config: AgentConfiguration): Promise<void> {
+  async initialize(
+    config: AgentConfiguration,
+    conductorCommand: string,
+  ): Promise<void> {
     // Read settings to build the command
     const vsConfig = vscode.workspace.getConfiguration("symposium");
-
-    // Get conductor command
-    const conductorCommand = vsConfig.get<string>(
-      "conductor",
-      "sacp-conductor",
-    );
 
     // Get the agent definition
     const agents = vsConfig.get<
@@ -231,14 +230,32 @@ export class AcpAgentActor {
       );
     }
 
-    // Build the agent command string (command + args)
+    // Build the agent command with its arguments
     const agentCmd = agent.command;
     const agentArgs = agent.args || [];
-    const agentCommandStr =
-      agentArgs.length > 0 ? `${agentCmd} ${agentArgs.join(" ")}` : agentCmd;
 
-    // Build conductor arguments: agent <component1> <component2> ... <agent-command>
-    const conductorArgs = ["agent", ...config.components, agentCommandStr];
+    // Build conductor arguments: [--trace-dir <dir>] -- <agent-command> [agent-args...]
+    const conductorArgs: string[] = [];
+
+    // Add trace directory if configured
+    const traceDir = vsConfig.get<string>("traceDir", "");
+    if (traceDir) {
+      conductorArgs.push("--trace-dir", traceDir);
+    }
+
+    // Add log level if configured, or inherit from general logLevel if set to debug
+    let agentLogLevel = vsConfig.get<string>("agentLogLevel", "");
+    if (!agentLogLevel) {
+      const generalLogLevel = vsConfig.get<string>("logLevel", "error");
+      if (generalLogLevel === "debug") {
+        agentLogLevel = "debug";
+      }
+    }
+    if (agentLogLevel) {
+      conductorArgs.push("--log", agentLogLevel);
+    }
+
+    conductorArgs.push("--", agentCmd, ...agentArgs);
 
     logger.important("agent", "Spawning ACP agent", {
       command: conductorCommand,
@@ -250,9 +267,22 @@ export class AcpAgentActor {
 
     // Spawn the agent process
     this.agentProcess = spawn(conductorCommand, conductorArgs, {
-      stdio: ["pipe", "pipe", "inherit"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: env as NodeJS.ProcessEnv,
     });
+
+    // Capture stderr and pipe to logger
+    if (this.agentProcess.stderr) {
+      this.agentProcess.stderr.on("data", (data: Buffer) => {
+        const lines = data
+          .toString()
+          .split("\n")
+          .filter((line) => line.trim());
+        for (const line of lines) {
+          logger.info("agent-stderr", line);
+        }
+      });
+    }
 
     // Create streams for communication
     const input = Writable.toWeb(this.agentProcess.stdin!);

@@ -79,7 +79,8 @@
             "Claude Code": {
               "command": "npx",
               "args": [
-                "@zed-industries/claude-code-acp"
+                "-y",
+                "@zed-industries/claude-code-acp@latest"
               ],
               "env": {}
             }
@@ -88,50 +89,26 @@
         },
         "symposium.currentAgent": {
           "type": "string",
-          "default": "ElizACP",
+          "default": "Claude Code",
           "description": "Name of the currently selected agent"
         },
-        "symposium.conductor": {
+        "symposium.traceDir": {
           "type": "string",
-          "default": "sacp-conductor",
-          "description": "Command to launch the ACP conductor"
+          "default": "",
+          "description": "Directory to write trace files for debugging. Leave empty to disable tracing. Traces can be viewed with sacp-trace-viewer."
         },
-        "symposium.components": {
-          "type": "object",
-          "patternProperties": {
-            ".*": {
-              "type": "object",
-              "properties": {
-                "command": {
-                  "type": "string",
-                  "description": "Command to launch the component"
-                },
-                "args": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "default": [],
-                  "description": "Arguments to pass to the component command"
-                },
-                "disabled": {
-                  "type": "boolean",
-                  "default": false,
-                  "description": "Whether this component is disabled"
-                }
-              },
-              "required": [
-                "command"
-              ]
-            }
-          },
-          "default": {
-            "symposium-acp-proxy": {
-              "command": "symposium-acp-proxy",
-              "args": []
-            }
-          },
-          "description": "Configured ACP components (keyed by component name)"
+        "symposium.agentLogLevel": {
+          "type": "string",
+          "enum": [
+            "",
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "default": "",
+          "description": "Log level for the symposium-acp-agent process. Logs appear in the Symposium output channel. Leave empty to disable."
         }
       }
     },

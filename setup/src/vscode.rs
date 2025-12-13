@@ -18,11 +18,19 @@ pub fn build_and_install_extension(repo_root: &Path, dry_run: bool) -> Result<()
     println!("📦 Building VSCode extension...");
 
     if dry_run {
+        println!("   Would build symposium-acp-agent (cargo build --release)");
+        println!("   Would copy binary to extension bin/ directory");
         println!("   Would install dependencies (npm install)");
         println!("   Would build extension (npm run webpack-dev)");
         println!("   Would package extension (npx vsce package)");
         println!("   Would install extension (code --install-extension)");
     } else {
+        // Build the release binary
+        build_agent_binary(repo_root)?;
+
+        // Copy the symposium-acp-agent binary into the extension
+        copy_binary_to_extension(repo_root, &extension_dir)?;
+
         // Install dependencies
         install_dependencies(&extension_dir)?;
 
@@ -37,6 +45,77 @@ pub fn build_and_install_extension(repo_root: &Path, dry_run: bool) -> Result<()
 
         println!("✅ VSCode extension installed successfully!");
     }
+    Ok(())
+}
+
+/// Build the symposium-acp-agent binary in release mode
+fn build_agent_binary(repo_root: &Path) -> Result<()> {
+    println!("🔧 Building symposium-acp-agent (release)...");
+
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", "symposium-acp-agent"])
+        .current_dir(repo_root)
+        .status()
+        .context("Failed to execute cargo build")?;
+
+    if !status.success() {
+        return Err(anyhow!("❌ Failed to build symposium-acp-agent"));
+    }
+
+    Ok(())
+}
+
+/// Copy the symposium-acp-agent binary into the extension's bin directory
+fn copy_binary_to_extension(repo_root: &Path, extension_dir: &Path) -> Result<()> {
+    println!("📋 Copying symposium-acp-agent binary...");
+
+    // Determine the binary name based on platform
+    let binary_name = if cfg!(target_os = "windows") {
+        "symposium-acp-agent.exe"
+    } else {
+        "symposium-acp-agent"
+    };
+
+    // Source: target/release (we just built it)
+    let source = repo_root.join("target").join("release").join(binary_name);
+
+    if !source.exists() {
+        return Err(anyhow!(
+            "❌ symposium-acp-agent binary not found at {}",
+            source.display()
+        ));
+    }
+
+    // Destination: vscode-extension/bin/<platform>-<arch>/
+    // Use Node.js naming conventions (darwin/win32/linux, arm64/x64)
+    let platform = match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        other => other,
+    };
+    let platform_dir = format!("{}-{}", platform, arch);
+
+    let dest_dir = extension_dir.join("bin").join(&platform_dir);
+    std::fs::create_dir_all(&dest_dir)
+        .with_context(|| format!("Failed to create directory: {}", dest_dir.display()))?;
+
+    let dest = dest_dir.join(binary_name);
+
+    std::fs::copy(&source, &dest).with_context(|| {
+        format!(
+            "Failed to copy binary from {} to {}",
+            source.display(),
+            dest.display()
+        )
+    })?;
+
+    println!("   Copied {} to {}", source.display(), dest.display());
+
     Ok(())
 }
 

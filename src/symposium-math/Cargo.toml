@@ -2,6 +2,7 @@
 name = "symposium-math"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [[bin]]
 name = "symposium-math"
@@ -13,7 +14,6 @@ rmcp = { workspace = true }
 
 # ACP integration
 sacp.workspace = true
-sacp-proxy.workspace = true
 sacp-rmcp.workspace = true
 sacp-tokio.workspace = true
 
