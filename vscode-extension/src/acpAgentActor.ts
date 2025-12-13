@@ -243,8 +243,14 @@ export class AcpAgentActor {
       conductorArgs.push("--trace-dir", traceDir);
     }
 
-    // Add log level if configured
-    const agentLogLevel = vsConfig.get<string>("agentLogLevel", "");
+    // Add log level if configured, or inherit from general logLevel if set to debug
+    let agentLogLevel = vsConfig.get<string>("agentLogLevel", "");
+    if (!agentLogLevel) {
+      const generalLogLevel = vsConfig.get<string>("logLevel", "error");
+      if (generalLogLevel === "debug") {
+        agentLogLevel = "debug";
+      }
+    }
     if (agentLogLevel) {
       conductorArgs.push("--log", agentLogLevel);
     }
