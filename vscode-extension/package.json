@@ -3,7 +3,7 @@
   "displayName": "Symposium",
   "description": "Collaborative AI built collaboratively",
   "version": "0.0.1",
-  "publisher": "symposium",
+  "publisher": "symposium-dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/symposium/symposium.git"
@@ -109,6 +109,21 @@
           ],
           "default": "",
           "description": "Log level for the symposium-acp-agent process. Logs appear in the Symposium output channel. Leave empty to disable."
+        },
+        "symposium.requireModifierToSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, Enter adds a newline and Shift+Enter (or Cmd+Enter on Mac) sends the prompt. When disabled (default), Enter sends and Shift+Enter adds a newline."
+        },
+        "symposium.enableSparkle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Sparkle component for collaborative AI identity and memory."
+        },
+        "symposium.enableCrateResearcher": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Rust Crate Researcher component for Rust crate documentation lookup."
         }
       }
     },
@@ -172,7 +187,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",
-    "@aws/mynah-ui": "^4.38.0",
+    "@aws/mynah-ui": "file:../vendor/mynah-ui",
     "@types/uuid": "^10.0.0",
     "uuid": "^13.0.0"
   }

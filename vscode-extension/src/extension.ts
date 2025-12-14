@@ -184,6 +184,15 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "symposium.test.hasActivePrompt",
+      (tabId: string) => {
+        return chatProvider.hasActivePrompt(tabId);
+      },
+    ),
+  );
 }
 
 export function deactivate() {}

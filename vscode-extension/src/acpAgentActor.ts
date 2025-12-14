@@ -255,6 +255,14 @@ export class AcpAgentActor {
       conductorArgs.push("--log", agentLogLevel);
     }
 
+    // Add component disable flags if components are disabled
+    if (!config.enableSparkle) {
+      conductorArgs.push("--no-sparkle");
+    }
+    if (!config.enableCrateResearcher) {
+      conductorArgs.push("--no-crate-researcher");
+    }
+
     conductorArgs.push("--", agentCmd, ...agentArgs);
 
     logger.important("agent", "Spawning ACP agent", {
@@ -385,6 +393,25 @@ export class AcpAgentActor {
 
     // Notify completion
     this.callbacks.onAgentComplete(agentSessionId);
+  }
+
+  /**
+   * Cancel an ongoing prompt turn for a session.
+   *
+   * Sends a session/cancel notification to the agent. The agent should:
+   * - Stop all language model requests as soon as possible
+   * - Abort all tool call invocations in progress
+   * - Respond to the original prompt with stopReason: "cancelled"
+   *
+   * @param agentSessionId - Agent session identifier
+   */
+  async cancelSession(agentSessionId: string): Promise<void> {
+    if (!this.connection) {
+      throw new Error("ACP connection not initialized");
+    }
+
+    logger.debug("agent", "Cancelling session", { agentSessionId });
+    await this.connection.cancel({ sessionId: agentSessionId });
   }
 
   /**

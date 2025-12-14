@@ -59,10 +59,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
           // Send updated configuration to refresh the UI
           this.#sendConfiguration();
           break;
-        case "toggle-component":
-          // Toggle component enabled/disabled
-          await this.#toggleComponent(message.componentName);
-          break;
+
         case "toggle-bypass-permissions":
           // Toggle bypass permissions for an agent
           await this.#toggleBypassPermissions(message.agentName);
@@ -74,25 +71,16 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             "symposium",
           );
           break;
+        case "toggle-require-modifier-to-send":
+          // Toggle the requireModifierToSend setting
+          await this.#toggleRequireModifierToSend();
+          break;
+        case "toggle-component":
+          // Toggle a component enabled/disabled
+          await this.#toggleComponentSetting(message.componentId);
+          break;
       }
     });
-  }
-
-  async #toggleComponent(componentName: string) {
-    const config = vscode.workspace.getConfiguration("symposium");
-    const components = config.get<
-      Record<string, { command: string; args?: string[]; disabled?: boolean }>
-    >("components", {});
-
-    if (components[componentName]) {
-      components[componentName].disabled = !components[componentName].disabled;
-      await config.update(
-        "components",
-        components,
-        vscode.ConfigurationTarget.Global,
-      );
-      this.#sendConfiguration();
-    }
   }
 
   async #toggleBypassPermissions(agentName: string) {
@@ -110,6 +98,30 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  async #toggleRequireModifierToSend() {
+    const config = vscode.workspace.getConfiguration("symposium");
+    const currentValue = config.get<boolean>("requireModifierToSend", false);
+    await config.update(
+      "requireModifierToSend",
+      !currentValue,
+      vscode.ConfigurationTarget.Global,
+    );
+    this.#sendConfiguration();
+  }
+
+  async #toggleComponentSetting(componentId: string) {
+    const config = vscode.workspace.getConfiguration("symposium");
+    const settingName =
+      componentId === "sparkle" ? "enableSparkle" : "enableCrateResearcher";
+    const currentValue = config.get<boolean>(settingName, true);
+    await config.update(
+      settingName,
+      !currentValue,
+      vscode.ConfigurationTarget.Global,
+    );
+    this.#sendConfiguration();
+  }
+
   #sendConfiguration() {
     if (!this.#view) {
       return;
@@ -118,13 +130,23 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration("symposium");
     const agents = config.get("agents", {});
     const currentAgent = config.get("currentAgent", "");
-    const components = config.get("components", {});
+    const requireModifierToSend = config.get<boolean>(
+      "requireModifierToSend",
+      false,
+    );
+    const enableSparkle = config.get<boolean>("enableSparkle", true);
+    const enableCrateResearcher = config.get<boolean>(
+      "enableCrateResearcher",
+      true,
+    );
 
     this.#view.webview.postMessage({
       type: "config",
       agents,
       currentAgent,
-      components,
+      requireModifierToSend,
+      enableSparkle,
+      enableCrateResearcher,
     });
   }
 
@@ -151,12 +173,12 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
         .section {
             margin-bottom: 24px;
         }
-        .agent-list, .component-list {
+        .agent-list {
             display: flex;
             flex-direction: column;
             gap: 8px;
         }
-        .agent-item, .component-item {
+        .agent-item {
             padding: 8px 12px;
             background: var(--vscode-list-inactiveSelectionBackground);
             border-radius: 4px;
@@ -165,15 +187,12 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             justify-content: space-between;
             align-items: center;
         }
-        .agent-item:hover, .component-item:hover {
+        .agent-item:hover {
             background: var(--vscode-list-hoverBackground);
         }
         .agent-item.active {
             background: var(--vscode-list-activeSelectionBackground);
             color: var(--vscode-list-activeSelectionForeground);
-        }
-        .component-item.disabled {
-            opacity: 0.6;
         }
         .badges {
             display: flex;
@@ -199,6 +218,25 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
         }
+        .checkbox-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 8px 0;
+        }
+        .checkbox-item input[type="checkbox"] {
+            margin-top: 2px;
+            cursor: pointer;
+        }
+        .checkbox-item label {
+            cursor: pointer;
+            flex: 1;
+        }
+        .checkbox-description {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -211,8 +249,36 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 
     <div class="section">
         <h2>Components</h2>
-        <div class="component-list" id="component-list">
-            <div>Loading...</div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="component-sparkle" />
+            <label for="component-sparkle">
+                <div>Sparkle</div>
+                <div class="checkbox-description">
+                    Collaborative AI identity and memory.
+                </div>
+            </label>
+        </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="component-crate-researcher" />
+            <label for="component-crate-researcher">
+                <div>Rust Crate Researcher</div>
+                <div class="checkbox-description">
+                    Rust crate documentation lookup.
+                </div>
+            </label>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Preferences</h2>
+        <div class="checkbox-item">
+            <input type="checkbox" id="require-modifier-to-send" />
+            <label for="require-modifier-to-send">
+                <div>Require modifier key to send</div>
+                <div class="checkbox-description">
+                    When enabled, Enter adds a newline and Shift+Enter (or Cmd+Enter) sends the prompt.
+                </div>
+            </label>
         </div>
     </div>
 
@@ -234,15 +300,39 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ type: 'open-settings' });
         };
 
+        // Handle require modifier to send checkbox
+        document.getElementById('require-modifier-to-send').onchange = (e) => {
+            vscode.postMessage({ type: 'toggle-require-modifier-to-send' });
+        };
+
+        // Handle component checkboxes
+        document.getElementById('component-sparkle').onchange = (e) => {
+            vscode.postMessage({ type: 'toggle-component', componentId: 'sparkle' });
+        };
+        document.getElementById('component-crate-researcher').onchange = (e) => {
+            vscode.postMessage({ type: 'toggle-component', componentId: 'crate-researcher' });
+        };
+
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
 
             if (message.type === 'config') {
                 renderAgents(message.agents, message.currentAgent);
-                renderComponents(message.components);
+                renderComponents(message.enableSparkle, message.enableCrateResearcher);
+                renderPreferences(message.requireModifierToSend);
             }
         });
+
+        function renderComponents(enableSparkle, enableCrateResearcher) {
+            document.getElementById('component-sparkle').checked = enableSparkle;
+            document.getElementById('component-crate-researcher').checked = enableCrateResearcher;
+        }
+
+        function renderPreferences(requireModifierToSend) {
+            const checkbox = document.getElementById('require-modifier-to-send');
+            checkbox.checked = requireModifierToSend;
+        }
 
         function renderAgents(agents, currentAgent) {
             const list = document.getElementById('agent-list');
@@ -285,23 +375,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        function renderComponents(components) {
-            const list = document.getElementById('component-list');
-            list.innerHTML = '';
 
-            for (const [name, config] of Object.entries(components)) {
-                const item = document.createElement('div');
-                item.className = 'component-item' + (config.disabled ? ' disabled' : '');
-                item.innerHTML = \`
-                    <span>\${name}</span>
-                    <span class="toggle">\${config.disabled ? 'Disabled' : 'Enabled'}</span>
-                \`;
-                item.onclick = () => {
-                    vscode.postMessage({ type: 'toggle-component', componentName: name });
-                };
-                list.appendChild(item);
-            }
-        }
     </script>
 </body>
 </html>`;

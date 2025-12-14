@@ -3,12 +3,12 @@ import * as vscode from "vscode";
 
 suite("Extension Test Suite", () => {
   test("Extension should be present", async () => {
-    const extension = vscode.extensions.getExtension("symposium.symposium");
+    const extension = vscode.extensions.getExtension("symposium-dev.symposium");
     assert.ok(extension, "Extension should be installed");
   });
 
   test("Extension should activate", async () => {
-    const extension = vscode.extensions.getExtension("symposium.symposium");
+    const extension = vscode.extensions.getExtension("symposium-dev.symposium");
     assert.ok(extension);
 
     await extension.activate();
@@ -16,7 +16,7 @@ suite("Extension Test Suite", () => {
   });
 
   test("Chat view should be registered", async () => {
-    const extension = vscode.extensions.getExtension("symposium.symposium");
+    const extension = vscode.extensions.getExtension("symposium-dev.symposium");
     assert.ok(extension);
     await extension.activate();
 

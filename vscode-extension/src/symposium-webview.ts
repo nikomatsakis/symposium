@@ -5,6 +5,7 @@ import { MynahUI, ChatItem, ChatItemType } from "@aws/mynah-ui";
 declare const acquireVsCodeApi: any;
 declare const window: any & {
   SYMPOSIUM_EXTENSION_ACTIVATION_ID: string;
+  SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND: boolean;
 };
 
 // Import uuid - note: webpack will bundle this for browser
@@ -355,6 +356,9 @@ const config: any = {
       noTabsOpen: "### Join the symposium by opening a tab",
       spinnerText: "Discussing with the Symposium...",
     },
+    // When true, Enter adds newline and Shift/Cmd+Enter sends
+    // When false (default), Enter sends and Shift+Enter adds newline
+    requireModifierToSendPrompt: window.SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND,
   },
   defaults: {
     store: {
@@ -536,7 +540,20 @@ vscode.postMessage({ type: "webview-ready" });
 
 // Save state helper
 function saveState() {
-  // Get current tabs from mynah UI
+  // Sync current prompt input text to store for each tab before saving
+  // This captures any text the user is currently typing
+  const allTabs = mynahUI?.getAllTabs();
+  if (allTabs) {
+    for (const tabId of Object.keys(allTabs)) {
+      const currentPromptText = mynahUI.getPromptInputText(tabId);
+      if (currentPromptText) {
+        // Update the store with the current prompt input text
+        mynahUI.updateStore(tabId, { promptInputText: currentPromptText });
+      }
+    }
+  }
+
+  // Get current tabs from mynah UI (now includes synced prompt input text)
   const currentTabs = mynahUI?.getAllTabs();
 
   const state: WebviewState = {

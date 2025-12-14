@@ -18,6 +18,7 @@
 # Design and implementation
 
 - [Overview](./design/implementation-overview.md)
+- [Distribution](./design/distribution.md)
 - [Components](./design/components.md)
 - [Rust Crate Sources](./design/rust-crate-sources.md)
 - [VSCode Extension](./design/vscode-extension/architecture.md)
@@ -27,6 +28,7 @@
     - [Webview Lifecycle](./design/vscode-extension/webview-lifecycle.md)
     - [Testing](./design/vscode-extension/testing.md)
     - [Testing Implementation](./design/vscode-extension/testing-implementation.md)
+    - [Packaging](./design/vscode-extension/packaging.md)
     - [Implementation Status](./design/vscode-extension/implementation-status.md)
 
 # References

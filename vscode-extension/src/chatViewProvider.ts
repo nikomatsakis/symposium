@@ -59,6 +59,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     { resolve: (tabId: string | undefined) => void }
   > = new Map();
 
+  // Track tabs with active prompts in progress (for cancellation)
+  #tabsWithActivePrompt: Set<string> = new Set();
+
   #extensionContext: vscode.ExtensionContext;
 
   constructor(
@@ -124,6 +127,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       onAgentComplete: (agentSessionId) => {
         const tabId = this.#agentSessionToTab.get(agentSessionId);
         if (tabId) {
+          // Clear the active prompt flag now that the turn is complete
+          this.#tabsWithActivePrompt.delete(tabId);
+
           this.#sendToWebview({
             type: "agent-complete",
             tabId,
@@ -627,6 +633,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
 
+          // Cancel any in-progress prompt before sending a new one
+          if (this.#tabsWithActivePrompt.has(message.tabId)) {
+            logger.debug("agent", "Cancelling previous prompt before new one", {
+              tabId: message.tabId,
+              agentSessionId,
+            });
+            try {
+              await tabActor.cancelSession(agentSessionId);
+            } catch (err) {
+              logger.error("agent", "Failed to cancel previous prompt", {
+                error: err,
+              });
+              // Continue anyway - the new prompt should still work
+            }
+          }
+
           // Build content blocks for the prompt
           const contentBlocks: acp.ContentBlock[] = [];
 
@@ -737,10 +759,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             contentBlockCount: contentBlocks.length,
           });
 
+          // Mark this tab as having an active prompt
+          this.#tabsWithActivePrompt.add(message.tabId);
+
           // Send prompt to agent (responses come via callbacks)
           try {
             await tabActor.sendPrompt(agentSessionId, contentBlocks);
           } catch (err: any) {
+            // Clear active prompt flag on error
+            this.#tabsWithActivePrompt.delete(message.tabId);
             logger.error("agent", "Failed to send prompt", { error: err });
             this.#sendToWebview({
               type: "agent-error",
@@ -993,6 +1020,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this.#extensionUri, "out", "webview.js"),
     );
 
+    // Get the requireModifierToSend setting
+    const config = vscode.workspace.getConfiguration("symposium");
+    const requireModifierToSend = config.get<boolean>(
+      "requireModifierToSend",
+      false,
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1016,6 +1050,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <script>
         // Embed extension activation ID so it's available immediately
         window.SYMPOSIUM_EXTENSION_ACTIVATION_ID = "${this.#extensionActivationId}";
+        // Embed settings for MynahUI config
+        window.SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND = ${requireModifierToSend};
     </script>
     <script src="${scriptUri}"></script>
 </body>
@@ -1175,6 +1211,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.#testResponseCapture.delete(tabId);
   }
 
+  /**
+   * Check if a tab has an active prompt in progress.
+   * Used for testing cancellation behavior.
+   */
+  public hasActivePrompt(tabId: string): boolean {
+    return this.#tabsWithActivePrompt.has(tabId);
+  }
+
   async #handleWebviewMessage(message: any): Promise<void> {
     // This is the same logic from resolveWebviewView's onDidReceiveMessage
     // We'll need to refactor to share this code
@@ -1254,14 +1298,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
 
+          // Cancel any in-progress prompt before sending a new one
+          if (this.#tabsWithActivePrompt.has(message.tabId)) {
+            logger.debug("agent", "Cancelling previous prompt before new one", {
+              tabId: message.tabId,
+              agentSessionId,
+            });
+            try {
+              await tabActor.cancelSession(agentSessionId);
+            } catch (err) {
+              logger.error("agent", "Failed to cancel previous prompt", {
+                error: err,
+              });
+              // Continue anyway - the new prompt should still work
+            }
+          }
+
           logger.debug("agent", "Sending prompt to agent", {
             tabId: message.tabId,
             agentSessionId,
           });
 
+          // Mark this tab as having an active prompt
+          this.#tabsWithActivePrompt.add(message.tabId);
+
           // Send prompt to agent (responses come via callbacks)
           await tabActor.sendPrompt(agentSessionId, message.prompt);
         } catch (err: any) {
+          // Clear active prompt flag on error
+          this.#tabsWithActivePrompt.delete(message.tabId);
           logger.error("agent", "Failed to send prompt", { error: err });
           this.#sendToWebview({
             type: "agent-error",

@@ -15,7 +15,7 @@ suite("Multi-Tab Tests", () => {
     });
 
     // Activate the extension
-    const extension = vscode.extensions.getExtension("symposium.symposium");
+    const extension = vscode.extensions.getExtension("symposium-dev.symposium");
     assert.ok(extension);
     await extension.activate();
 
