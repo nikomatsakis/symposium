@@ -172,18 +172,18 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-  # TODO: Publish to Open VSX (needs OVSX_PAT secret)
-  # publish-open-vsx:
-  #   name: Publish to Open VSX
-  #   needs: build-vscode-extensions
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Download all vsix artifacts
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         pattern: vsix-*
-  #         merge-multiple: true
-  #     - name: Publish to Open VSX
-  #       run: npx ovsx publish *.vsix
-  #       env:
-  #         OVSX_PAT: ${{ secrets.OVSX_PAT }}
+  publish-open-vsx:
+    name: Publish to Open VSX
+    needs: build-vscode-extensions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all vsix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+
+      - name: Publish to Open VSX
+        run: npx ovsx publish *.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
