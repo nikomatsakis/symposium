@@ -255,6 +255,20 @@ export class AcpAgentActor {
       conductorArgs.push("--log", agentLogLevel);
     }
 
+    // Add component disable flags if components are disabled
+    const enableSparkle = vsConfig.get<boolean>("enableSparkle", true);
+    if (!enableSparkle) {
+      conductorArgs.push("--no-sparkle");
+    }
+
+    const enableCrateResearcher = vsConfig.get<boolean>(
+      "enableCrateResearcher",
+      true,
+    );
+    if (!enableCrateResearcher) {
+      conductorArgs.push("--no-crate-researcher");
+    }
+
     conductorArgs.push("--", agentCmd, ...agentArgs);
 
     logger.important("agent", "Spawning ACP agent", {

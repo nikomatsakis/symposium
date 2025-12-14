@@ -114,6 +114,16 @@
           "type": "boolean",
           "default": false,
           "description": "When enabled, Enter adds a newline and Shift+Enter (or Cmd+Enter on Mac) sends the prompt. When disabled (default), Enter sends and Shift+Enter adds a newline."
+        },
+        "symposium.enableSparkle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Sparkle component for collaborative AI identity and memory."
+        },
+        "symposium.enableCrateResearcher": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Rust Crate Researcher component for Rust crate documentation lookup."
         }
       }
     },
