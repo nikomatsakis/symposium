@@ -102,9 +102,8 @@ fn main() -> Result<()> {
     }
 
     if configure_zed {
-        let conductor_path = acp::get_binary_path("sacp-conductor")?;
-        let symposium_acp_proxy_path = acp::get_binary_path("symposium-acp-proxy")?;
-        zed::configure_zed(&conductor_path, &symposium_acp_proxy_path, args.dry_run)?;
+        let symposium_acp_agent_path = acp::get_binary_path("symposium-acp-agent")?;
+        zed::configure_zed(&symposium_acp_agent_path, args.dry_run)?;
         println!();
     }
 
@@ -143,10 +142,8 @@ fn print_completion_message(
 
     if installed_acp {
         println!("📦 ACP binaries installed to ~/.cargo/bin/:");
-        println!("   • sacp-conductor");
         println!("   • elizacp");
-        println!("   • sacp-tee");
-        println!("   • symposium-acp-proxy");
+        println!("   • symposium-acp-agent");
         println!();
     }
 
