@@ -6,14 +6,12 @@
 mod crate_sources_mcp;
 mod eg;
 mod research_agent;
-mod state;
 
 use anyhow::Result;
 use sacp::component::Component;
 use sacp::mcp_server::McpServiceRegistry;
-use sacp::ProxyToConductor;
-use state::ResearchState;
-use std::sync::Arc;
+use sacp::schema::NewSessionRequest;
+use sacp::{Agent, Client, ProxyToConductor};
 
 /// Run the proxy as a standalone binary connected to stdio
 pub async fn run() -> Result<()> {
@@ -37,19 +35,24 @@ pub struct CrateSourcesProxy;
 
 impl Component for CrateSourcesProxy {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-        // Create shared state for tracking active research sessions
-        let state = Arc::new(ResearchState::new());
-
-        // Create MCP service registry with the user-facing service
-        let mcp_registry = McpServiceRegistry::new().with_mcp_server(
-            "rust-crate-query",
-            research_agent::build_server(state.clone()),
-        )?;
-
         ProxyToConductor::builder()
             .name("rust-crate-sources-proxy")
-            .with_handler(mcp_registry)
-            .with_handler(research_agent::PermissionAutoApprover::new(state.clone()))
+            .on_receive_request_from(
+                Client,
+                async |mut request: NewSessionRequest, request_cx, cx| {
+                    McpServiceRegistry::new()
+                        .with_mcp_server(
+                            "rust-crate-query",
+                            research_agent::build_server(&request.cwd),
+                        )?
+                        .add_registered_mcp_servers_to(&mut request, &cx)?
+                        .into_iter()
+                        .for_each(|r| r.run_indefinitely());
+
+                    cx.send_request_to(Agent, request)
+                        .forward_to_request_cx(request_cx)
+                },
+            )
             .serve(client)
             .await
     }

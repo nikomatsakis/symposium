@@ -102,22 +102,22 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     let research_prompt = benchmark.prompt;
     let expected_result = benchmark.expected;
 
-    let response = yopo::prompt(
-        Conductor::new(
-            "benchmark-conductor".to_string(),
-            vec![
-                DynComponent::new(symposium_crate_sources_proxy::CrateSourcesProxy),
-                DynComponent::new(AcpAgent::from_str(
-                    "npx -y '@zed-industries/claude-code-acp'",
-                )?),
-            ],
-            Default::default(),
-        )
-        .trace_to_path("killme.jsons")
-        .map_err(sacp::util::internal_error)?,
-        research_prompt,
+    // Build conductor with crate sources proxy and agent
+    let conductor = Conductor::new(
+        "benchmark-conductor".to_string(),
+        vec![
+            DynComponent::new(symposium_crate_sources_proxy::CrateSourcesProxy),
+            DynComponent::new(AcpAgent::from_str(
+                "npx -y '@zed-industries/claude-code-acp'",
+            )?),
+        ],
+        Default::default(),
     )
-    .await?;
+    .trace_to_path("killme.jsons")
+    .map_err(sacp::util::internal_error)?;
+
+    // Run prompt
+    let response = yopo::prompt(conductor, research_prompt).await?;
 
     tracing::info!("Research response received: {} chars", response.len());
 

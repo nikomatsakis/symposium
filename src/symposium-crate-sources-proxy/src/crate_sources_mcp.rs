@@ -6,10 +6,11 @@
 //!
 //! This service is attached to NewSessionRequest when spawning research sessions.
 
+use std::sync::{Arc, Mutex};
+
 use crate::eg;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 
 /// Parameters for the get_rust_crate_source tool
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -48,7 +49,7 @@ struct ReturnResponseOutput {
 /// Each instance is created for a specific research session and holds a channel
 /// to send responses back to the waiting research agent.
 pub fn build_server(
-    response_tx: mpsc::Sender<serde_json::Value>,
+    responses: Arc<Mutex<Vec<serde_json::Value>>>,
 ) -> sacp::mcp_server::McpServer<sacp::ProxyToConductor> {
     use sacp::mcp_server::McpServer;
 
@@ -97,7 +98,7 @@ pub fn build_server(
             "return_response_to_user",
             "Record the results that will be returned to the user. If invoked multiple times, the results will be appended to the previous response.",
             {
-                let response_tx = response_tx.clone();
+                let responses = responses.clone();
                 async move |input: ReturnResponseParams, _context| {
                     let ReturnResponseParams { response } = input;
 
@@ -105,9 +106,7 @@ pub fn build_server(
                     tracing::debug!("Response: {}", response);
 
                     // Send the response through the channel to the waiting research agent
-                    response_tx.send(response.clone()).await.map_err(|_| {
-                        anyhow::anyhow!("Failed to send response: channel closed")
-                    })?;
+                    responses.lock().expect("not poisoned").push(response);
 
                     Ok(ReturnResponseOutput {
                         message: "Response delivered to waiting agent.".to_string(),

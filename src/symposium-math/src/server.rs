@@ -110,7 +110,7 @@ pub async fn run_acp_proxy() -> Result<()> {
     use sacp_rmcp::McpServiceRegistryRmcpExt;
 
     let mcp_registry =
-        McpServiceRegistry::new().with_rmcp_server("symposium-math", MathServer::new)?;
+        McpServiceRegistry::new().with_rmcp_server("symposium-math", || MathServer::new())?;
 
     ProxyToConductor::builder()
         .name("symposium-math-proxy")
