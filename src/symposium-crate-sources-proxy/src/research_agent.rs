@@ -7,106 +7,19 @@
 //! 4. Auto-approves permissions and logs session notifications
 //! 5. Collects responses and returns findings to the user
 
-use crate::{crate_sources_mcp, state::ResearchState};
+use crate::crate_sources_mcp;
 use indoc::formatdoc;
 use sacp::{
-    mcp_server::{McpServer, McpServiceRegistry},
+    mcp_server::McpServer,
     schema::{
-        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-        RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-        SessionNotification,
+        RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, StopReason,
     },
-    Handled, JrConnectionCx, JrMessageHandler, MessageCx, ProxyToConductor,
+    util::MatchMessage,
+    ProxyToConductor,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{pin::pin, sync::Arc};
-use tokio::sync::mpsc;
-
-/// Handler for auto-approving permission requests from research sessions.
-pub struct PermissionAutoApprover {
-    state: Arc<ResearchState>,
-}
-
-impl PermissionAutoApprover {
-    pub fn new(state: Arc<ResearchState>) -> Self {
-        Self { state }
-    }
-}
-
-impl JrMessageHandler for PermissionAutoApprover {
-    type Role = ProxyToConductor;
-
-    fn describe_chain(&self) -> impl std::fmt::Debug {
-        "permission-auto-approver"
-    }
-
-    async fn handle_message(
-        &mut self,
-        message: MessageCx,
-        _cx: JrConnectionCx<Self::Role>,
-    ) -> Result<Handled<MessageCx>, sacp::Error> {
-        sacp::util::MatchMessage::new(message)
-            .if_request(async |request: RequestPermissionRequest, request_cx| {
-                // Auto-approve all permissions for research sessions
-                if self.state.is_research_session(&request.session_id) {
-                    tracing::debug!(
-                        "Auto-approving permission request for research session {}",
-                        request.session_id
-                    );
-
-                    // Find the first option that looks like "allow" and use it.
-                    for option in &request.options {
-                        match option.kind {
-                            sacp::schema::PermissionOptionKind::AllowOnce
-                            | sacp::schema::PermissionOptionKind::AllowAlways => {
-                                request_cx.respond(RequestPermissionResponse {
-                                    outcome: RequestPermissionOutcome::Selected {
-                                        option_id: option.id.clone(),
-                                    },
-                                    meta: None,
-                                })?;
-                                return Ok(Handled::Yes);
-                            }
-                            sacp::schema::PermissionOptionKind::RejectOnce
-                            | sacp::schema::PermissionOptionKind::RejectAlways => {}
-                        }
-                    }
-                }
-
-                Ok(Handled::No((request, request_cx)))
-            })
-            .await
-            .if_notification({
-                let state = self.state.clone();
-                async move |notification: SessionNotification| {
-                    // Log all notifications for research sessions
-                    if state.is_research_session(&notification.session_id) {
-                        tracing::debug!("Research session notification: {:?}", notification);
-                        return Ok(Handled::Yes);
-                    }
-
-                    Ok(Handled::No(notification))
-                }
-            })
-            .await
-            .done()
-    }
-}
-
-/// Create a NewSessionRequest for the research agent.
-pub fn research_agent_session_request(
-    sub_agent_mcp_registry: McpServiceRegistry<ProxyToConductor>,
-) -> Result<NewSessionRequest, sacp::Error> {
-    let cwd = std::env::current_dir().map_err(|_| sacp::Error::internal_error())?;
-    let mut new_session_req = NewSessionRequest {
-        cwd,
-        mcp_servers: vec![],
-        meta: None,
-    };
-    sub_agent_mcp_registry.add_registered_mcp_servers_to(&mut new_session_req);
-    Ok(new_session_req)
-}
+use std::sync::{Arc, Mutex};
 
 /// Build the research prompt with context and instructions for the sub-agent.
 pub fn build_research_prompt(user_prompt: &str) -> String {
@@ -151,14 +64,14 @@ pub struct RustCrateQueryParams {
 
 /// Output from the rust_crate_query tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct RustCrateQueryOutput {
+pub struct RustCrateQueryOutput {
     /// The research findings
-    result: serde_json::Value,
+    pub result: Vec<serde_json::Value>,
 }
 
 /// Build the MCP server for crate research queries
-pub fn build_server(state: Arc<ResearchState>) -> McpServer<ProxyToConductor> {
-    McpServer::new()
+pub fn build_server() -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+    McpServer::builder("rust-crate-query".to_string())
         .instructions(indoc::indoc! {"
             Research Rust crate source code and APIs. Essential for working with unfamiliar crates.
 
@@ -168,7 +81,7 @@ pub fn build_server(state: Arc<ResearchState>) -> McpServer<ProxyToConductor> {
             - When implementation details matter: explore how features work internally
             - When documentation is unclear: see concrete code examples
         "})
-        .tool_fn(
+        .tool_fn_mut(
             "rust_crate_query",
             indoc::indoc! {r#"
                 Research a Rust crate by examining its actual source code.
@@ -181,104 +94,115 @@ pub fn build_server(state: Arc<ResearchState>) -> McpServer<ProxyToConductor> {
 
                 The research agent will examine the crate sources and return relevant code examples, signatures, and implementation details.
             "#},
-            {
-                async move |input: RustCrateQueryParams, mcp_cx: sacp::mcp_server::McpContext<ProxyToConductor>| {
-                    let RustCrateQueryParams {
-                        crate_name,
-                        crate_version,
-                        prompt,
-                    } = input;
-
-                    tracing::info!(
-                        "Received crate query for '{}' version: {:?}",
-                        crate_name,
-                        crate_version
-                    );
-                    tracing::debug!("Research prompt: {}", prompt);
-
-                    let cx = mcp_cx.connection_cx();
-
-                    // Create a channel for receiving responses from the sub-agent's return_response_to_user calls
-                    let (response_tx, mut response_rx) = mpsc::channel::<serde_json::Value>(32);
-
-                    // Create a fresh MCP service registry for this research session
-                    let sub_agent_mcp_registry = McpServiceRegistry::new()
-                        .with_mcp_server(
-                            "rust-crate-sources",
-                            crate_sources_mcp::build_server(response_tx.clone()),
-                        )
-                        .map_err(|e| anyhow::anyhow!("Failed to create MCP registry: {}", e))?;
-
-                    // Spawn the sub-agent session with the per-instance MCP registry
-                    let NewSessionResponse {
-                        session_id,
-                        modes: _,
-                        meta: _,
-                    } = cx
-                        .send_request_to(sacp::Agent, research_agent_session_request(
-                            sub_agent_mcp_registry,
-                        ).map_err(|e| anyhow::anyhow!("Failed to create session request: {}", e))?)
-                        .block_task()
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to spawn research session: {}", e))?;
-
-                    tracing::info!("Research session created: {}", session_id);
-
-                    // Register this session_id in shared state so permission requests are auto-approved
-                    state.register_session(&session_id);
-
-                    let mut responses = vec![];
-                    let (result, _) = futures::future::select(
-                        // Collect responses from the response channel
-                        pin!(async {
-                            while let Some(response) = response_rx.recv().await {
-                                responses.push(response);
-                            }
-                            Ok::<(), anyhow::Error>(())
-                        }),
-                        pin!(async {
-                            let research_prompt = build_research_prompt(&prompt);
-                            let prompt_request = PromptRequest {
-                                session_id: session_id.clone(),
-                                prompt: vec![research_prompt.into()],
-                                meta: None,
-                            };
-
-                            let PromptResponse {
-                                stop_reason,
-                                meta: _,
-                            } = cx
-                                .send_request_to(sacp::Agent, prompt_request)
-                                .block_task()
-                                .await
-                                .map_err(|e| anyhow::anyhow!("Prompt request failed: {}", e))?;
-
-                            tracing::info!(
-                                "Research complete for session {session_id} ({stop_reason:?})"
-                            );
-
-                            Ok::<(), anyhow::Error>(())
-                        }),
-                    )
-                    .await
-                    .factor_first();
-                    result?;
-
-                    // Unregister the session now that research is complete
-                    state.unregister_session(&session_id);
-
-                    // Return the accumulated responses
-                    let response = if responses.len() == 1 {
-                        responses.pop().expect("singleton")
-                    } else {
-                        serde_json::Value::Array(responses)
-                    };
-
-                    tracing::info!("Research complete for '{}'", crate_name);
-
-                    Ok(RustCrateQueryOutput { result: response })
-                }
+            async move |input: RustCrateQueryParams, mcp_cx: sacp::mcp_server::McpContext<ProxyToConductor>| {
+                run_research_query(input, mcp_cx).await
             },
-            |f, args, cx| Box::pin(f(args, cx)),
+            sacp::tool_fn_mut!(),
         )
+        .build()
+}
+
+async fn run_research_query(
+    input: RustCrateQueryParams,
+    mcp_cx: sacp::mcp_server::McpContext<ProxyToConductor>,
+) -> Result<RustCrateQueryOutput, sacp::Error> {
+    let RustCrateQueryParams {
+        crate_name,
+        crate_version,
+        prompt,
+    } = input;
+
+    tracing::info!(
+        "Received crate query for '{}' version: {:?}",
+        crate_name,
+        crate_version
+    );
+    tracing::debug!("Research prompt: {}", prompt);
+
+    let cx = mcp_cx.connection_cx();
+
+    // Create a channel for receiving responses from the sub-agent's return_response_to_user calls
+    let responses: Arc<Mutex<Vec<serde_json::Value>>> = Default::default();
+    let mcp_server = crate_sources_mcp::build_server(responses.clone());
+
+    // Spawn the sub-agent session with the per-instance MCP server
+    // Use current directory since we don't have access to session cwd here
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    cx.build_session(cwd)
+        .with_mcp_server(mcp_server)?
+        .run_session(async |mut active_session| {
+            tracing::debug!(session_id = ?active_session.session_id(), "Session active");
+
+            active_session.send_prompt(build_research_prompt(&prompt))?;
+            tracing::debug!("Sent research prompt to session");
+
+            loop {
+                match active_session.read_update().await? {
+                    sacp::SessionMessage::SessionMessage(message_cx) => {
+                        MatchMessage::new(message_cx)
+                            .if_request(async |request: RequestPermissionRequest, request_cx| {
+                                approve_tool_request(request, request_cx)
+                            })
+                            .await
+                            .otherwise(async |message| {
+                                // Log any other messages, we don't care about them
+                                tracing::trace!(?message);
+                                Ok(())
+                            })
+                            .await?
+                    }
+
+                    // Once the turn is over, we stop.
+                    sacp::SessionMessage::StopReason(stop_reason) => match stop_reason {
+                        StopReason::EndTurn => {
+                            // Once the agent finishes its turn, results should have been collected into the responses vector
+                            let result = std::mem::replace(
+                                &mut *responses.lock().expect("not poisoned"),
+                                vec![],
+                            );
+                            return Ok(RustCrateQueryOutput { result });
+                        }
+
+                        // Other stop reasons are an error. What gives!
+                        StopReason::MaxTokens
+                        | StopReason::MaxTurnRequests
+                        | StopReason::Refusal
+                        | StopReason::Cancelled => {
+                            return Err(sacp::util::internal_error(format!(
+                                "researcher stopped early: {stop_reason:?}"
+                            )));
+                        }
+                    },
+
+                    // Anything else, just ignore.
+                    _ => {}
+                }
+            }
+        })
+        .await
+}
+
+fn approve_tool_request(
+    request: RequestPermissionRequest,
+    request_cx: sacp::JrRequestCx<RequestPermissionResponse>,
+) -> Result<(), sacp::Error> {
+    let outcome = request
+        .options
+        .iter()
+        .find(|option| match option.kind {
+            sacp::schema::PermissionOptionKind::AllowOnce
+            | sacp::schema::PermissionOptionKind::AllowAlways => true,
+            sacp::schema::PermissionOptionKind::RejectOnce
+            | sacp::schema::PermissionOptionKind::RejectAlways => false,
+        })
+        .map(|option| RequestPermissionOutcome::Selected {
+            option_id: option.id.clone(),
+        })
+        .unwrap_or(RequestPermissionOutcome::Cancelled);
+
+    request_cx.respond(RequestPermissionResponse {
+        outcome,
+        meta: None,
+    })
 }

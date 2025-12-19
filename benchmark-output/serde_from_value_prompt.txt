@@ -1,0 +1,1 @@
+Please use the `rust_crate_query` tool from the `rust-crate-sources` MCP server to research the signature of the serde_json::from_value API and describe what inputs it accepts. Do not try to read files from disk - use the MCP tool.

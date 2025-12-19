@@ -4,8 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Install ACP binaries: sacp-conductor, elizacp, sacp-tee from crates.io,
-/// and symposium-acp-proxy from local repository
+/// Install ACP binaries from local repository
 pub fn install_acp_binaries(repo_root: &Path, dry_run: bool) -> Result<()> {
     println!("📦 Installing ACP binaries...");
 
@@ -13,10 +12,10 @@ pub fn install_acp_binaries(repo_root: &Path, dry_run: bool) -> Result<()> {
     verify_symposium_repo(repo_root)?;
 
     // Install from crates.io
-    install_from_crates_io(&["sacp-conductor", "elizacp", "sacp-tee"], dry_run)?;
+    install_from_crates_io(&["elizacp"], dry_run)?;
 
-    // Install symposium-acp-proxy from local repository
-    install_symposium_acp_proxy(repo_root, dry_run)?;
+    // Install symposium-acp-agent from local repository
+    install_local_binaries(repo_root, dry_run)?;
 
     if !dry_run {
         println!("✅ ACP binaries installed successfully!");
@@ -74,39 +73,44 @@ fn install_from_crates_io(crates: &[&str], dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-/// Install symposium-acp-proxy from local repository
-fn install_symposium_acp_proxy(repo_root: &Path, dry_run: bool) -> Result<()> {
-    let symposium_acp_proxy_dir = repo_root.join("src/symposium-acp-proxy");
+/// Install local symposium binaries from the repository
+fn install_local_binaries(repo_root: &Path, dry_run: bool) -> Result<()> {
+    for binary_name in ["symposium-acp-agent"] {
+        let binary_dir = repo_root.join("src").join(binary_name);
 
-    if !symposium_acp_proxy_dir.exists() {
-        return Err(anyhow!(
-            "❌ symposium-acp-proxy directory not found at: {}",
-            symposium_acp_proxy_dir.display()
-        ));
-    }
-
-    println!("   Path: {}", symposium_acp_proxy_dir.display());
-
-    if dry_run {
-        println!("   Would install symposium-acp-proxy from local repository");
-    } else {
-        println!("   Installing symposium-acp-proxy from local repository...");
-
-        let output = Command::new("cargo")
-            .args(["install", "--path", ".", "--force"])
-            .current_dir(&symposium_acp_proxy_dir)
-            .output()
-            .context("Failed to execute cargo install for symposium-acp-proxy")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !binary_dir.exists() {
             return Err(anyhow!(
-                "❌ Failed to install symposium-acp-proxy:\n   Error: {}",
-                stderr.trim()
+                "❌ {} directory not found at: {}",
+                binary_name,
+                binary_dir.display()
             ));
         }
 
-        println!("   ✅ symposium-acp-proxy installed");
+        if dry_run {
+            println!("   Would install {} from local repository", binary_name);
+        } else {
+            println!("   Installing {} from local repository...", binary_name);
+
+            let output = Command::new("cargo")
+                .args(["install", "--path", ".", "--force"])
+                .current_dir(&binary_dir)
+                .output()
+                .context(format!(
+                    "Failed to execute cargo install for {}",
+                    binary_name
+                ))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!(
+                    "❌ Failed to install {}:\n   Error: {}",
+                    binary_name,
+                    stderr.trim()
+                ));
+            }
+
+            println!("   ✅ {} installed", binary_name);
+        }
     }
     Ok(())
 }

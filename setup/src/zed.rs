@@ -62,11 +62,7 @@ fn is_command_available(cmd: &str) -> bool {
 }
 
 /// Configure Zed with detected agents
-pub fn configure_zed(
-    conductor_path: &Path,
-    symposium_acp_path: &Path,
-    dry_run: bool,
-) -> Result<()> {
+pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<()> {
     let zed_config_path = get_zed_config_path()?;
 
     if !zed_config_path.exists() {
@@ -105,8 +101,7 @@ pub fn configure_zed(
     for agent in &agents {
         let config_name = agent.config_name();
 
-        let agent_config =
-            create_agent_config(conductor_path, symposium_acp_path, agent.npx_package());
+        let agent_config = create_agent_config(symposium_acp_agent_path, agent.npx_package());
 
         if dry_run {
             println!("   Would add configuration for: {}", config_name);
@@ -137,19 +132,11 @@ pub fn configure_zed(
 }
 
 /// Create an agent server configuration entry
-fn create_agent_config(
-    conductor_path: &Path,
-    symposium_acp_path: &Path,
-    npx_package: &str,
-) -> Value {
+fn create_agent_config(symposium_acp_agent_path: &Path, npx_package: &str) -> Value {
     json!({
-        "default_mode": "bypassPermissions",
-        "command": conductor_path.to_string_lossy(),
-        "args": [
-            "agent",
-            symposium_acp_path.to_string_lossy(),
-            format!("npx -y '{}'", npx_package)
-        ],
+        "type": "custom",
+        "command": symposium_acp_agent_path.to_string_lossy(),
+        "args": ["--", "npx", "-y", npx_package],
         "env": {}
     })
 }
