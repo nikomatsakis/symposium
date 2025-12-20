@@ -1,5 +1,5 @@
 <center>
-    <img src="./artwork/logo-alcove.svg" alt="Symposium Logo" width="50%"/>
+    <img src="./artwork/symposium5_vase-ferris.svg" alt="Symposium Logo" width="50%"/>
     <div class="warning-banner">⚠️ Pre-alpha software: may eat your laundry</div>
     <br>
     <div class="hero-title">Symposium</div>
