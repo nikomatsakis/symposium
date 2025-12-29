@@ -8,6 +8,7 @@ mod research_agent;
 
 use anyhow::Result;
 use sacp::component::Component;
+use sacp::link::ConductorToProxy;
 use sacp::ProxyToConductor;
 
 /// Run the proxy as a standalone binary connected to stdio
@@ -30,8 +31,8 @@ pub async fn run() -> Result<()> {
 /// A proxy which forwards all messages to its successor, adding access to the rust-crate-query MCP server.
 pub struct CrateSourcesProxy;
 
-impl Component for CrateSourcesProxy {
-    async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
+impl Component<ProxyToConductor> for CrateSourcesProxy {
+    async fn serve(self, client: impl Component<ConductorToProxy>) -> Result<(), sacp::Error> {
         ProxyToConductor::builder()
             .name("rust-crate-sources-proxy")
             .with_mcp_server(research_agent::build_server())
