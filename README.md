@@ -1,7 +1,7 @@
 # Symposium
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/symposium-dev/symposium/refs/heads/main/md/artwork/symposium5_vase-ferris.svg" alt="Symposium logo" width="300"/>
+  <img src="https://raw.githubusercontent.com/symposium-dev/symposium/refs/heads/main/md/artwork/symposium5_vase-ferris.png" alt="Symposium logo" width="300"/>
 </p>
 
 <p align="center"><em>Collaborative AI built collaboratively</em></p>
