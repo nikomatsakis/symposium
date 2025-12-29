@@ -1,22 +1,21 @@
-//! MCP service for research sub-agent sessions.
+//! MCP server for research sub-agent sessions.
 //!
 //! Provides tools that research agents use to investigate Rust crate sources:
 //! - `get_rust_crate_source`: Locates and extracts crate sources from crates.io
 //! - `return_response_to_user`: Sends research findings back to complete the query
-//!
-//! This service is attached to NewSessionRequest when spawning research sessions.
 
 use std::sync::{Arc, Mutex};
 
-use sacp::mcp_server::McpServer;
-use sacp::ProxyToConductor;
+use sacp::{ProxyToConductor, mcp_server::McpServer};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::Ferris;
 
 /// Parameters for the get_rust_crate_source tool
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct GetRustCrateSourceParams {
-    /// Name of the crate to search
+    /// Name of the crate to fetch
     pub crate_name: String,
     /// Optional semver range (e.g., "1.0", "^1.2", "~1.2.3")
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,28 +46,26 @@ struct ReturnResponseOutput {
 
 /// Build the MCP server for sub-agent research sessions.
 ///
-/// Each instance is created for a specific research session and holds a channel
-/// to send responses back to the waiting research agent.
+/// Each instance is created for a specific research session and holds a reference
+/// to collect responses that will be returned to the calling agent.
 pub fn build_server(
     responses: Arc<Mutex<Vec<serde_json::Value>>>,
 ) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
-    McpServer::builder("rust-crate-sources".to_string())
-        .instructions("Provides tools for researching Rust crate sources: get_rust_crate_source to locate crates, return_response_to_user to deliver findings")
+    McpServer::builder("ferris-research".to_string())
+        .instructions("Tools for researching Rust crate sources: get_rust_crate_source to fetch crates, return_response_to_user to deliver findings")
         .tool_fn_mut(
             "get_rust_crate_source",
-            "Locate and extract Rust crate sources from crates.io. Returns the local path where the crate sources are available for reading.",
+            "Fetch and extract Rust crate sources from crates.io. Returns the local path where the crate sources are available for reading.",
             async move |input: GetRustCrateSourceParams, _context| {
                 let GetRustCrateSourceParams { crate_name, version } = input;
 
                 tracing::debug!(
-                    "Getting Rust crate source for '{}' version: {:?}",
-                    crate_name,
-                    version,
+                    crate_name = %crate_name,
+                    version = ?version,
+                    "Sub-agent fetching crate source"
                 );
 
-                let mut fetch = symposium_ferris::Ferris::rust_crate(&crate_name);
-
-                // Use version resolver for semver range support and project detection
+                let mut fetch = Ferris::rust_crate(&crate_name);
                 if let Some(version_spec) = version {
                     fetch = fetch.version(&version_spec);
                 }
@@ -86,7 +83,7 @@ pub fn build_server(
 
                 Ok(GetRustCrateSourceOutput {
                     crate_name,
-                    version: result.version.clone(),
+                    version: result.version,
                     checkout_path: result.path.display().to_string(),
                     message,
                 })
@@ -95,7 +92,7 @@ pub fn build_server(
         )
         .tool_fn_mut(
             "return_response_to_user",
-            "Record the results that will be returned to the user. If invoked multiple times, the results will be appended to the previous response.",
+            "Record research findings to return to the user. Can be invoked multiple times; all responses will be collected.",
             {
                 let responses = responses.clone();
                 move |input: ReturnResponseParams, _context| {
@@ -103,14 +100,13 @@ pub fn build_server(
                     async move {
                         let ReturnResponseParams { response } = input;
 
-                        tracing::info!("Research complete, returning response");
-                        tracing::debug!("Response: {}", response);
+                        tracing::info!("Research complete, recording response");
+                        tracing::debug!(response = %response, "Response content");
 
-                        // Send the response through the channel to the waiting research agent
                         responses.lock().expect("not poisoned").push(response);
 
                         Ok(ReturnResponseOutput {
-                            message: "Response delivered to waiting agent.".to_string(),
+                            message: "Response recorded.".to_string(),
                         })
                     }
                 }

@@ -5,7 +5,6 @@ members = [
     "ci",
     "src/symposium-acp-proxy",
     "src/symposium-acp-agent",
-    "src/symposium-crate-sources-proxy",
     "src/symposium-ferris",
     "src/symposium-math",
     "src/cli-agent-util",
