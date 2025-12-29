@@ -44,8 +44,8 @@ pub struct RustResearcherOutput {
 }
 
 /// Register the rust_researcher tool with the MCP server builder.
-pub fn register<R: sacp::JrResponder<ProxyToConductor>>(
-    builder: McpServerBuilder<ProxyToConductor, R>,
+pub fn register(
+    builder: McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>>,
     enabled: bool,
 ) -> McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
     builder.tool_fn_mut(
