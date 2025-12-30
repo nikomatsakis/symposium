@@ -1,6 +1,6 @@
 [package]
 name = "symposium-acp-proxy"
-version = "1.0.0-alpha.1"
+version = "1.0.0-alpha.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Symposium ACP proxy - orchestrates component chains to enrich agent capabilities"
