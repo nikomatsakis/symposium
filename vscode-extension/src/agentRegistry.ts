@@ -26,8 +26,8 @@ export interface PipxDistribution {
 }
 
 export interface BinaryDistribution {
-  url: string;
-  executable: string;
+  archive: string;
+  cmd: string;
   args?: string[];
 }
 
@@ -213,7 +213,9 @@ export async function resolveDistribution(
     if (binaryDist) {
       const version = agent.version ?? "latest";
       const cacheDir = getBinaryCacheDir(agent.id, version);
-      const executablePath = path.join(cacheDir, binaryDist.executable);
+      // cmd may have leading "./" - strip it for the path
+      const executable = binaryDist.cmd.replace(/^\.\//, "");
+      const executablePath = path.join(cacheDir, executable);
 
       // Check if binary exists in cache
       const fs = await import("fs/promises");
@@ -264,7 +266,7 @@ async function downloadAndCacheBinary(
   await fs.mkdir(cacheDir, { recursive: true });
 
   // Download the binary
-  const response = await fetch(binaryDist.url);
+  const response = await fetch(binaryDist.archive);
   if (!response.ok) {
     throw new Error(
       `Failed to download binary for ${agent.id}: ${response.status} ${response.statusText}`,
@@ -272,7 +274,7 @@ async function downloadAndCacheBinary(
   }
 
   const buffer = await response.arrayBuffer();
-  const url = new URL(binaryDist.url);
+  const url = new URL(binaryDist.archive);
   const filename = path.basename(url.pathname);
   const downloadPath = path.join(cacheDir, filename);
 
@@ -291,7 +293,8 @@ async function downloadAndCacheBinary(
 
   // Make executable on Unix
   if (process.platform !== "win32") {
-    const executablePath = path.join(cacheDir, binaryDist.executable);
+    const executable = binaryDist.cmd.replace(/^\.\//, "");
+    const executablePath = path.join(cacheDir, executable);
     await fs.chmod(executablePath, 0o755);
   }
 }
@@ -333,6 +336,14 @@ export interface RegistryEntry {
 }
 
 /**
+ * Registry JSON format
+ */
+interface RegistryJson {
+  version: string;
+  agents: RegistryEntry[];
+}
+
+/**
  * Fetch the agent registry from GitHub releases.
  * Returns agents that are NOT already in the user's effective agents list.
  */
@@ -344,13 +355,13 @@ export async function fetchAvailableRegistryAgents(): Promise<RegistryEntry[]> {
     );
   }
 
-  const registry = (await response.json()) as RegistryEntry[];
+  const registryJson = (await response.json()) as RegistryJson;
 
   // Filter out agents already configured
   const effectiveAgents = getEffectiveAgents();
   const existingIds = new Set(effectiveAgents.map((a) => a.id));
 
-  return registry.filter((entry) => !existingIds.has(entry.id));
+  return registryJson.agents.filter((entry) => !existingIds.has(entry.id));
 }
 
 /**
@@ -364,7 +375,8 @@ export async function fetchRegistry(): Promise<RegistryEntry[]> {
     );
   }
 
-  return (await response.json()) as RegistryEntry[];
+  const registryJson = (await response.json()) as RegistryJson;
+  return registryJson.agents;
 }
 
 /**

@@ -212,6 +212,15 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             justify-content: space-between;
             align-items: center;
         }
+        .agent-name {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .agent-version {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
         .agent-item:hover {
             background: var(--vscode-list-hoverBackground);
         }
@@ -389,13 +398,20 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
                     badges.push('<span class="badge bypass" title="Click to disable bypass permissions">Bypass Permissions</span>');
                 }
 
+                const versionHtml = agent.version
+                    ? \`<span class="agent-version">v\${agent.version}</span>\`
+                    : '';
+
                 item.innerHTML = \`
-                    <span>\${displayName}</span>
+                    <div class="agent-name">
+                        <span>\${displayName}</span>
+                        \${versionHtml}
+                    </div>
                     <div class="badges">\${badges.join('')}</div>
                 \`;
 
                 // Handle clicking on the agent name (switch agent)
-                const nameSpan = item.querySelector('span:first-child');
+                const nameSpan = item.querySelector('.agent-name');
                 nameSpan.onclick = (e) => {
                     e.stopPropagation();
                     vscode.postMessage({ type: 'set-current-agent', agentId: agent.id, agentName: displayName });

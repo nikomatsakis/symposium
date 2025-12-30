@@ -100,13 +100,13 @@
                       "additionalProperties": {
                         "type": "object",
                         "properties": {
-                          "url": {
+                          "archive": {
                             "type": "string",
-                            "description": "Download URL for the binary"
+                            "description": "Download URL for the binary archive"
                           },
-                          "executable": {
+                          "cmd": {
                             "type": "string",
-                            "description": "Name of the executable within the archive"
+                            "description": "Command to run (e.g., ./opencode)"
                           },
                           "args": {
                             "type": "array",
@@ -117,8 +117,8 @@
                           }
                         },
                         "required": [
-                          "url",
-                          "executable"
+                          "archive",
+                          "cmd"
                         ]
                       }
                     }
