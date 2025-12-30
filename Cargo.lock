@@ -2982,9 +2982,9 @@ dependencies = [
 
 [[package]]
 name = "sparkle-mcp"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89dbae57c02c5fcc1dac07c6f666f466e5281ef47cbafa60bc73358a77d5b6f1"
+checksum = "e761d4198a5c1b8b623fd81105baab318b4a5f3fa27a7e96cbfbda8b4b79e10e"
 dependencies = [
  "anyhow",
  "chrono",
