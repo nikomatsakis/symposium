@@ -227,19 +227,8 @@ export class AcpAgentActor {
 
     // Resolve distribution to command and args
     const resolved = await resolveDistribution(agent);
-    const agentCmd = resolved.command;
-    const agentArgs = resolved.args;
 
-    // Build conductor arguments: [--trace-dir <dir>] -- <agent-command> [agent-args...]
-    const conductorArgs: string[] = [];
-
-    // Add trace directory if configured
-    const traceDir = vsConfig.get<string>("traceDir", "");
-    if (traceDir) {
-      conductorArgs.push("--trace-dir", traceDir);
-    }
-
-    // Add log level if configured, or inherit from general logLevel if set to debug
+    // Get log level if configured
     let agentLogLevel = vsConfig.get<string>("agentLogLevel", "");
     if (!agentLogLevel) {
       const generalLogLevel = vsConfig.get<string>("logLevel", "error");
@@ -247,15 +236,30 @@ export class AcpAgentActor {
         agentLogLevel = "debug";
       }
     }
+
+    // Build the spawn command and args
+    const spawnArgs: string[] = [];
+
     if (agentLogLevel) {
-      conductorArgs.push("--log", agentLogLevel);
+      spawnArgs.push("--log", agentLogLevel);
     }
 
-    conductorArgs.push("--", agentCmd, ...agentArgs);
+    if (resolved.isSymposiumBuiltin) {
+      // Symposium builtin (e.g., eliza) - run conductor with subcommand directly
+      spawnArgs.push(resolved.command, ...resolved.args);
+    } else {
+      // External agent - wrap with conductor
+      const traceDir = vsConfig.get<string>("traceDir", "");
+      if (traceDir) {
+        spawnArgs.push("--trace-dir", traceDir);
+      }
+
+      spawnArgs.push("--", resolved.command, ...resolved.args);
+    }
 
     logger.important("agent", "Spawning ACP agent", {
       command: conductorCommand,
-      args: conductorArgs,
+      args: spawnArgs,
     });
 
     // Merge environment variables (from resolved distribution if any)
@@ -264,7 +268,7 @@ export class AcpAgentActor {
       : process.env;
 
     // Spawn the agent process
-    this.agentProcess = spawn(conductorCommand, conductorArgs, {
+    this.agentProcess = spawn(conductorCommand, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env: env as NodeJS.ProcessEnv,
     });

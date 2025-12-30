@@ -31,10 +31,16 @@ export interface BinaryDistribution {
   args?: string[];
 }
 
+export interface SymposiumDistribution {
+  subcommand: string;
+  args?: string[];
+}
+
 export interface Distribution {
   npx?: NpxDistribution;
   pipx?: PipxDistribution;
   binary?: Record<string, BinaryDistribution>; // keyed by platform, e.g., "darwin-aarch64"
+  symposium?: SymposiumDistribution; // built-in to symposium-acp-agent
 }
 
 /**
@@ -83,6 +89,15 @@ export const BUILT_IN_AGENTS: AgentConfig[] = [
         package: "@google/gemini-cli@latest",
         args: ["--experimental-acp"],
       },
+    },
+    _source: "custom",
+  },
+  {
+    id: "elizacp",
+    name: "ElizACP",
+    description: "Built-in Eliza agent for testing",
+    distribution: {
+      symposium: { subcommand: "eliza" },
     },
     _source: "custom",
   },
@@ -176,11 +191,13 @@ export interface ResolvedCommand {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  /** If true, this is a built-in symposium subcommand - don't wrap with conductor */
+  isSymposiumBuiltin?: boolean;
 }
 
 /**
  * Resolve an agent's distribution to a spawn command.
- * Priority: npx > pipx > binary
+ * Priority: symposium > npx > pipx > binary
  *
  * @throws Error if no compatible distribution is found
  */
@@ -189,7 +206,16 @@ export async function resolveDistribution(
 ): Promise<ResolvedCommand> {
   const dist = agent.distribution;
 
-  // Try npx first
+  // Try symposium builtin first (e.g., eliza subcommand)
+  if (dist.symposium) {
+    return {
+      command: dist.symposium.subcommand,
+      args: dist.symposium.args ?? [],
+      isSymposiumBuiltin: true,
+    };
+  }
+
+  // Try npx
   if (dist.npx) {
     return {
       command: "npx",

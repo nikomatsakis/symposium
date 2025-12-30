@@ -25,3 +25,6 @@ clap = { workspace = true }
 # Symposium components
 symposium-acp-proxy = { path = "../symposium-acp-proxy", version = "1.0.0" }
 symposium-ferris = { path = "../symposium-ferris", version = "1.0.0" }
+
+# Built-in agents
+elizacp.workspace = true

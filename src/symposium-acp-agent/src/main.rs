@@ -6,12 +6,14 @@
 //!
 //! Usage:
 //!   symposium-acp-agent [OPTIONS] -- <agent-command> [agent-args...]
+//!   symposium-acp-agent eliza
 //!
 //! Example:
 //!   symposium-acp-agent -- npx -y @zed-industries/claude-code-acp
+//!   symposium-acp-agent eliza
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use sacp::Component;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
@@ -25,6 +27,9 @@ use std::path::PathBuf;
                   and it provides Symposium's capabilities on top of the underlying agent."
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Enable or disable Sparkle integration (default: yes)
     #[arg(long, default_value = "yes", value_parser = parse_yes_no)]
     sparkle: bool,
@@ -53,8 +58,14 @@ struct Cli {
     log: Option<tracing::Level>,
 
     /// The agent command and arguments (e.g., npx -y @zed-industries/claude-code-acp)
-    #[arg(last = true, required = true, num_args = 1..)]
+    #[arg(last = true, num_args = 1..)]
     agent: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Run the built-in Eliza agent (useful for testing)
+    Eliza,
 }
 
 fn parse_yes_no(s: &str) -> Result<bool, String> {
@@ -93,26 +104,42 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    // Build a shell command string from the args
-    let agent: AcpAgent = AcpAgent::from_args(&cli.agent)?;
-    tracing::debug!("agent: {:?}", agent.server());
+    match cli.command {
+        Some(Command::Eliza) => {
+            // Run the built-in Eliza agent directly (no Symposium wrapping)
+            elizacp::ElizaAgent::new()
+                .serve(sacp_tokio::Stdio::new())
+                .await?;
+        }
+        None => {
+            // Run with a downstream agent
+            if cli.agent.is_empty() {
+                anyhow::bail!(
+                    "No agent command provided. Use -- <agent-command> or 'eliza' subcommand."
+                );
+            }
 
-    // Run Symposium with the agent as the downstream component
-    let ferris_config = build_ferris_config(cli.ferris, &cli.ferris_tools);
+            let agent: AcpAgent = AcpAgent::from_args(&cli.agent)?;
+            tracing::debug!("agent: {:?}", agent.server());
 
-    let mut symposium = symposium_acp_proxy::Symposium::new()
-        .sparkle(cli.sparkle)
-        .ferris(ferris_config)
-        .cargo(cli.cargo);
+            // Run Symposium with the agent as the downstream component
+            let ferris_config = build_ferris_config(cli.ferris, &cli.ferris_tools);
 
-    if let Some(trace_dir) = cli.trace_dir {
-        symposium = symposium.trace_dir(trace_dir);
+            let mut symposium = symposium_acp_proxy::Symposium::new()
+                .sparkle(cli.sparkle)
+                .ferris(ferris_config)
+                .cargo(cli.cargo);
+
+            if let Some(trace_dir) = cli.trace_dir {
+                symposium = symposium.trace_dir(trace_dir);
+            }
+
+            symposium
+                .with_agent(agent)
+                .serve(sacp_tokio::Stdio::new())
+                .await?;
+        }
     }
-
-    symposium
-        .with_agent(agent)
-        .serve(sacp_tokio::Stdio::new())
-        .await?;
 
     Ok(())
 }
