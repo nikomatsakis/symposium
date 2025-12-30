@@ -16,21 +16,13 @@ export class AgentConfiguration {
   constructor(
     public readonly agentId: string,
     public readonly workspaceFolder: vscode.WorkspaceFolder,
-    public readonly enableSparkle: boolean = true,
-    public readonly enableCrateResearcher: boolean = true,
   ) {}
 
   /**
    * Get a unique key for this configuration
    */
   key(): string {
-    const components = [
-      this.enableSparkle ? "sparkle" : "",
-      this.enableCrateResearcher ? "crate-researcher" : "",
-    ]
-      .filter((c) => c)
-      .join("+");
-    return `${this.agentId}:${this.workspaceFolder.uri.fsPath}:${components}`;
+    return `${this.agentId}:${this.workspaceFolder.uri.fsPath}`;
   }
 
   /**
@@ -45,17 +37,7 @@ export class AgentConfiguration {
    */
   describe(): string {
     const agent = getAgentById(this.agentId);
-    const displayName = agent?.name ?? this.agentId;
-
-    const components = [
-      this.enableSparkle ? "Sparkle" : null,
-      this.enableCrateResearcher ? "Rust Crate Researcher" : null,
-    ].filter((c) => c !== null);
-
-    if (components.length === 0) {
-      return displayName;
-    }
-    return `${displayName} + ${components.join(" + ")}`;
+    return agent?.name ?? this.agentId;
   }
 
   /**
@@ -65,17 +47,8 @@ export class AgentConfiguration {
   static async fromSettings(
     workspaceFolder?: vscode.WorkspaceFolder,
   ): Promise<AgentConfiguration> {
-    const config = vscode.workspace.getConfiguration("symposium");
-
     // Get current agent ID
     const currentAgentId = getCurrentAgentId();
-
-    // Get component settings
-    const enableSparkle = config.get<boolean>("enableSparkle", true);
-    const enableCrateResearcher = config.get<boolean>(
-      "enableCrateResearcher",
-      true,
-    );
 
     // Determine workspace folder
     let folder = workspaceFolder;
@@ -97,11 +70,6 @@ export class AgentConfiguration {
       }
     }
 
-    return new AgentConfiguration(
-      currentAgentId,
-      folder,
-      enableSparkle,
-      enableCrateResearcher,
-    );
+    return new AgentConfiguration(currentAgentId, folder);
   }
 }

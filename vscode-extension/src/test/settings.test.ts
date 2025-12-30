@@ -15,46 +15,16 @@ suite("Settings Test Suite", () => {
         "Default value should be false",
       );
     });
-
-    test("symposium.enableSparkle should be registered", async () => {
-      const config = vscode.workspace.getConfiguration("symposium");
-      const inspect = config.inspect<boolean>("enableSparkle");
-
-      assert.ok(inspect, "Setting should exist");
-      assert.strictEqual(
-        inspect.defaultValue,
-        true,
-        "Default value should be true",
-      );
-    });
-
-    test("symposium.enableCrateResearcher should be registered", async () => {
-      const config = vscode.workspace.getConfiguration("symposium");
-      const inspect = config.inspect<boolean>("enableCrateResearcher");
-
-      assert.ok(inspect, "Setting should exist");
-      assert.strictEqual(
-        inspect.defaultValue,
-        true,
-        "Default value should be true",
-      );
-    });
   });
 
   // Test that settings can be read and written
   suite("Settings Read/Write", () => {
     // Store original values to restore after tests
     let originalRequireModifier: boolean | undefined;
-    let originalEnableSparkle: boolean | undefined;
-    let originalEnableCrateResearcher: boolean | undefined;
 
     suiteSetup(async () => {
       const config = vscode.workspace.getConfiguration("symposium");
       originalRequireModifier = config.get<boolean>("requireModifierToSend");
-      originalEnableSparkle = config.get<boolean>("enableSparkle");
-      originalEnableCrateResearcher = config.get<boolean>(
-        "enableCrateResearcher",
-      );
     });
 
     suiteTeardown(async () => {
@@ -64,20 +34,6 @@ suite("Settings Test Suite", () => {
         await config.update(
           "requireModifierToSend",
           originalRequireModifier,
-          vscode.ConfigurationTarget.Global,
-        );
-      }
-      if (originalEnableSparkle !== undefined) {
-        await config.update(
-          "enableSparkle",
-          originalEnableSparkle,
-          vscode.ConfigurationTarget.Global,
-        );
-      }
-      if (originalEnableCrateResearcher !== undefined) {
-        await config.update(
-          "enableCrateResearcher",
-          originalEnableCrateResearcher,
           vscode.ConfigurationTarget.Global,
         );
       }
@@ -114,62 +70,6 @@ suite("Settings Test Suite", () => {
           vscode.ConfigurationTarget.Global,
         );
     });
-
-    test("enableSparkle can be toggled", async () => {
-      const initialValue =
-        vscode.workspace
-          .getConfiguration("symposium")
-          .get<boolean>("enableSparkle") ?? true;
-
-      await vscode.workspace
-        .getConfiguration("symposium")
-        .update(
-          "enableSparkle",
-          !initialValue,
-          vscode.ConfigurationTarget.Global,
-        );
-
-      const newValue = vscode.workspace
-        .getConfiguration("symposium")
-        .get<boolean>("enableSparkle");
-      assert.strictEqual(newValue, !initialValue, "Value should be toggled");
-
-      await vscode.workspace
-        .getConfiguration("symposium")
-        .update(
-          "enableSparkle",
-          initialValue,
-          vscode.ConfigurationTarget.Global,
-        );
-    });
-
-    test("enableCrateResearcher can be toggled", async () => {
-      const initialValue =
-        vscode.workspace
-          .getConfiguration("symposium")
-          .get<boolean>("enableCrateResearcher") ?? true;
-
-      await vscode.workspace
-        .getConfiguration("symposium")
-        .update(
-          "enableCrateResearcher",
-          !initialValue,
-          vscode.ConfigurationTarget.Global,
-        );
-
-      const newValue = vscode.workspace
-        .getConfiguration("symposium")
-        .get<boolean>("enableCrateResearcher");
-      assert.strictEqual(newValue, !initialValue, "Value should be toggled");
-
-      await vscode.workspace
-        .getConfiguration("symposium")
-        .update(
-          "enableCrateResearcher",
-          initialValue,
-          vscode.ConfigurationTarget.Global,
-        );
-    });
   });
 
   // Test that settings flow correctly to webview HTML generation
@@ -178,7 +78,9 @@ suite("Settings Test Suite", () => {
       this.timeout(10000);
 
       // Activate the extension
-      const extension = vscode.extensions.getExtension("symposium-dev.symposium");
+      const extension = vscode.extensions.getExtension(
+        "symposium-dev.symposium",
+      );
       assert.ok(extension);
       await extension.activate();
 
@@ -224,7 +126,9 @@ suite("Settings Test Suite", () => {
       this.timeout(10000);
 
       // Activate the extension
-      const extension = vscode.extensions.getExtension("symposium-dev.symposium");
+      const extension = vscode.extensions.getExtension(
+        "symposium-dev.symposium",
+      );
       assert.ok(extension);
       await extension.activate();
 
@@ -234,16 +138,16 @@ suite("Settings Test Suite", () => {
 
       // Update a setting - the SettingsViewProvider listens for changes
       // and sends updated config to the webview
-      const originalSparkle =
+      const originalValue =
         vscode.workspace
           .getConfiguration("symposium")
-          .get<boolean>("enableSparkle") ?? true;
+          .get<boolean>("requireModifierToSend") ?? false;
 
       await vscode.workspace
         .getConfiguration("symposium")
         .update(
-          "enableSparkle",
-          !originalSparkle,
+          "requireModifierToSend",
+          !originalValue,
           vscode.ConfigurationTarget.Global,
         );
 
@@ -253,19 +157,15 @@ suite("Settings Test Suite", () => {
       // Verify setting changed (re-fetch config)
       const newValue = vscode.workspace
         .getConfiguration("symposium")
-        .get<boolean>("enableSparkle");
-      assert.strictEqual(
-        newValue,
-        !originalSparkle,
-        "Setting should be toggled",
-      );
+        .get<boolean>("requireModifierToSend");
+      assert.strictEqual(newValue, !originalValue, "Setting should be toggled");
 
       // Restore
       await vscode.workspace
         .getConfiguration("symposium")
         .update(
-          "enableSparkle",
-          originalSparkle,
+          "requireModifierToSend",
+          originalValue,
           vscode.ConfigurationTarget.Global,
         );
     });

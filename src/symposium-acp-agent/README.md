@@ -25,20 +25,10 @@ Wrap Claude Code:
 symposium-acp-agent -- npx -y @zed-industries/claude-code-acp
 ```
 
-Disable optional components:
-```bash
-symposium-acp-agent --no-sparkle -- npx -y @zed-industries/claude-code-acp
-```
-
-## Options
-
-- `--no-sparkle` - Disable Sparkle integration
-- `--no-crate-researcher` - Disable Rust crate source research
-
 ## Components
 
 The agent includes all Symposium components:
-- **Rust Crate Sources** - Research Rust crate source code via sub-agent pattern
+- **Ferris** - Rust development tools (crate sources, rust researcher)
 - **Sparkle** - AI collaboration identity framework
 
 ## Documentation

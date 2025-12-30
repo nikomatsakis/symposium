@@ -89,10 +89,6 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
           // Toggle the requireModifierToSend setting
           await this.#toggleRequireModifierToSend();
           break;
-        case "toggle-component":
-          // Toggle a component enabled/disabled
-          await this.#toggleComponentSetting(message.componentId);
-          break;
       }
     });
   }
@@ -125,19 +121,6 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     const currentValue = config.get<boolean>("requireModifierToSend", false);
     await config.update(
       "requireModifierToSend",
-      !currentValue,
-      vscode.ConfigurationTarget.Global,
-    );
-    this.#sendConfiguration();
-  }
-
-  async #toggleComponentSetting(componentId: string) {
-    const config = vscode.workspace.getConfiguration("symposium");
-    const settingName =
-      componentId === "sparkle" ? "enableSparkle" : "enableCrateResearcher";
-    const currentValue = config.get<boolean>(settingName, true);
-    await config.update(
-      settingName,
       !currentValue,
       vscode.ConfigurationTarget.Global,
     );
@@ -198,19 +181,12 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       "requireModifierToSend",
       false,
     );
-    const enableSparkle = config.get<boolean>("enableSparkle", true);
-    const enableCrateResearcher = config.get<boolean>(
-      "enableCrateResearcher",
-      true,
-    );
 
     this.#view.webview.postMessage({
       type: "config",
       agents,
       currentAgentId,
       requireModifierToSend,
-      enableSparkle,
-      enableCrateResearcher,
     });
   }
 
@@ -329,28 +305,6 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <div class="section">
-        <h2>Components</h2>
-        <div class="checkbox-item">
-            <input type="checkbox" id="component-sparkle" />
-            <label for="component-sparkle">
-                <div>Sparkle</div>
-                <div class="checkbox-description">
-                    Collaborative AI identity and memory.
-                </div>
-            </label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="component-crate-researcher" />
-            <label for="component-crate-researcher">
-                <div>Rust Crate Researcher</div>
-                <div class="checkbox-description">
-                    Rust crate documentation lookup.
-                </div>
-            </label>
-        </div>
-    </div>
-
-    <div class="section">
         <h2>Preferences</h2>
         <div class="checkbox-item">
             <input type="checkbox" id="require-modifier-to-send" />
@@ -365,7 +319,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 
     <div class="section">
         <a href="#" id="configure-link" style="color: var(--vscode-textLink-foreground); text-decoration: none;">
-            Configure agents and components...
+            Configure agents...
         </a>
     </div>
 
@@ -398,29 +352,15 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ type: 'toggle-require-modifier-to-send' });
         };
 
-        // Handle component checkboxes
-        document.getElementById('component-sparkle').onchange = (e) => {
-            vscode.postMessage({ type: 'toggle-component', componentId: 'sparkle' });
-        };
-        document.getElementById('component-crate-researcher').onchange = (e) => {
-            vscode.postMessage({ type: 'toggle-component', componentId: 'crate-researcher' });
-        };
-
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
 
             if (message.type === 'config') {
                 renderAgents(message.agents, message.currentAgentId);
-                renderComponents(message.enableSparkle, message.enableCrateResearcher);
                 renderPreferences(message.requireModifierToSend);
             }
         });
-
-        function renderComponents(enableSparkle, enableCrateResearcher) {
-            document.getElementById('component-sparkle').checked = enableSparkle;
-            document.getElementById('component-crate-researcher').checked = enableCrateResearcher;
-        }
 
         function renderPreferences(requireModifierToSend) {
             const checkbox = document.getElementById('require-modifier-to-send');
