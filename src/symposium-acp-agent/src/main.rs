@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::Eliza) => {
             // Run the built-in Eliza agent directly (no Symposium wrapping)
-            elizacp::ElizaAgent::new()
+            elizacp::ElizaAgent::new(false)
                 .serve(sacp_tokio::Stdio::new())
                 .await?;
         }
