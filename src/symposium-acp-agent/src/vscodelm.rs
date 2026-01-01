@@ -226,8 +226,7 @@ impl JrMessageHandler for LmBackendHandler {
         message: MessageCx,
         cx: JrConnectionCx<Self::Link>,
     ) -> Result<Handled<MessageCx>, sacp::Error> {
-        // First, try handlers that don't need &mut self
-        let result = MatchMessage::new(message)
+        MatchMessage::new(message)
             .if_request(async |_req: ProvideInfoRequest, request_cx| {
                 let response = ProvideInfoResponse {
                     models: vec![ModelInfo {
@@ -237,9 +236,7 @@ impl JrMessageHandler for LmBackendHandler {
                         version: "1.0.0".to_string(),
                         max_input_tokens: 100000,
                         max_output_tokens: 100000,
-                        capabilities: ModelCapabilities {
-                            tool_calling: false,
-                        },
+                        capabilities: ModelCapabilities { tool_calling: true },
                     }],
                 };
                 request_cx.respond(response)
@@ -251,15 +248,6 @@ impl JrMessageHandler for LmBackendHandler {
                 request_cx.respond(ProvideTokenCountResponse { count })
             })
             .await
-            .done()?;
-
-        // Handle ProvideResponseRequest separately since it needs &mut self.eliza
-        let message = match result {
-            Handled::Yes => return Ok(Handled::Yes),
-            Handled::No { message, .. } => message,
-        };
-
-        MatchMessage::new(message)
             .if_request(async |req: ProvideResponseRequest, request_cx| {
                 // Get the request ID from the request context for notifications
                 let request_id = request_cx.id().clone();
@@ -401,7 +389,7 @@ mod tests {
                                 max_input_tokens: 100000,
                                 max_output_tokens: 100000,
                                 capabilities: ModelCapabilities {
-                                    tool_calling: false,
+                                    tool_calling: true,
                                 },
                             },
                         ],

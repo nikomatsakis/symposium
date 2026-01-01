@@ -57,7 +57,10 @@ export class SymposiumLanguageModelProvider
     }
 
     const command = getConductorCommand(this.context);
-    logger.info("lm-provider", `Starting vscodelm process: ${command} vscodelm`);
+    logger.info(
+      "lm-provider",
+      `Starting vscodelm process: ${command} vscodelm`,
+    );
 
     this.process = cp.spawn(command, ["vscodelm"], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -125,7 +128,9 @@ export class SymposiumLanguageModelProvider
       const params = msg.params as { requestId: number; part: ResponsePart };
       const pending = this.pendingRequests.get(params.requestId);
       if (pending?.progress && params.part.type === "text") {
-        pending.progress.report(new vscode.LanguageModelTextPart(params.part.value));
+        pending.progress.report(
+          new vscode.LanguageModelTextPart(params.part.value),
+        );
       }
       return;
     }
@@ -156,7 +161,7 @@ export class SymposiumLanguageModelProvider
   private async sendRequest(
     method: string,
     params: unknown,
-    progress?: vscode.Progress<vscode.LanguageModelTextPart>
+    progress?: vscode.Progress<vscode.LanguageModelTextPart>,
   ): Promise<unknown> {
     const proc = this.ensureProcess();
     const id = ++this.requestId;
@@ -182,22 +187,24 @@ export class SymposiumLanguageModelProvider
    */
   async provideLanguageModelChatInformation(
     _options: { silent: boolean },
-    _token: vscode.CancellationToken
+    _token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const result = (await this.sendRequest(
       "lm/provideLanguageModelChatInformation",
-      {}
-    )) as Array<{
-      id: string;
-      name: string;
-      family: string;
-      version: string;
-      maxInputTokens: number;
-      maxOutputTokens: number;
-      capabilities: { toolCalling?: boolean };
-    }>;
+      {},
+    )) as {
+      models: Array<{
+        id: string;
+        name: string;
+        family: string;
+        version: string;
+        maxInputTokens: number;
+        maxOutputTokens: number;
+        capabilities: { toolCalling?: boolean };
+      }>;
+    };
 
-    return result.map((info) => ({
+    return result.models.map((info) => ({
       id: info.id,
       name: info.name,
       family: info.family,
@@ -218,7 +225,7 @@ export class SymposiumLanguageModelProvider
     messages: readonly vscode.LanguageModelChatRequestMessage[],
     _options: unknown,
     progress: vscode.Progress<vscode.LanguageModelTextPart>,
-    token: vscode.CancellationToken
+    token: vscode.CancellationToken,
   ): Promise<void> {
     // Convert VS Code messages to our format
     const convertedMessages = messages.map((msg) => ({
@@ -228,7 +235,7 @@ export class SymposiumLanguageModelProvider
 
     logger.debug(
       "lm-provider",
-      `provideLanguageModelChatResponse: ${JSON.stringify(convertedMessages)}`
+      `provideLanguageModelChatResponse: ${JSON.stringify(convertedMessages)}`,
     );
 
     // Set up cancellation
@@ -241,7 +248,7 @@ export class SymposiumLanguageModelProvider
     await this.sendRequest(
       "lm/provideLanguageModelChatResponse",
       { modelId: model.id, messages: convertedMessages },
-      progress
+      progress,
     );
   }
 
@@ -251,9 +258,10 @@ export class SymposiumLanguageModelProvider
   async provideTokenCount(
     model: vscode.LanguageModelChatInformation,
     text: string | vscode.LanguageModelChatRequestMessage,
-    _token: vscode.CancellationToken
+    _token: vscode.CancellationToken,
   ): Promise<number> {
-    const textStr = typeof text === "string" ? text : this.messageToString(text);
+    const textStr =
+      typeof text === "string" ? text : this.messageToString(text);
     const result = (await this.sendRequest("lm/provideTokenCount", {
       modelId: model.id,
       text: textStr,
@@ -279,7 +287,7 @@ export class SymposiumLanguageModelProvider
    * Convert message content to array format
    */
   private contentToArray(
-    content: ReadonlyArray<unknown>
+    content: ReadonlyArray<unknown>,
   ): Array<{ type: string; value: string }> {
     return content.map((part) => {
       if (part instanceof vscode.LanguageModelTextPart) {
@@ -287,7 +295,10 @@ export class SymposiumLanguageModelProvider
       }
       // For unknown types, try to extract text
       if (typeof part === "object" && part !== null && "value" in part) {
-        return { type: "text", value: String((part as { value: unknown }).value) };
+        return {
+          type: "text",
+          value: String((part as { value: unknown }).value),
+        };
       }
       return { type: "text", value: String(part) };
     });
