@@ -283,10 +283,14 @@ impl JrMessageHandler for LmBackendHandler {
 
                 // Get or create session
                 let session = if session_idx < self.sessions.len() {
-                    tracing::debug!(session_idx, prefix_len, "continuing existing session");
-                    &mut self.sessions[session_idx]
+                    let session = &mut self.sessions[session_idx];
+                    tracing::debug!(
+                        session_id = %session.session_id(),
+                        prefix_len,
+                        "continuing existing session"
+                    );
+                    session
                 } else {
-                    tracing::debug!("creating new session");
                     #[cfg(test)]
                     let deterministic = self.deterministic;
                     #[cfg(not(test))]
@@ -299,8 +303,9 @@ impl JrMessageHandler for LmBackendHandler {
                 // Compute new messages (everything after the matched prefix)
                 let new_messages = req.messages[prefix_len..].to_vec();
                 tracing::debug!(
+                    session_id = %session.session_id(),
                     new_message_count = new_messages.len(),
-                    "sending new messages"
+                    "sending new messages to session"
                 );
 
                 // Send to actor and stream response
