@@ -10,6 +10,7 @@ use sacp::{
     JrMessageHandler, JrNotification, JrPeer, JrRequest, JrResponsePayload, MessageCx,
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 // ============================================================================
 // Peers
@@ -355,8 +356,42 @@ impl sacp::Component<LmBackendToVsCode> for LmBackend {
 // ============================================================================
 
 /// Run the LM backend on stdio
-pub async fn serve_stdio() -> Result<()> {
-    LmBackend::new().serve(sacp_tokio::Stdio::new()).await?;
+pub async fn serve_stdio(trace_dir: Option<PathBuf>) -> Result<()> {
+    let stdio = if let Some(dir) = trace_dir {
+        std::fs::create_dir_all(&dir)?;
+        let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let trace_path = dir.join(format!("vscodelm-{}.log", timestamp));
+        let file = std::sync::Arc::new(std::sync::Mutex::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&trace_path)?,
+        ));
+        tracing::info!(?trace_path, "Logging vscodelm messages");
+
+        sacp_tokio::Stdio::new().with_debug(move |line, direction| {
+            use std::io::Write;
+            let dir_str = match direction {
+                sacp_tokio::LineDirection::Stdin => "recv",
+                sacp_tokio::LineDirection::Stdout => "send",
+                sacp_tokio::LineDirection::Stderr => "stderr",
+            };
+            if let Ok(mut f) = file.lock() {
+                let _ = writeln!(
+                    f,
+                    "[{}] {}: {}",
+                    chrono::Utc::now().to_rfc3339(),
+                    dir_str,
+                    line
+                );
+                let _ = f.flush();
+            }
+        })
+    } else {
+        sacp_tokio::Stdio::new()
+    };
+
+    LmBackend::new().serve(stdio).await?;
     Ok(())
 }
 

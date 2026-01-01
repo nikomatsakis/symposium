@@ -16,6 +16,19 @@ interface ResponsePart {
   value: string;
 }
 
+/**
+ * Message content parts - discriminated union matching VS Code's LM API types
+ */
+type MessageContentPart =
+  | { type: "text"; value: string }
+  | {
+      type: "tool_call";
+      toolCallId: string;
+      toolName: string;
+      parameters: unknown;
+    }
+  | { type: "tool_result"; toolCallId: string; result: unknown };
+
 interface JsonRpcMessage {
   jsonrpc: "2.0";
   id?: number | string;
@@ -321,20 +334,69 @@ export class SymposiumLanguageModelProvider
    */
   private contentToArray(
     content: ReadonlyArray<unknown>,
-  ): Array<{ type: string; value: string }> {
-    return content.map((part) => {
+  ): MessageContentPart[] {
+    return content.flatMap((part): MessageContentPart[] => {
       if (part instanceof vscode.LanguageModelTextPart) {
-        return { type: "text", value: part.value };
+        return [{ type: "text", value: part.value }];
       }
-      // For unknown types, try to extract text
-      if (typeof part === "object" && part !== null && "value" in part) {
-        return {
-          type: "text",
-          value: String((part as { value: unknown }).value),
-        };
+      if (part instanceof vscode.LanguageModelToolCallPart) {
+        return [
+          {
+            type: "tool_call",
+            toolCallId: part.callId,
+            toolName: part.name,
+            parameters: part.input,
+          },
+        ];
       }
-      return { type: "text", value: String(part) };
+      if (part instanceof vscode.LanguageModelToolResultPart) {
+        return [
+          {
+            type: "tool_result",
+            toolCallId: part.callId,
+            result: part.content,
+          },
+        ];
+      }
+      // Handle known-but-unsupported VS Code/Copilot internal types
+      if (this.isKnownUnsupportedPart(part)) {
+        return [];
+      }
+      // Log truly unknown parts as errors
+      logger.error("lm", "Skipping unknown message part type", {
+        type: part?.constructor?.name ?? typeof part,
+        json: JSON.stringify(part, null, 2),
+      });
+      return [];
     });
+  }
+
+  /**
+   * Known VS Code/Copilot internal message part mimeTypes that we ignore.
+   * These are undocumented and not relevant to our use case.
+   */
+  private static readonly KNOWN_IGNORED_MIMETYPES = new Set([
+    "cache_control", // Copilot cache hints (e.g., "ephemeral")
+    "stateful_marker", // Copilot session tracking
+  ]);
+
+  /**
+   * Check if a part is a known-but-unsupported VS Code/Copilot internal type.
+   * These are logged at debug level and silently ignored.
+   */
+  private isKnownUnsupportedPart(part: unknown): boolean {
+    if (typeof part !== "object" || part === null) {
+      return false;
+    }
+    const mimeType = (part as { mimeType?: string }).mimeType;
+    if (
+      mimeType &&
+      SymposiumLanguageModelProvider.KNOWN_IGNORED_MIMETYPES.has(mimeType)
+    ) {
+      logger.debug("lm", `Ignoring known unsupported part: ${mimeType}`);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -346,10 +408,14 @@ export class SymposiumLanguageModelProvider
         if (part instanceof vscode.LanguageModelTextPart) {
           return part.value;
         }
-        if (typeof part === "object" && part !== null && "value" in part) {
-          return String((part as { value: unknown }).value);
+        if (part instanceof vscode.LanguageModelToolCallPart) {
+          return `[tool:${part.name}]`;
         }
-        return String(part);
+        if (part instanceof vscode.LanguageModelToolResultPart) {
+          return "[tool_result]";
+        }
+        // Skip unknown parts for token counting
+        return "";
       })
       .join("");
   }
