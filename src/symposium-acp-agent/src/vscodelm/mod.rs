@@ -216,7 +216,7 @@ pub struct ProvideTokenCountResponse {
 // Message Handler
 // ============================================================================
 
-use tokio::sync::oneshot;
+use futures::channel::oneshot;
 
 /// A session with its current state.
 struct SessionData {
@@ -281,58 +281,60 @@ const ERROR_CODE_CANCELLED: i32 = -32800;
 
 /// Stream response parts from the session actor, with cancellation support.
 ///
-/// This function races between:
-/// - Receiving response parts from the actor
-/// - Receiving a cancellation signal
-///
+/// Merges the response part stream with a cancellation signal stream.
 /// On normal completion, sends `lm/responseComplete` and responds to the request.
 /// On cancellation, responds with a cancellation error.
 async fn stream_response(
     cx: JrConnectionCx<LmBackendToVsCode>,
     request_id: serde_json::Value,
     request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
-    mut reply_rx: tokio::sync::mpsc::UnboundedReceiver<ResponsePart>,
-    mut cancel_rx: oneshot::Receiver<()>,
+    reply_rx: futures::channel::mpsc::UnboundedReceiver<ResponsePart>,
+    cancel_rx: oneshot::Receiver<()>,
 ) -> Result<(), sacp::Error> {
-    use futures_concurrency::future::Race;
+    use futures::StreamExt;
+    use futures_concurrency::stream::Merge;
 
-    loop {
-        // Race between receiving a part and receiving cancellation
-        enum Outcome {
-            Part(Option<ResponsePart>),
-            Cancelled,
-        }
+    enum Event {
+        Part(ResponsePart),
+        StreamEnded,
+        Cancelled,
+    }
 
-        let outcome = (async { Outcome::Part(reply_rx.recv().await) }, async {
-            let _ = (&mut cancel_rx).await;
-            Outcome::Cancelled
-        })
-            .race()
-            .await;
+    // Convert response stream to events, with StreamEnded when it closes
+    let part_stream = reply_rx
+        .map(Event::Part)
+        .chain(futures::stream::once(async { Event::StreamEnded }));
 
-        match outcome {
-            Outcome::Part(Some(part)) => {
+    // Convert cancel oneshot to a single-item stream
+    let cancel_stream = futures::stream::once(cancel_rx).map(|_| Event::Cancelled);
+
+    // Merge both streams and pin for iteration
+    let mut events = std::pin::pin!((part_stream, cancel_stream).merge());
+
+    while let Some(event) = events.next().await {
+        match event {
+            Event::Part(part) => {
                 cx.send_notification(ResponsePartNotification {
                     request_id: request_id.clone(),
                     part,
                 })?;
             }
-            Outcome::Part(None) => {
+            Event::StreamEnded => {
                 // Stream complete - send completion notification and respond
                 cx.send_notification(ResponseCompleteNotification {
                     request_id: request_id.clone(),
                 })?;
                 request_cx.respond(ProvideResponseResponse {})?;
-                break;
+                return Ok(());
             }
-            Outcome::Cancelled => {
+            Event::Cancelled => {
                 // Cancelled - respond with error
                 tracing::debug!(?request_id, "streaming cancelled");
                 request_cx.respond_with_error(sacp::Error::new(
                     ERROR_CODE_CANCELLED,
                     "Request cancelled",
                 ))?;
-                break;
+                return Ok(());
             }
         }
     }

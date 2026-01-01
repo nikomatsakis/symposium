@@ -4,6 +4,8 @@
 //! isolates session state and enables clean cancellation via channel closure.
 
 use elizacp::ElizaAgent;
+use futures::channel::mpsc;
+use futures::StreamExt;
 use sacp::{
     schema::{InitializeRequest, ProtocolVersion, SessionNotification, SessionUpdate, StopReason},
     util::MatchMessage,
@@ -11,7 +13,6 @@ use sacp::{
 };
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::{LmBackendToVsCode, Message, ResponsePart};
@@ -61,7 +62,7 @@ impl SessionActor {
         cx: &sacp::JrConnectionCx<LmBackendToVsCode>,
         agent_definition: AgentDefinition,
     ) -> Result<Self, sacp::Error> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded();
         let session_id = Uuid::new_v4();
         tracing::info!(%session_id, ?agent_definition, "spawning new session actor");
         cx.spawn(Self::run(rx, agent_definition.clone(), session_id))?;
@@ -89,13 +90,13 @@ impl SessionActor {
         &mut self,
         new_messages: Vec<Message>,
     ) -> mpsc::UnboundedReceiver<ResponsePart> {
-        let (reply_tx, reply_rx) = mpsc::unbounded_channel();
+        let (reply_tx, reply_rx) = mpsc::unbounded();
 
         // Update our history with what we're sending
         self.history.extend(new_messages.clone());
 
         // Send to the actor (ignore errors - actor may have died)
-        let _ = self.tx.send(SessionMessage {
+        let _ = self.tx.unbounded_send(SessionMessage {
             new_messages,
             reply_tx,
         });
@@ -172,7 +173,7 @@ impl SessionActor {
                 tracing::debug!(%session_id, "session created, waiting for messages");
 
                 // Process messages from the handler
-                while let Some(msg) = rx.recv().await {
+                while let Some(msg) = rx.next().await {
                     let new_message_count = msg.new_messages.len();
                     tracing::debug!(%session_id, new_message_count, "received new messages");
 
@@ -210,7 +211,9 @@ impl SessionActor {
                                             let text = content_block_to_string(&chunk.content);
                                             if !text.is_empty() {
                                                 if reply_tx
-                                                    .send(ResponsePart::Text { value: text })
+                                                    .unbounded_send(ResponsePart::Text {
+                                                        value: text,
+                                                    })
                                                     .is_err()
                                                 {
                                                     tracing::debug!(
