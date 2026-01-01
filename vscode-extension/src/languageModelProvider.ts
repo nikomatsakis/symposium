@@ -57,13 +57,40 @@ export class SymposiumLanguageModelProvider
     }
 
     const command = getConductorCommand(this.context);
-    logger.info(
-      "lm-provider",
-      `Starting vscodelm process: ${command} vscodelm`,
-    );
 
-    this.process = cp.spawn(command, ["vscodelm"], {
+    // Build spawn args with logging options from settings
+    const spawnArgs: string[] = [];
+
+    const vsConfig = vscode.workspace.getConfiguration("symposium");
+    let logLevel = vsConfig.get<string>("agentLogLevel", "");
+    if (!logLevel) {
+      const generalLogLevel = vsConfig.get<string>("logLevel", "error");
+      if (generalLogLevel === "debug") {
+        logLevel = "debug";
+      }
+    }
+    if (logLevel) {
+      spawnArgs.push("--log", logLevel);
+    }
+
+    const traceDir = vsConfig.get<string>("traceDir", "");
+    if (traceDir) {
+      spawnArgs.push("--trace-dir", traceDir);
+    }
+
+    spawnArgs.push("vscodelm");
+
+    logger.important("lm-provider", "Spawning vscodelm process", {
+      command,
+      args: spawnArgs,
+    });
+
+    this.process = cp.spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    logger.important("lm-provider", "vscodelm process started", {
+      pid: this.process.pid,
     });
 
     this.process.stdout?.on("data", (data: Buffer) => {
@@ -71,7 +98,13 @@ export class SymposiumLanguageModelProvider
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
-      logger.debug("lm-provider", `stderr: ${data.toString().trim()}`);
+      const lines = data
+        .toString()
+        .split("\n")
+        .filter((line) => line.trim());
+      for (const line of lines) {
+        logger.info("lm-stderr", line);
+      }
     });
 
     this.process.on("exit", (code) => {
