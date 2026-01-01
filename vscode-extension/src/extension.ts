@@ -5,6 +5,7 @@ import { DiscussCodeActionProvider } from "./discussCodeActionProvider";
 import { Logger } from "./logger";
 import { showAddAgentFromRegistryDialog } from "./agentRegistry";
 import { SymposiumLanguageModelProvider } from "./languageModelProvider";
+import { AgentActionTool } from "./agentActionTool";
 import { v4 as uuidv4 } from "uuid";
 
 // Global logger instance
@@ -59,6 +60,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push({ dispose: () => lmProvider.dispose() });
   logger.info("extension", "Registered Symposium Language Model Provider");
+
+  // Register the agent action tool for permission requests
+  context.subscriptions.push(
+    vscode.lm.registerTool("symposium-agent-action", new AgentActionTool()),
+  );
+  logger.info("extension", "Registered symposium-agent-action tool");
 
   // Register the command to open chat
   context.subscriptions.push(

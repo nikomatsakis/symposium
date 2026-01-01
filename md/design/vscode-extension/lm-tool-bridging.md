@@ -254,6 +254,25 @@ The actor processes events based on current state:
 - **Prompt cancelled**: Deny/error pending operations, cancel agent
 - **No active prompt**: Buffer events for next request
 
+## Implementation Status
+
+### Agent-Internal Tools (Implemented)
+
+The permission flow for agent-internal tools is fully implemented:
+
+1. **TypeScript side**: `symposium-agent-action` tool registered in `package.json` and implemented in `agentActionTool.ts`
+2. **Rust side**: `session_actor.rs` handles `session/request_permission` from agents, emits `ToolCall` response parts
+3. **History matching**: `mod.rs` handler checks incoming messages for tool call + result to detect approval
+4. **Continuation**: After approval, the session actor continues streaming from where it paused
+
+### VS Code-Provided Tools (Not Yet Implemented)
+
+The synthetic MCP server for bridging VS Code-provided tools to agents is not yet implemented. This requires:
+
+1. Creating a synthetic MCP server component
+2. Tracking `options.tools[]` from VS Code requests
+3. Implementing the tool call → VS Code → result shuttle
+
 ## Limitations
 
 ### VS Code Tool Rejection Cancels Entire Chat

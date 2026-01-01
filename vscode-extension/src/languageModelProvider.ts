@@ -16,10 +16,18 @@ import {
   ResolvedCommand,
 } from "./agentRegistry";
 
-interface ResponsePart {
-  type: "text";
-  value: string;
-}
+/**
+ * Response parts streamed from the Rust backend.
+ * Discriminated union - each variant has a different structure.
+ */
+type ResponsePart =
+  | { type: "text"; value: string }
+  | {
+      type: "tool_call";
+      callId: string;
+      name: string;
+      input: Record<string, unknown>;
+    };
 
 /**
  * MCP Server configuration matching sacp::schema::McpServerStdio
@@ -110,7 +118,7 @@ export class SymposiumLanguageModelProvider
     {
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
-      progress?: vscode.Progress<vscode.LanguageModelTextPart>;
+      progress?: vscode.Progress<vscode.LanguageModelResponsePart>;
     }
   > = new Map();
   private buffer = "";
@@ -231,10 +239,19 @@ export class SymposiumLanguageModelProvider
     if (msg.method === "lm/responsePart") {
       const params = msg.params as { requestId: number; part: ResponsePart };
       const pending = this.pendingRequests.get(params.requestId);
-      if (pending?.progress && params.part.type === "text") {
-        pending.progress.report(
-          new vscode.LanguageModelTextPart(params.part.value),
-        );
+      if (pending?.progress) {
+        const part = params.part;
+        if (part.type === "text") {
+          pending.progress.report(new vscode.LanguageModelTextPart(part.value));
+        } else if (part.type === "tool_call") {
+          pending.progress.report(
+            new vscode.LanguageModelToolCallPart(
+              part.callId,
+              part.name,
+              part.input,
+            ),
+          );
+        }
       }
       return;
     }
@@ -288,7 +305,7 @@ export class SymposiumLanguageModelProvider
   private async sendRequest(
     method: string,
     params: unknown,
-    progress?: vscode.Progress<vscode.LanguageModelTextPart>,
+    progress?: vscode.Progress<vscode.LanguageModelResponsePart>,
     token?: vscode.CancellationToken,
   ): Promise<unknown> {
     const proc = this.ensureProcess();

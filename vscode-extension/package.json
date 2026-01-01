@@ -27,6 +27,35 @@
         "displayName": "Symposium"
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "symposium-agent-action",
+        "displayName": "Agent Action",
+        "modelDescription": "Request permission for an agent to execute an internal tool",
+        "userDescription": "Allow the agent to execute a tool",
+        "canBeReferencedInPrompt": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "toolCallId": {
+              "type": "string",
+              "description": "The ID of the tool call"
+            },
+            "title": {
+              "type": "string",
+              "description": "Human-readable title for the action"
+            },
+            "kind": {
+              "type": "string",
+              "description": "The kind of tool (e.g., bash, file_edit)"
+            }
+          },
+          "required": [
+            "toolCallId"
+          ]
+        }
+      }
+    ],
     "configuration": {
       "title": "Symposium",
       "properties": {

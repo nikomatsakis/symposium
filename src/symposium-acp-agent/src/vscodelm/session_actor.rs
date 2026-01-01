@@ -4,12 +4,14 @@
 //! isolates session state and enables clean cancellation via channel closure.
 
 use elizacp::ElizaAgent;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::StreamExt;
 use sacp::{
-    schema::{InitializeRequest, ProtocolVersion, SessionNotification, SessionUpdate, StopReason},
-    util::MatchMessage,
-    ClientToAgent, Component,
+    schema::{
+        InitializeRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
+        RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+    },
+    ClientToAgent, Component, JrMessage, MessageCx,
 };
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
@@ -31,11 +33,41 @@ pub enum AgentDefinition {
 }
 
 /// Message sent to the session actor
-struct SessionMessage {
-    /// New messages to process (not the full history, just what's new)
-    new_messages: Vec<Message>,
-    /// Channel for streaming response parts back
-    reply_tx: mpsc::UnboundedSender<ResponsePart>,
+enum SessionMessage {
+    /// A new prompt to process
+    Prompt {
+        /// New messages to process (not the full history, just what's new)
+        new_messages: Vec<Message>,
+        /// Channel for streaming response parts back
+        reply_tx: mpsc::UnboundedSender<ResponsePart>,
+    },
+    /// Permission decision from VS Code (tool was approved or rejected)
+    PermissionDecision {
+        /// Whether the permission was approved
+        approved: bool,
+        /// Channel for streaming continued response parts back
+        reply_tx: mpsc::UnboundedSender<ResponsePart>,
+    },
+}
+
+/// Information about a pending permission request
+struct PendingPermission {
+    /// The tool call ID we emitted to VS Code
+    tool_call_id: String,
+    /// Channel to send the decision back to the agent loop
+    decision_tx: oneshot::Sender<bool>,
+}
+
+/// State of the session from the handler's perspective
+#[derive(Debug)]
+pub enum ActorState {
+    /// Ready for a new prompt
+    Idle,
+    /// Awaiting permission decision from VS Code
+    AwaitingPermission {
+        /// The tool call ID we're waiting for
+        tool_call_id: String,
+    },
 }
 
 /// Handle for communicating with a session actor.
@@ -51,6 +83,8 @@ pub struct SessionActor {
     /// The agent definition (stored for future prefix matching)
     #[allow(dead_code)]
     agent_definition: AgentDefinition,
+    /// Current state of the actor
+    state: ActorState,
 }
 
 impl SessionActor {
@@ -71,6 +105,7 @@ impl SessionActor {
             session_id,
             history: Vec::new(),
             agent_definition,
+            state: ActorState::Idle,
         })
     }
 
@@ -96,12 +131,39 @@ impl SessionActor {
         self.history.extend(new_messages.clone());
 
         // Send to the actor (ignore errors - actor may have died)
-        let _ = self.tx.unbounded_send(SessionMessage {
+        let _ = self.tx.unbounded_send(SessionMessage::Prompt {
             new_messages,
             reply_tx,
         });
 
         reply_rx
+    }
+
+    /// Send a permission decision to the actor, returns a receiver for streaming response.
+    pub fn send_permission_decision(
+        &mut self,
+        approved: bool,
+    ) -> mpsc::UnboundedReceiver<ResponsePart> {
+        // Reset state to idle
+        self.state = ActorState::Idle;
+
+        let (reply_tx, reply_rx) = mpsc::unbounded();
+
+        let _ = self
+            .tx
+            .unbounded_send(SessionMessage::PermissionDecision { approved, reply_tx });
+
+        reply_rx
+    }
+
+    /// Get the current state of the actor.
+    pub fn state(&self) -> &ActorState {
+        &self.state
+    }
+
+    /// Set the actor state to awaiting permission.
+    pub fn set_awaiting_permission(&mut self, tool_call_id: String) {
+        self.state = ActorState::AwaitingPermission { tool_call_id };
     }
 
     /// Check if incoming messages extend our history.
@@ -172,86 +234,154 @@ impl SessionActor {
 
                 tracing::debug!(%session_id, "session created, waiting for messages");
 
+                // Track pending permission request (if any)
+                let mut pending_permission: Option<PendingPermission> = None;
+
                 // Process messages from the handler
                 while let Some(msg) = rx.next().await {
-                    let new_message_count = msg.new_messages.len();
-                    tracing::debug!(%session_id, new_message_count, "received new messages");
+                    match msg {
+                        SessionMessage::Prompt {
+                            new_messages,
+                            reply_tx,
+                        } => {
+                            let new_message_count = new_messages.len();
+                            tracing::debug!(%session_id, new_message_count, "received new messages");
 
-                    // Build prompt from new messages
-                    // For now, just concatenate user messages
-                    let prompt_text: String = msg
-                        .new_messages
-                        .iter()
-                        .filter(|m| m.role == "user")
-                        .map(|m| m.text())
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                            // Build prompt from new messages
+                            // For now, just concatenate user messages
+                            let prompt_text: String = new_messages
+                                .iter()
+                                .filter(|m| m.role == "user")
+                                .map(|m| m.text())
+                                .collect::<Vec<_>>()
+                                .join("\n");
 
-                    if prompt_text.is_empty() {
-                        tracing::debug!(%session_id, "no user messages, skipping");
-                        continue;
-                    }
-
-                    tracing::debug!(%session_id, %prompt_text, "sending prompt to agent");
-                    session.send_prompt(&prompt_text)?;
-
-                    // Read updates and stream back
-                    loop {
-                        let update = session.read_update().await?;
-                        match update {
-                            sacp::SessionMessage::SessionMessage(message) => {
-                                // Use MatchMessage to extract session notifications
-                                let reply_tx = &msg.reply_tx;
-                                MatchMessage::new(message)
-                                    .if_notification(async |notification: SessionNotification| {
-                                        if let SessionUpdate::AgentMessageChunk(chunk) =
-                                            notification.update
-                                        {
-                                            // Convert content block to text
-                                            let text = content_block_to_string(&chunk.content);
-                                            if !text.is_empty() {
-                                                if reply_tx
-                                                    .unbounded_send(ResponsePart::Text {
-                                                        value: text,
-                                                    })
-                                                    .is_err()
-                                                {
-                                                    tracing::debug!(
-                                                        %session_id,
-                                                        "reply channel closed, request cancelled"
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Ok(())
-                                    })
-                                    .await
-                                    .otherwise(async |_msg| Ok(()))
-                                    .await?;
+                            if prompt_text.is_empty() {
+                                tracing::debug!(%session_id, "no user messages, skipping");
+                                continue;
                             }
-                            sacp::SessionMessage::StopReason(stop_reason) => {
-                                tracing::debug!(%session_id, ?stop_reason, "agent turn complete");
-                                match stop_reason {
-                                    StopReason::EndTurn => break,
-                                    StopReason::Cancelled => break,
+
+                            tracing::debug!(%session_id, %prompt_text, "sending prompt to agent");
+                            session.send_prompt(&prompt_text)?;
+
+                            // Read updates and stream back
+                            // This may exit early if we hit a permission request
+                            let result = loop {
+                                let update = session.read_update().await?;
+                                match update {
+                                    sacp::SessionMessage::SessionMessage(message) => {
+                                        if let Some(loop_result) = Self::process_session_message(
+                                            message,
+                                            &reply_tx,
+                                            &mut pending_permission,
+                                            session_id,
+                                        )? {
+                                            break loop_result;
+                                        }
+                                    }
+                                    sacp::SessionMessage::StopReason(stop_reason) => {
+                                        tracing::debug!(
+                                            %session_id,
+                                            ?stop_reason,
+                                            "agent turn complete"
+                                        );
+                                        break UpdateLoopResult::TurnComplete;
+                                    }
                                     other => {
-                                        tracing::warn!(
+                                        tracing::trace!(
                                             %session_id,
                                             ?other,
-                                            "unexpected stop reason"
+                                            "ignoring session message"
                                         );
-                                        break;
                                     }
                                 }
+                            };
+
+                            match result {
+                                UpdateLoopResult::TurnComplete => {
+                                    tracing::debug!(%session_id, "finished processing request");
+                                }
+                                UpdateLoopResult::AwaitingPermission { tool_call_id } => {
+                                    tracing::debug!(
+                                        %session_id,
+                                        %tool_call_id,
+                                        "awaiting permission decision"
+                                    );
+                                    // reply_tx will be dropped, ending the VS Code stream
+                                }
                             }
-                            other => {
-                                tracing::trace!(%session_id, ?other, "ignoring session message");
+                        }
+                        SessionMessage::PermissionDecision { approved, reply_tx } => {
+                            tracing::debug!(%session_id, approved, "received permission decision");
+
+                            if let Some(pending) = pending_permission.take() {
+                                // Send decision through the oneshot to unblock the spawned task
+                                let _ = pending.decision_tx.send(approved);
+
+                                // If approved, continue reading updates and streaming them
+                                if approved {
+                                    tracing::debug!(%session_id, "permission approved, continuing to stream");
+                                    // Continue the update loop with the new reply channel
+                                    let result = loop {
+                                        let update = session.read_update().await?;
+                                        match update {
+                                            sacp::SessionMessage::SessionMessage(message) => {
+                                                if let Some(loop_result) =
+                                                    Self::process_session_message(
+                                                        message,
+                                                        &reply_tx,
+                                                        &mut pending_permission,
+                                                        session_id,
+                                                    )?
+                                                {
+                                                    break loop_result;
+                                                }
+                                            }
+                                            sacp::SessionMessage::StopReason(stop_reason) => {
+                                                tracing::debug!(
+                                                    %session_id,
+                                                    ?stop_reason,
+                                                    "agent turn complete after permission"
+                                                );
+                                                break UpdateLoopResult::TurnComplete;
+                                            }
+                                            other => {
+                                                tracing::trace!(
+                                                    %session_id,
+                                                    ?other,
+                                                    "ignoring session message"
+                                                );
+                                            }
+                                        }
+                                    };
+
+                                    match result {
+                                        UpdateLoopResult::TurnComplete => {
+                                            tracing::debug!(
+                                                %session_id,
+                                                "finished processing after permission"
+                                            );
+                                        }
+                                        UpdateLoopResult::AwaitingPermission { tool_call_id } => {
+                                            tracing::debug!(
+                                                %session_id,
+                                                %tool_call_id,
+                                                "awaiting another permission decision"
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    tracing::debug!(%session_id, "permission rejected");
+                                    // reply_tx is dropped, ending the stream
+                                }
+                            } else {
+                                tracing::warn!(
+                                    %session_id,
+                                    "received permission decision but no pending request"
+                                );
                             }
                         }
                     }
-
-                    tracing::debug!(%session_id, "finished processing request");
-                    // reply_tx drops here when msg goes out of scope, signaling completion
                 }
 
                 tracing::debug!(%session_id, "session actor shutting down");
@@ -259,6 +389,146 @@ impl SessionActor {
             })
             .await
     }
+
+    /// Process a single session message from the agent.
+    ///
+    /// Returns `Some(result)` if we should exit the update loop, `None` to continue.
+    fn process_session_message(
+        message: MessageCx,
+        reply_tx: &mpsc::UnboundedSender<ResponsePart>,
+        pending_permission: &mut Option<PendingPermission>,
+        session_id: Uuid,
+    ) -> Result<Option<UpdateLoopResult>, sacp::Error> {
+        match message {
+            MessageCx::Notification(notification) => {
+                // Try to parse as SessionNotification
+                if let Some(session_notif) =
+                    SessionNotification::parse_message(notification.method(), notification.params())
+                {
+                    let session_notif = session_notif?;
+                    if let SessionUpdate::AgentMessageChunk(chunk) = session_notif.update {
+                        let text = content_block_to_string(&chunk.content);
+                        if !text.is_empty() {
+                            if reply_tx
+                                .unbounded_send(ResponsePart::Text { value: text })
+                                .is_err()
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    "reply channel closed, request cancelled"
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            MessageCx::Request(request, request_cx) => {
+                // Try to parse as RequestPermissionRequest
+                if let Some(perm_request) =
+                    RequestPermissionRequest::parse_message(request.method(), request.params())
+                {
+                    let perm_request = perm_request?;
+                    tracing::debug!(
+                        %session_id,
+                        ?perm_request,
+                        "received permission request from agent"
+                    );
+
+                    // Extract tool call info
+                    let tool_call_id = perm_request.tool_call.tool_call_id.0.to_string();
+                    let title = perm_request
+                        .tool_call
+                        .fields
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Agent action".to_string());
+                    let kind = perm_request
+                        .tool_call
+                        .fields
+                        .kind
+                        .as_ref()
+                        .map(|k| format!("{:?}", k))
+                        .unwrap_or_default();
+
+                    // Emit tool call to VS Code
+                    let _ = reply_tx.unbounded_send(ResponsePart::ToolCall {
+                        call_id: tool_call_id.clone(),
+                        name: "symposium-agent-action".to_string(),
+                        input: serde_json::json!({
+                            "toolCallId": tool_call_id,
+                            "title": title,
+                            "kind": kind,
+                        }),
+                    });
+
+                    // Create channel for permission decision
+                    let (decision_tx, decision_rx) = oneshot::channel();
+
+                    // Store pending permission
+                    *pending_permission = Some(PendingPermission {
+                        tool_call_id: tool_call_id.clone(),
+                        decision_tx,
+                    });
+
+                    // Get the first option_id to use for approval
+                    let first_option_id = perm_request.options.first().map(|o| o.option_id.clone());
+
+                    // Spawn task to wait for decision and respond to the agent
+                    tokio::spawn(async move {
+                        let response = match decision_rx.await {
+                            Ok(true) => {
+                                // Approved - respond with first option
+                                if let Some(option_id) = first_option_id {
+                                    RequestPermissionResponse::new(
+                                        RequestPermissionOutcome::Selected(
+                                            SelectedPermissionOutcome::new(option_id),
+                                        ),
+                                    )
+                                } else {
+                                    // No options, respond with cancelled
+                                    RequestPermissionResponse::new(
+                                        RequestPermissionOutcome::Cancelled,
+                                    )
+                                }
+                            }
+                            Ok(false) | Err(_) => {
+                                // Rejected or channel dropped - respond with cancelled
+                                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+                            }
+                        };
+                        // Serialize to JSON value for the untyped request context
+                        if let Ok(json_response) = serde_json::to_value(response) {
+                            let _ = request_cx.respond(json_response);
+                        }
+                    });
+
+                    // Send marker to signal the handler that we're awaiting permission
+                    let _ = reply_tx.unbounded_send(ResponsePart::AwaitingPermission {
+                        tool_call_id: tool_call_id.clone(),
+                    });
+
+                    return Ok(Some(UpdateLoopResult::AwaitingPermission { tool_call_id }));
+                }
+
+                // Unknown request - log and ignore
+                tracing::warn!(
+                    %session_id,
+                    method = request.method(),
+                    "unknown request from agent"
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Result of processing agent updates
+enum UpdateLoopResult {
+    /// Turn completed normally
+    TurnComplete,
+    /// Awaiting permission decision from VS Code
+    AwaitingPermission { tool_call_id: String },
 }
 
 /// Convert a content block to a string representation
