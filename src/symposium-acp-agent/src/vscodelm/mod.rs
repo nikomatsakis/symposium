@@ -8,11 +8,14 @@ mod session_actor;
 use anyhow::Result;
 use sacp::{
     link::RemoteStyle, util::MatchMessage, Component, Handled, JrConnectionCx, JrLink,
-    JrMessageHandler, JrNotification, JrPeer, JrRequest, JrResponsePayload, MessageCx,
+    JrMessageHandler, JrNotification, JrPeer, JrRequest, JrRequestCx, JrResponsePayload, MessageCx,
 };
 use serde::{Deserialize, Serialize};
 use session_actor::SessionActor;
-use std::path::PathBuf;
+use std::{path::PathBuf, pin::pin};
+
+/// Name of the special tool we inject into vscode for requesting permission
+const SYMPOSIUM_AGENT_ACTION: &str = "symposium-agent-action";
 
 // ============================================================================
 // Peers
@@ -193,27 +196,7 @@ pub struct ProvideResponseResponse {}
 #[serde(rename_all = "camelCase")]
 pub struct ResponsePartNotification {
     pub request_id: serde_json::Value,
-    pub part: ResponsePart,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResponsePart {
-    Text {
-        value: String,
-    },
-    ToolCall {
-        #[serde(rename = "callId")]
-        call_id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    /// Internal marker indicating the stream is pausing for permission.
-    /// This is not sent to VS Code, but used to signal the handler.
-    #[serde(skip)]
-    AwaitingPermission {
-        tool_call_id: String,
-    },
+    pub part: ContentPart,
 }
 
 // ----------------------------------------------------------------------------
@@ -259,7 +242,9 @@ pub struct ProvideTokenCountResponse {
 // Message Handler
 // ============================================================================
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, stream};
+
+use crate::vscodelm::session_actor::{ActivePrompt, SessionToCodeMessage};
 
 /// A session with its current state.
 struct SessionData {
@@ -271,6 +256,7 @@ struct SessionData {
 enum SessionState {
     /// Session is idle, waiting for a prompt.
     Idle,
+
     /// Session is streaming a response.
     Streaming {
         /// The JSON-RPC request ID of the in-flight request.
@@ -278,10 +264,14 @@ enum SessionState {
         /// Send on this channel to cancel the streaming response.
         cancel_tx: oneshot::Sender<()>,
     },
+
     /// Session is awaiting permission decision from VS Code.
     AwaitingPermission {
         /// The tool call ID we emitted to VS Code for the permission request.
         tool_call_id: String,
+
+        /// Where the decision should be sent (send a `()` if approved, drop otherwise)
+        decision_tx: oneshot::Sender<()>,
     },
 }
 
@@ -295,14 +285,6 @@ impl SessionState {
             let _ = cancel_tx.send(());
         }
         // AwaitingPermission doesn't need special cleanup - the actor handles it
-    }
-
-    /// Returns the tool_call_id if we're awaiting permission for it.
-    fn awaiting_permission_for(&self) -> Option<&str> {
-        match self {
-            SessionState::AwaitingPermission { tool_call_id } => Some(tool_call_id),
-            _ => None,
-        }
     }
 }
 
@@ -335,6 +317,63 @@ impl SessionData {
         } else {
             Some(false) // Rejected (no matching tool call/result)
         }
+    }
+
+    fn receive_messages(
+        &mut self,
+        request_id: &serde_json::Value,
+        new_messages: &[Message],
+        request_cx: JrRequestCx<ProvideResponseResponse>,
+        cx: &JrConnectionCx<LmBackendToVsCode>,
+    ) -> Result<(), sacp::Error> {
+        match self.state {
+            SessionState::Idle => {
+                self.receive_messages_when_idle(request_id, new_messages, request_cx, cx)
+            }
+            SessionState::Streaming {
+                request_id,
+                cancel_tx,
+            } => todo!(),
+            SessionState::AwaitingPermission {
+                tool_call_id,
+                decision_tx,
+            } => todo!(),
+        }
+    }
+
+    /// Receive messages when in the idle state.
+    fn receive_messages_when_idle(
+        &mut self,
+        request_id: &serde_json::Value,
+        new_messages: &[Message],
+        request_cx: JrRequestCx<ProvideResponseResponse>,
+        cx: &JrConnectionCx<LmBackendToVsCode>,
+    ) -> Result<(), sacp::Error> {
+        let state = std::mem::replace(&mut self.state, SessionState::Idle);
+        assert!(matches!(state, SessionState::Idle));
+
+        // Create cancellation channel
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
+        // Send prompt to actor
+        let active_prompt = self.actor.send_prompt(new_messages.to_vec())?;
+
+        // Transition to Streaming state
+        self.state = SessionState::Streaming {
+            request_id: request_id.clone(),
+            cancel_tx,
+        };
+
+        // Spawn task to stream response (non-blocking)
+        let cx = cx.clone();
+        let request_id = request_id.clone();
+        cx.clone().spawn(async move {
+            stream_response(cx, request_id, request_cx, active_prompt, cancel_rx)
+                .await
+                .map(|_| ())
+        })?;
+
+        Ok(())
     }
 }
 
@@ -379,32 +418,47 @@ async fn stream_response(
     cx: JrConnectionCx<LmBackendToVsCode>,
     request_id: serde_json::Value,
     request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
-    reply_rx: futures::channel::mpsc::UnboundedReceiver<ResponsePart>,
+    mut active_prompt: ActivePrompt,
     cancel_rx: oneshot::Receiver<()>,
 ) -> Result<StreamEndReason, sacp::Error> {
     use futures::StreamExt;
     use futures_concurrency::stream::Merge;
 
     enum Event {
-        Part(ResponsePart),
+        SessionToCode(SessionToCodeMessage),
         StreamEnded,
         Cancelled,
     }
 
     // Convert response stream to events, with StreamEnded when it closes
-    let part_stream = reply_rx
-        .map(Event::Part)
-        .chain(futures::stream::once(async { Event::StreamEnded }));
+    let part_stream = active_prompt
+        .prompt_rx()
+        .by_ref()
+        .map(Event::SessionToCode)
+        .chain(stream::once(async { Event::StreamEnded }));
 
     // Convert cancel oneshot to a single-item stream
-    let cancel_stream = futures::stream::once(cancel_rx).map(|_| Event::Cancelled);
+    let cancel_stream = stream::once(cancel_rx).map(|_| Event::Cancelled);
 
     // Merge both streams and pin for iteration
-    let mut events = std::pin::pin!((part_stream, cancel_stream).merge());
+    let mut events = pin!((part_stream, cancel_stream).merge());
 
     while let Some(event) = events.next().await {
         match event {
-            Event::Part(ResponsePart::AwaitingPermission { tool_call_id }) => {
+            Event::SessionToCode(SessionToCodeMessage::Part(part)) => {
+                cx.send_notification(ResponsePartNotification {
+                    request_id: request_id.clone(),
+                    part,
+                })?;
+            }
+            Event::SessionToCode(SessionToCodeMessage::PermissionRequest {
+                tool_call_id,
+                kind,
+                title,
+                locations,
+                raw_input,
+                decision_tx,
+            }) => {
                 // Stream is pausing for permission - respond successfully
                 // VS Code will send another request with the tool result if approved
                 tracing::debug!(?request_id, %tool_call_id, "stream pausing for permission");
@@ -413,12 +467,6 @@ async fn stream_response(
                 })?;
                 request_cx.respond(ProvideResponseResponse {})?;
                 return Ok(StreamEndReason::AwaitingPermission { tool_call_id });
-            }
-            Event::Part(part) => {
-                cx.send_notification(ResponsePartNotification {
-                    request_id: request_id.clone(),
-                    part,
-                })?;
             }
             Event::StreamEnded => {
                 // Stream complete - send completion notification and respond
@@ -511,74 +559,15 @@ impl JrMessageHandler for LmBackendHandler {
                     self.sessions.last_mut().unwrap()
                 };
 
-                // Check if we're awaiting a permission decision
-                if let Some(approved) = session_data.check_permission_in_messages(&req.messages) {
-                    tracing::debug!(
-                        session_id = %session_data.actor.session_id(),
-                        approved,
-                        "detected permission decision from message history"
-                    );
-
-                    // Send the decision to the actor and get a channel for continued streaming
-                    let reply_rx = session_data.actor.send_permission_decision(approved);
-
-                    // Transition back to streaming to continue receiving responses
-                    let (cancel_tx, cancel_rx) = oneshot::channel();
-
-                    session_data.state = SessionState::Streaming {
-                        request_id: request_id.clone(),
-                        cancel_tx,
-                    };
-
-                    // Spawn task to stream response
-                    let cx_clone = cx.clone();
-                    cx.spawn(async move {
-                        stream_response(cx_clone, request_id, request_cx, reply_rx, cancel_rx)
-                            .await
-                            .map(|_| ())
-                    })?;
-
-                    return Ok(());
-                }
-
-                // If session is currently streaming or awaiting permission, cancel it first
-                if !matches!(session_data.state, SessionState::Idle) {
-                    tracing::debug!(
-                        session_id = %session_data.actor.session_id(),
-                        "cancelling previous state before starting new request"
-                    );
-                    session_data.state.cancel();
-                }
-
                 // Compute new messages (everything after the matched prefix)
-                let new_messages = req.messages[prefix_len..].to_vec();
+                let new_messages = &req.messages[prefix_len..];
                 tracing::debug!(
                     session_id = %session_data.actor.session_id(),
                     new_message_count = new_messages.len(),
                     "sending new messages to session"
                 );
 
-                // Create cancellation channel
-                let (cancel_tx, cancel_rx) = oneshot::channel();
-
-                // Send prompt to actor
-                let reply_rx = session_data.actor.send_prompt(new_messages);
-
-                // Transition to Streaming state
-                session_data.state = SessionState::Streaming {
-                    request_id: request_id.clone(),
-                    cancel_tx,
-                };
-
-                // Spawn task to stream response (non-blocking)
-                let cx_clone = cx.clone();
-                cx.spawn(async move {
-                    stream_response(cx_clone, request_id, request_cx, reply_rx, cancel_rx)
-                        .await
-                        .map(|_| ())
-                })?;
-
-                Ok(())
+                session_data.receive_messages(&new_messages)
             })
             .await
             .if_notification(async |notification: CancelNotification| {

@@ -17,16 +17,21 @@ import {
 } from "./agentRegistry";
 
 /**
- * Response parts streamed from the Rust backend.
- * Discriminated union - each variant has a different structure.
+ * Content parts for messages and streaming responses.
+ * Unified type matching VS Code's LanguageModel API naming.
  */
-type ResponsePart =
+type ContentPart =
   | { type: "text"; value: string }
   | {
       type: "tool_call";
-      callId: string;
-      name: string;
-      input: Record<string, unknown>;
+      toolCallId: string;
+      toolName: string;
+      parameters: object;
+    }
+  | {
+      type: "tool_result";
+      toolCallId: string;
+      result: unknown;
     };
 
 /**
@@ -81,19 +86,6 @@ function resolvedCommandToAgentDefinition(
     },
   };
 }
-
-/**
- * Message content parts - discriminated union matching VS Code's LM API types
- */
-type MessageContentPart =
-  | { type: "text"; value: string }
-  | {
-      type: "tool_call";
-      toolCallId: string;
-      toolName: string;
-      parameters: unknown;
-    }
-  | { type: "tool_result"; toolCallId: string; result: unknown };
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -237,7 +229,7 @@ export class SymposiumLanguageModelProvider
 
     // Handle notifications (streaming responses)
     if (msg.method === "lm/responsePart") {
-      const params = msg.params as { requestId: number; part: ResponsePart };
+      const params = msg.params as { requestId: number; part: ContentPart };
       const pending = this.pendingRequests.get(params.requestId);
       if (pending?.progress) {
         const part = params.part;
@@ -246,9 +238,9 @@ export class SymposiumLanguageModelProvider
         } else if (part.type === "tool_call") {
           pending.progress.report(
             new vscode.LanguageModelToolCallPart(
-              part.callId,
-              part.name,
-              part.input,
+              part.toolCallId,
+              part.toolName,
+              part.parameters,
             ),
           );
         }
@@ -465,10 +457,8 @@ export class SymposiumLanguageModelProvider
   /**
    * Convert message content to array format
    */
-  private contentToArray(
-    content: ReadonlyArray<unknown>,
-  ): MessageContentPart[] {
-    return content.flatMap((part): MessageContentPart[] => {
+  private contentToArray(content: ReadonlyArray<unknown>): ContentPart[] {
+    return content.flatMap((part): ContentPart[] => {
       if (part instanceof vscode.LanguageModelTextPart) {
         return [{ type: "text", value: part.value }];
       }

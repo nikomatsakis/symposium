@@ -1,288 +1,182 @@
 # Language Model Tool Bridging
 
-This chapter describes how Symposium bridges tool calls between VS Code's Language Model API and ACP agents. There are two categories of tools that need different handling:
+This chapter describes how Symposium bridges tool calls between VS Code's Language Model API and ACP agents. For the general session management model (committed/provisional history), see [Language Model Provider](./lm-provider.md).
 
-1. **VS Code-provided tools** - Tools that VS Code extensions offer to the model
-2. **Agent-internal tools** - Tools the ACP agent manages internally (via its own MCP servers)
+## Tool Call Categories
 
-## Overview
+There are two categories of tools:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         VS Code                                 │
-│                                                                 │
-│  Consumer (Copilot, etc.)                                      │
-│    │                                                            │
-│    │ options.tools[] ─────────────────┐                        │
-│    │                                   │                        │
-│    ▼                                   ▼                        │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │        LanguageModelChatProvider (TypeScript)            │   │
-│  │                                                          │   │
-│  │  Emits: LanguageModelToolCallPart                       │   │
-│  │    - For VS Code tools (agent invoked via MCP)          │   │
-│  │    - For symposium-agent-action (permission requests)    │   │
-│  └──────────────────────────┬───────────────────────────────┘   │
-└─────────────────────────────┼───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Symposium vscodelm (Rust)                          │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    Session Actor                          │  │
-│  │                                                           │  │
-│  │  - Manages ACP session lifecycle                         │  │
-│  │  - Runs synthetic MCP server for VS Code tools           │  │
-│  │  - Merges streams: updates, permissions, MCP calls       │  │
-│  │  - Handles history matching for session continuity       │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                              │                                   │
-│                              ▼                                   │
-│                        ACP Agent                                 │
-│                  (with internal MCP servers)                     │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## VS Code-Provided Tools
-
-VS Code consumers pass tools to the model via `options.tools[]` in each request. These are tools implemented by VS Code or its extensions (e.g., "search workspace", "read file").
-
-### Tool Format from VS Code
-
-```typescript
-interface LanguageModelChatTool {
-  name: string;
-  description: string;
-  inputSchema: object;  // JSON Schema
-}
-```
-
-This is a flat list with no server grouping - just name, description, and schema.
-
-### Bridging to ACP
-
-ACP agents discover tools by connecting to MCP servers at session creation. To expose VS Code-provided tools to an ACP agent, Symposium creates a **synthetic MCP server** that:
-
-1. Offers the same tools that VS Code provided in `options.tools[]`
-2. When the agent invokes a tool, blocks and shuttles the call back to VS Code
-3. Returns the result from VS Code to the agent
-
-### Execution Flow
-
-```
-1. VS Code request arrives with options.tools[]
-2. Symposium creates/updates synthetic MCP server with those tools
-3. Agent decides to use a tool, invokes it via MCP
-4. Symposium emits LanguageModelToolCallPart to VS Code
-5. Symposium returns from provideLanguageModelChatResponse
-6. VS Code consumer calls invokeTool(), shows confirmation UI
-7. User approves → tool executes → result available
-8. Next VS Code request arrives with tool result in message history
-9. Symposium extracts result, returns it to agent via MCP
-10. Agent continues with tool result
-```
+1. **Agent-internal tools** - Tools the ACP agent manages via its own MCP servers (e.g., bash, file editing)
+2. **VS Code-provided tools** - Tools that VS Code extensions offer to the model
 
 ## Agent-Internal Tools
 
-ACP agents have their own MCP servers providing tools (e.g., bash execution, file editing). The agent can execute these directly, but may request permission first via ACP's `session/request_permission`.
+ACP agents have their own MCP servers providing tools. The agent can execute these directly, but may request permission first via ACP's `session/request_permission`.
 
-### Permission Flow
+When an agent requests permission, Symposium surfaces this to VS Code using a special tool called `symposium-agent-action`.
 
-When an agent requests permission, Symposium surfaces this to VS Code using a special tool called `symposium-agent-action`:
+### How Tool Calls Fit the Session Model
 
-```
-1. Agent sends session/request_permission (e.g., "run bash: rm foo.txt")
-2. Symposium emits LanguageModelToolCallPart for symposium-agent-action
-3. prepareInvocation() formats the request for VS Code's confirmation UI
-4. Symposium returns from provideLanguageModelChatResponse
-5. VS Code shows confirmation dialog to user
-6. User approves → invoke() called → returns "proceed"
-7. Next VS Code request arrives with tool result
-8. Symposium responds to agent with allow-once
-9. Agent proceeds to execute the tool internally
-```
+A tool call creates a multi-step exchange within the committed/provisional model:
 
-### Permission Auto-Approval
+1. User sends message `U1` → provisional = `(U1, [])`
+2. Agent streams response, ends with tool call → provisional = `(U1, [text..., ToolCall])`
+3. VS Code shows confirmation UI, user approves
+4. VS Code sends new request with `[U1, A1, ToolResult]`
+5. `ToolResult` is a new user message, so we commit `(U1, A1)` → committed = `[U1, A1]`, provisional = `(ToolResult, [])`
+6. Agent continues with the tool result
 
-If the agent asks permission before executing, Symposium always responds with approval at the ACP level. The actual user-facing permission check happens via VS Code's tool confirmation UI. This means:
+The key insight: **the tool result is just another user message** from the session model's perspective. It triggers a commit of the previous exchange.
 
-- Agent asks permission → Symposium says "yes" at ACP level
-- Agent executes tool → if it's VS Code-provided, goes through VS Code UI
-- If user rejects in VS Code UI → cancellation propagates back
+### Permission Approved Flow
 
-## Handle States
+```mermaid
+sequenceDiagram
+    participant VSCode as VS Code
+    participant HA as History Actor
+    participant SA as Session Actor
+    participant Agent as ACP Agent
 
-The TypeScript handle tracks state across VS Code requests:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Idle                                                            │
-│  ────                                                            │
-│  - No active prompt                                              │
-│  - Waiting for user message                                      │
-└─────────────────────────────────────────────────────────────────┘
-        │
-        │ [prompt arrives]
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Streaming                                                       │
-│  ─────────                                                       │
-│  - Pulling from agent update stream                             │
-│  - Forwarding text chunks to VS Code                            │
-│  - Holding: updates_rx                                          │
-└─────────────────────────────────────────────────────────────────┘
-        │
-        ├──[agent done]──► Idle
-        │
-        ├──[permission request]──┐
-        │                        ▼
-        │   ┌─────────────────────────────────────────────────────┐
-        │   │  AwaitingToolPermission                             │
-        │   │  ──────────────────────                             │
-        │   │  - Emitted symposium-agent-action tool call         │
-        │   │  - Holding:                                         │
-        │   │    - updates_rx: agent update stream                │
-        │   │    - permission_tx: oneshot for decision            │
-        │   │    - original_history: committed history            │
-        │   │    - provisional_history: original + tool call      │
-        │   └─────────────────────────────────────────────────────┘
-        │
-        └──[MCP tool invocation]──┐
-                                  ▼
-           ┌─────────────────────────────────────────────────────┐
-           │  AwaitingToolResult                                  │
-           │  ─────────────────                                   │
-           │  - Emitted VS Code tool call                        │
-           │  - Holding:                                          │
-           │    - updates_rx: agent update stream                 │
-           │    - result_tx: oneshot for tool result              │
-           │    - original_history: committed history             │
-           │    - provisional_history: original + tool call       │
-           └─────────────────────────────────────────────────────┘
+    Note over HA: committed = [], provisional = (U1, [])
+    
+    Agent->>SA: session/request_permission ("run bash")
+    SA->>HA: emit ToolCall part for symposium-agent-action
+    Note over HA: provisional = (U1, [ToolCall])
+    HA->>VSCode: stream ToolCall part
+    HA->>VSCode: response complete
+    
+    Note over VSCode: show confirmation UI
+    Note over VSCode: user approves
+    
+    VSCode->>HA: request with [U1, A1, ToolResult]
+    Note over HA: matches committed + provisional + new user msg
+    Note over HA: commit: committed = [U1, A1]
+    Note over HA: provisional = (ToolResult, [])
+    HA->>SA: new_messages = [ToolResult], canceled = false
+    
+    SA->>Agent: allow-once
+    Agent->>Agent: execute tool internally
+    Agent->>SA: continue streaming response
 ```
 
-## History Matching
+### Permission Rejected Flow
 
-When a request arrives while in `AwaitingToolPermission` or `AwaitingToolResult`, Symposium compares the incoming message history:
+When the user rejects a tool (or cancels the chat), VS Code sends a request that doesn't include our tool call:
 
-### Case 1: Extends Provisional History
+```mermaid
+sequenceDiagram
+    participant VSCode as VS Code
+    participant HA as History Actor
+    participant SA as Session Actor
+    participant Agent as ACP Agent
 
-The incoming history includes the tool call and result:
-```
-original_history + [assistant: tool_call] + [user: tool_result]
-```
-
-This means the tool was approved. Symposium:
-1. Sends result via the oneshot channel
-2. Promotes provisional history to committed
-3. Resumes streaming
-
-### Case 2: Extends Only Original History
-
-The incoming history doesn't include the tool call:
-```
-original_history + [user: new_message]
-```
-
-This means the tool was rejected (or user sent something else). Symposium:
-1. Drops the oneshot channel (signals cancellation)
-2. Reverts to original history
-3. Processes the new prompt from that state
-
-## Cancellation Handling
-
-Cancellation can occur in several ways:
-
-1. **User rejects tool in VS Code UI** - `CancellationError` thrown, token cancelled
-2. **User cancels entire chat** - Same signal, indistinguishable
-3. **User sends different message** - History doesn't match provisional
-
-All cases are handled uniformly by detecting that the incoming history doesn't extend provisional history.
-
-### Cancellation Flow
-
-```
-1. Cancellation detected (token or history mismatch)
-2. If awaiting permission:
-   - Send reject-once to agent via oneshot
-   - Send session/cancel to agent
-3. If awaiting tool result:
-   - Drop result_tx (causes MCP call to error)
-   - Send session/cancel to agent
-4. Return to Idle state
-5. Await next prompt
+    Note over HA: committed = [], provisional = (U1, [ToolCall])
+    
+    Note over VSCode: show confirmation UI
+    Note over VSCode: user rejects (cancels chat)
+    
+    VSCode->>HA: request with [U2]
+    Note over HA: doesn't include our ToolCall
+    Note over HA: discard provisional
+    Note over HA: provisional = (U2, [])
+    HA->>SA: new_messages = [U2], canceled = true
+    
+    SA->>Agent: session/cancel
+    Note over SA: start fresh with U2
 ```
 
-## Buffering Agent Activity
+### Session Actor Tool Use Handling
 
-ACP agents work asynchronously and may generate output between VS Code requests. Symposium handles this by:
+The Session Actor uses a peek/consume pattern when waiting for tool results:
 
-1. Merging all agent events into a single stream:
-   - `session/update` notifications (text, tool progress)
-   - `session/request_permission` requests
-   - MCP tool invocations
+```mermaid
+sequenceDiagram
+    participant HA as History Actor
+    participant SA as Session Actor
+    participant RR as RequestResponse
 
-2. Buffering events that arrive while no prompt is active
-
-3. Draining the buffer when the next prompt arrives
-
-This ensures no agent output is lost even though VS Code's API is request/response based.
-
-## Session Actor Architecture
-
-The Rust session actor manages the merged event stream:
-
-```rust
-enum SessionEvent {
-    AgentUpdate(SessionUpdate),
-    PermissionRequest {
-        request: RequestPermission,
-        response_tx: oneshot::Sender<PermissionResponse>,
-    },
-    McpToolInvocation {
-        tool_name: String,
-        input: serde_json::Value,
-        result_tx: oneshot::Sender<ToolResult>,
-    },
-}
+    SA->>RR: send_tool_use(call_id, name, input)
+    RR->>HA: emit ToolCall part
+    RR->>RR: drop prompt_tx (signal complete)
+    
+    RR->>HA: peek next ModelRequest
+    
+    alt canceled = false, exactly one ToolResult
+        RR->>HA: consume request
+        RR->>SA: Ok(SendToolUseResult)
+    else canceled = true
+        Note over RR: don't consume
+        RR->>SA: Err(Canceled)
+    else unexpected content (ToolResult + other messages)
+        Note over RR: don't consume, treat as canceled
+        RR->>SA: Err(Canceled)
+    end
 ```
 
-The actor processes events based on current state:
+When `Err(Canceled)` is returned:
+1. The outer loop cancels the downstream agent
+2. It loops around and sees the unconsumed `ModelRequest`
+3. Processes new messages, ignoring orphaned `ToolResult` parts
+4. Starts a fresh prompt
 
-- **Has active prompt**: Forward updates to VS Code, pause on blocking events
-- **Prompt cancelled**: Deny/error pending operations, cancel agent
-- **No active prompt**: Buffer events for next request
+The "unexpected content" case handles the edge case where VS Code sends both a tool result and additional user content. Rather than trying to handle this complex state, we treat it as a soft cancellation and start fresh.
+
+## VS Code-Provided Tools
+
+VS Code consumers pass tools to the model via `options.tools[]` in each request. These are tools implemented by VS Code extensions (e.g., "search workspace", "read file").
+
+To expose these to an ACP agent, Symposium creates a **synthetic MCP server** that:
+
+1. Offers the same tools that VS Code provided
+2. When the agent invokes a tool, emits a `ToolCall` to VS Code and waits
+3. Returns the result from VS Code to the agent
+
+### VS Code Tool Flow
+
+```mermaid
+sequenceDiagram
+    participant VSCode as VS Code
+    participant HA as History Actor
+    participant SA as Session Actor
+    participant Agent as ACP Agent
+    participant MCP as Synthetic MCP
+
+    VSCode->>HA: request with options.tools[]
+    HA->>SA: forward tools list
+    SA->>MCP: update available tools
+    
+    Agent->>MCP: invoke tool "search_workspace"
+    MCP->>SA: tool invocation
+    SA->>HA: emit ToolCall part
+    HA->>VSCode: stream ToolCall, complete
+    
+    Note over VSCode: invoke tool, get result
+    
+    VSCode->>HA: request with ToolResult
+    HA->>SA: new_messages = [ToolResult], canceled = false
+    SA->>MCP: return result
+    MCP->>Agent: tool result
+```
 
 ## Implementation Status
 
 ### Agent-Internal Tools (Implemented)
 
-The permission flow for agent-internal tools is fully implemented:
+The permission flow for agent-internal tools is implemented:
 
-1. **TypeScript side**: `symposium-agent-action` tool registered in `package.json` and implemented in `agentActionTool.ts`
-2. **Rust side**: `session_actor.rs` handles `session/request_permission` from agents, emits `ToolCall` response parts
-3. **History matching**: `mod.rs` handler checks incoming messages for tool call + result to detect approval
-4. **Continuation**: After approval, the session actor continues streaming from where it paused
+- **TypeScript**: `symposium-agent-action` tool in `agentActionTool.ts`
+- **Rust**: Session actor handles `session/request_permission`, emits `ToolCall` parts
+- **History matching**: History actor tracks committed/provisional, detects approval/rejection
 
 ### VS Code-Provided Tools (Not Yet Implemented)
 
-The synthetic MCP server for bridging VS Code-provided tools to agents is not yet implemented. This requires:
-
-1. Creating a synthetic MCP server component
-2. Tracking `options.tools[]` from VS Code requests
-3. Implementing the tool call → VS Code → result shuttle
+The synthetic MCP server for bridging VS Code-provided tools is not yet implemented.
 
 ## Limitations
 
 ### VS Code Tool Rejection Cancels Entire Chat
 
-When a user rejects a tool in VS Code's confirmation UI, the entire chat is cancelled - not just that tool invocation. This is a VS Code limitation ([GitHub #241039](https://github.com/microsoft/vscode/issues/241039)).
-
-Symposium handles this by:
-1. Detecting cancellation
-2. Propagating rejection to agent
-3. Awaiting next prompt (which starts fresh)
+When a user rejects a tool in VS Code's confirmation UI, the entire chat is cancelled. This is a VS Code limitation ([GitHub #241039](https://github.com/microsoft/vscode/issues/241039)). Symposium handles this by detecting the cancellation via history mismatch.
 
 ### No Per-Tool Rejection Signaling
 
@@ -290,4 +184,4 @@ VS Code doesn't tell the model that a tool was rejected - the cancelled turn sim
 
 ### Tool Approval Levels Managed by VS Code
 
-VS Code manages approval persistence (single use, session, workspace, always). Symposium just receives `invoke()` calls - it doesn't know or care about the approval level.
+VS Code manages approval persistence (single use, session, workspace, always). Symposium just receives the result.

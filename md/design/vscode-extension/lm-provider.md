@@ -56,14 +56,82 @@ This keeps the interesting logic in Rust where it's testable and maintainable.
 
 ### Session Management
 
-VS Code's Language Model API is stateless: each `sendRequest` includes the full message history. ACP sessions are stateful.
+VS Code's Language Model API is stateless: each request includes the full message history. ACP sessions are stateful. The Rust backend bridges this gap using a **History Actor** that tracks session state.
 
-For the prototype, we take a simple approach:
-- Single user message → create new session
-- Message history matching → continue existing session
-- Mismatch → return error
+#### Architecture
 
-Future work will implement proper session caching with history diffing.
+```mermaid
+graph LR
+    VSCode[VS Code] <--> HA[History Actor]
+    HA <--> SA[Session Actor]
+    SA <--> Agent[ACP Agent]
+```
+
+- **History Actor**: Receives requests from VS Code, tracks message history, identifies new messages
+- **Session Actor**: Manages the ACP agent connection, handles streaming responses
+
+#### Committed and Provisional History
+
+The History Actor maintains two pieces of state:
+
+- **Committed**: Complete `(User, Assistant)*` message pairs that VS Code has acknowledged. Always ends with an assistant message (or is empty).
+- **Provisional**: The current in-flight exchange: one user message `U` and the assistant response parts `A` we've sent so far (possibly empty).
+
+#### Commit Flow
+
+When we receive a new request, we compare its history against `committed + provisional`:
+
+```mermaid
+sequenceDiagram
+    participant VSCode as VS Code
+    participant HA as History Actor
+    participant SA as Session Actor
+
+    Note over HA: committed = [], provisional = (U1, [])
+    
+    SA->>HA: stream parts P1, P2, P3
+    Note over HA: provisional = (U1, [P1, P2, P3])
+    HA->>VSCode: stream P1, P2, P3
+    
+    SA->>HA: done streaming
+    HA->>VSCode: response complete
+    
+    VSCode->>HA: new request with history [U1, A1, U2]
+    Note over HA: matches committed + provisional + new user msg
+    Note over HA: commit: committed = [U1, A1]
+    Note over HA: provisional = (U2, [])
+    HA->>SA: new_messages = [U2], canceled = false
+```
+
+The new user message `U2` confirms that VS Code received and accepted our assistant response `A1`. We commit the exchange and start fresh with `U2`.
+
+#### Cancellation via History Mismatch
+
+If VS Code sends a request that doesn't include our provisional content, the provisional work was rejected:
+
+```mermaid
+sequenceDiagram
+    participant VSCode as VS Code
+    participant HA as History Actor
+    participant SA as Session Actor
+
+    Note over HA: committed = [U1, A1], provisional = (U2, [P1, P2])
+    
+    VSCode->>HA: new request with history [U1, A1, U3]
+    Note over HA: doesn't match committed + provisional
+    Note over HA: discard provisional
+    Note over HA: provisional = (U3, [])
+    HA->>SA: new_messages = [U3], canceled = true
+    
+    SA->>SA: cancel downstream agent
+```
+
+This happens when:
+- User cancels the chat in VS Code
+- User rejects a tool confirmation
+- User sends a different message while we were responding
+
+The Session Actor receives `canceled = true` and propagates cancellation to the downstream ACP agent.
 
 ### Agent Configuration
 

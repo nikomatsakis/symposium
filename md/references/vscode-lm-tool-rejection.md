@@ -2,6 +2,64 @@
 
 This reference documents how VS Code handles tool rejection in the Language Model API.
 
+## Tool Call Timing: Why Providers Can't Detect Rejection
+
+**Tool calls are processed after providers return, not during streaming.** When a `LanguageModelChatProvider` emits a `LanguageModelToolCallPart` via `progress.report()`, VS Code does not process it immediately. Instead:
+
+```typescript
+// VS Code's internal consumption pattern
+const toolCalls: LanguageModelToolCallPart[] = [];
+
+for await (const part of response.stream) {
+    if (part instanceof LanguageModelTextPart) {
+        stream.markdown(part.value);  // Text streams immediately to UI
+    } else if (part instanceof LanguageModelToolCallPart) {
+        toolCalls.push(part);  // Tool calls are BUFFERED, not processed
+    }
+}
+
+// Only AFTER stream completes: process collected tool calls
+if (toolCalls.length > 0) {
+    await processToolCalls(toolCalls);  // Confirmation UI appears HERE
+}
+```
+
+The temporal sequence:
+
+1. Provider emits `ToolCallPart` via `progress.report()`
+2. Provider continues executing or returns
+3. **Only then**: VS Code shows confirmation UI
+4. User accepts or rejects
+5. If rejected: the chat session cancels entirely
+
+This means:
+- **You cannot block inside `provideLanguageModelChatResponse`** waiting for the tool decision
+- **The `CancellationToken` cannot detect tool rejection** during execution, because rejection happens after your method returns
+- **You must use history matching** to detect approval on subsequent requests
+
+### Detecting Approval via History
+
+On approval, the next `provideLanguageModelChatResponse` call includes:
+
+1. An **Assistant message** with your `ToolCallPart`
+2. A **User message** with a `ToolResultPart` containing the matching `callId`
+
+```typescript
+for (const msg of messages) {
+    if (msg.role === 'user') {
+        for (const part of msg.content) {
+            if (part instanceof LanguageModelToolResultPart) {
+                if (part.callId === yourPreviousToolCallId) {
+                    // User approved - tool was invoked
+                }
+            }
+        }
+    }
+}
+```
+
+On rejection, the chat session cancels - you won't receive a follow-up request at all.
+
 ## Consumer Perspective: `invokeTool()` on Rejection
 
 **It throws an exception.** When the user clicks "Cancel" on the confirmation dialog, `invokeTool()` rejects with a `CancellationError`:
