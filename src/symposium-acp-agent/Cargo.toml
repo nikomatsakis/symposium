@@ -16,6 +16,8 @@ path = "src/main.rs"
 sacp-conductor.workspace = true
 sacp.workspace = true
 sacp-tokio.workspace = true
+sacp-rmcp.workspace = true
+rmcp.workspace = true
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

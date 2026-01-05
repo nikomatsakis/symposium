@@ -5,6 +5,7 @@
 
 mod history_actor;
 mod session_actor;
+mod vscode_tools_mcp;
 
 use anyhow::Result;
 use history_actor::{HistoryActor, HistoryActorHandle};

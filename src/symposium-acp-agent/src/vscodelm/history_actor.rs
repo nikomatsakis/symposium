@@ -395,12 +395,21 @@ impl HistoryActor {
             cancel_tx,
         });
 
+        // Extract VS Code tools (excluding our internal tool)
+        let vscode_tools: Vec<_> = request
+            .options
+            .tools
+            .into_iter()
+            .filter(|t| t.name != SYMPOSIUM_AGENT_ACTION)
+            .collect();
+
         // Send to session actor
         session_data.actor.send_messages(
             history_match.new_messages,
             history_match.canceled,
             cancel_rx,
             session_data.has_internal_tool,
+            vscode_tools,
         );
 
         Ok(())

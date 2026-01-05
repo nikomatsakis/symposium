@@ -168,9 +168,14 @@ The permission flow for agent-internal tools is implemented:
 - **Rust**: Session actor handles `session/request_permission`, emits `ToolCall` parts
 - **History matching**: History actor tracks committed/provisional, detects approval/rejection
 
-### VS Code-Provided Tools (Not Yet Implemented)
+### VS Code-Provided Tools (Implemented)
 
-The synthetic MCP server for bridging VS Code-provided tools is not yet implemented.
+The synthetic MCP server for bridging VS Code-provided tools is implemented:
+
+- **Rust**: `VscodeToolsMcpServer` in `vscodelm/vscode_tools_mcp.rs` implements `rmcp::ServerHandler`
+- **Integration**: Session actor creates one MCP server per session, injects it via `with_mcp_server()`
+- **Tool list**: Updated on each VS Code request via `VscodeToolsHandle`
+- **Tool invocation**: Session actor handles invocations from the MCP server using `tokio::select!`, emits `ToolCall` to VS Code, waits for `ToolResult`
 
 ## Limitations
 

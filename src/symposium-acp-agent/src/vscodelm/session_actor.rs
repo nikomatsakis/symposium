@@ -6,8 +6,7 @@
 use elizacp::ElizaAgent;
 use futures::channel::{mpsc, oneshot};
 use futures::stream::Peekable;
-use futures::{FutureExt, StreamExt, TryFutureExt};
-use futures_concurrency::future::FutureExt as _;
+use futures::StreamExt;
 use sacp::schema::{
     ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
@@ -25,8 +24,11 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use uuid::Uuid;
 
+use sacp_rmcp::McpServerExt;
+
 use super::history_actor::{HistoryActorHandle, SessionToHistoryMessage};
-use super::{ContentPart, Message, ROLE_USER, SYMPOSIUM_AGENT_ACTION};
+use super::vscode_tools_mcp::{ToolInvocation, VscodeTool, VscodeToolsMcpServer};
+use super::{ContentPart, Message, ToolDefinition, ROLE_USER, SYMPOSIUM_AGENT_ACTION};
 
 /// Tracks the state of tool calls and renders them to markdown.
 ///
@@ -166,6 +168,8 @@ pub struct SessionRequest {
     pub canceled: bool,
     /// Per-request state that travels with the request
     pub state: RequestState,
+    /// VS Code-provided tools (excluding our internal tool)
+    pub vscode_tools: Vec<ToolDefinition>,
 }
 
 /// Per-request state that needs to be passed through message processing.
@@ -177,17 +181,6 @@ pub struct RequestState {
     /// Whether the internal tool (symposium-agent-action) is available.
     /// If false, all permission requests should be auto-denied.
     pub has_internal_tool: bool,
-}
-
-impl RequestState {
-    /// Returns a future that completes when cancellation is requested.
-    /// The future resolves to `Ok(None)` to signal cancellation in select/race patterns.
-    pub fn cancellation(
-        &mut self,
-    ) -> impl std::future::Future<Output = Result<Option<sacp::SessionMessage>, sacp::Error>> + '_
-    {
-        (&mut self.cancel_rx).map(|_| Ok(None))
-    }
 }
 
 /// Handle for communicating with a session actor.
@@ -227,6 +220,7 @@ impl SessionActor {
         canceled: bool,
         cancel_rx: oneshot::Receiver<()>,
         has_internal_tool: bool,
+        vscode_tools: Vec<ToolDefinition>,
     ) {
         let _ = self.tx.unbounded_send(SessionRequest {
             messages,
@@ -235,6 +229,7 @@ impl SessionActor {
                 cancel_rx,
                 has_internal_tool,
             },
+            vscode_tools,
         });
     }
 
@@ -296,27 +291,60 @@ impl SessionActor {
         cx: JrConnectionCx<ClientToAgent>,
         session_id: Uuid,
     ) -> Result<(), sacp::Error> {
-        // Create a session
+        // Create the VS Code tools MCP server
+        let (invocation_tx, mut invocation_rx) = futures::channel::mpsc::unbounded();
+        let vscode_tools_server = VscodeToolsMcpServer::new(invocation_tx);
+        let tools_handle = vscode_tools_server.tools_handle();
+
+        // Create the MCP server wrapper using sacp-rmcp
+        let mcp_server =
+            sacp::mcp_server::McpServer::<ClientToAgent, _>::from_rmcp("vscode-tools", move || {
+                // Clone the server for each connection
+                // Note: This requires VscodeToolsMcpServer to be Clone
+                vscode_tools_server.clone()
+            });
+
+        // Create a session with the MCP server injected
         let mut session = cx
             .build_session(PathBuf::from("."))
+            .with_mcp_server(mcp_server)?
             .block_task()
             .start_session()
             .await?;
 
-        tracing::debug!(%session_id, "session created, waiting for messages");
+        tracing::debug!(%session_id, "session created with VS Code tools MCP server, waiting for messages");
 
         let mut request_rx = request_rx.peekable();
         let mut tool_call_tracker = ToolCallTracker::new();
 
         while let Some(request) = request_rx.next().await {
             let new_message_count = request.messages.len();
-            tracing::debug!(%session_id, new_message_count, canceled = request.canceled, "received request");
+            let vscode_tools_count = request.vscode_tools.len();
+            tracing::debug!(
+                %session_id,
+                new_message_count,
+                vscode_tools_count,
+                canceled = request.canceled,
+                "received request"
+            );
 
             let SessionRequest {
                 messages,
                 canceled: _,
                 state: mut request_state,
+                vscode_tools,
             } = request;
+
+            // Update the MCP server's tool list
+            let vscode_tools: Vec<VscodeTool> = vscode_tools
+                .into_iter()
+                .map(|t| VscodeTool {
+                    name: t.name,
+                    description: t.description,
+                    input_schema: t.input_schema,
+                })
+                .collect();
+            tools_handle.update_tools(vscode_tools).await;
 
             // Build prompt from messages
             let prompt_text: String = messages
@@ -335,43 +363,74 @@ impl SessionActor {
             tracing::debug!(%session_id, %prompt_text, "sending prompt to agent");
             session.send_prompt(&prompt_text)?;
 
-            // Read updates from the agent
+            // Read updates from the agent, also handling VS Code tool invocations
             let canceled = loop {
-                // Wait for either an update or a cancellation
-                let update = session
-                    .read_update()
-                    .map_ok(Some)
-                    .race(request_state.cancellation())
-                    .await?;
+                // Wait for either:
+                // - An update from the agent
+                // - A VS Code tool invocation from our MCP server
+                // - Cancellation
+                tokio::select! {
+                    // Agent update
+                    update = session.read_update() => {
+                        let update = update?;
+                        match update {
+                            sacp::SessionMessage::SessionMessage(message) => {
+                                let new_state = Self::process_session_message(
+                                    message,
+                                    &history_handle,
+                                    &mut request_rx,
+                                    request_state,
+                                    &mut tool_call_tracker,
+                                    session_id,
+                                )
+                                .await?;
 
-                let Some(update) = update else {
-                    // Canceled
-                    break true;
-                };
-
-                match update {
-                    sacp::SessionMessage::SessionMessage(message) => {
-                        let new_state = Self::process_session_message(
-                            message,
-                            &history_handle,
-                            &mut request_rx,
-                            request_state,
-                            &mut tool_call_tracker,
-                            session_id,
-                        )
-                        .await?;
-
-                        match new_state {
-                            Some(s) => request_state = s,
-                            None => break true,
+                                match new_state {
+                                    Some(s) => request_state = s,
+                                    None => break true,
+                                }
+                            }
+                            sacp::SessionMessage::StopReason(stop_reason) => {
+                                tracing::debug!(%session_id, ?stop_reason, "agent turn complete");
+                                break false;
+                            }
+                            other => {
+                                tracing::trace!(%session_id, ?other, "ignoring session message");
+                            }
                         }
                     }
-                    sacp::SessionMessage::StopReason(stop_reason) => {
-                        tracing::debug!(%session_id, ?stop_reason, "agent turn complete");
-                        break false;
+
+                    // VS Code tool invocation from our synthetic MCP server
+                    invocation = invocation_rx.next() => {
+                        let Some(invocation) = invocation else {
+                            // MCP server shut down unexpectedly
+                            tracing::warn!(%session_id, "VS Code tools MCP server channel closed");
+                            break true;
+                        };
+
+                        tracing::debug!(
+                            %session_id,
+                            tool_name = %invocation.name,
+                            "received VS Code tool invocation from MCP server"
+                        );
+
+                        // Handle the tool invocation (emit ToolCall to VS Code, wait for result)
+                        let result = Self::handle_vscode_tool_invocation(
+                            &invocation,
+                            &history_handle,
+                            &mut request_rx,
+                            &mut request_state,
+                            session_id,
+                        )
+                        .await;
+
+                        // Send result back to the MCP server
+                        let _ = invocation.result_tx.send(result);
                     }
-                    other => {
-                        tracing::trace!(%session_id, ?other, "ignoring session message");
+
+                    // Cancellation
+                    _ = &mut request_state.cancel_rx => {
+                        break true;
                     }
                 }
             };
@@ -545,7 +604,7 @@ impl SessionActor {
                 }
 
                 // Consume the request and use its state for the next iteration
-                let SessionRequest { messages, canceled, state } = request_rx.next().await.expect("message is waiting");
+                let SessionRequest { messages, canceled, state, .. } = request_rx.next().await.expect("message is waiting");
                 assert_eq!(canceled, false);
                 assert_eq!(messages.len(), 1);
                 return_value = Some(state);
@@ -568,6 +627,93 @@ impl SessionActor {
             .await?;
 
         Ok(return_value)
+    }
+
+    /// Handle a VS Code tool invocation from our synthetic MCP server.
+    ///
+    /// This is similar to permission request handling:
+    /// 1. Emit a ToolCall part to VS Code
+    /// 2. Signal response complete
+    /// 3. Wait for the next request with ToolResult
+    /// 4. Return the result to the MCP server
+    async fn handle_vscode_tool_invocation(
+        invocation: &ToolInvocation,
+        history_handle: &HistoryActorHandle,
+        request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
+        request_state: &mut RequestState,
+        session_id: Uuid,
+    ) -> Result<rmcp::model::CallToolResult, String> {
+        // Generate a unique tool call ID for this invocation
+        let tool_call_id = Uuid::new_v4().to_string();
+
+        // Build the ToolCall part to send to VS Code
+        let tool_call = ContentPart::ToolCall {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: invocation.name.clone(),
+            parameters: invocation
+                .arguments
+                .clone()
+                .map(serde_json::Value::Object)
+                .unwrap_or(serde_json::Value::Null),
+        };
+
+        // Send tool call to history actor (which forwards to VS Code)
+        history_handle
+            .send_from_session(session_id, SessionToHistoryMessage::Part(tool_call))
+            .map_err(|e| format!("failed to send tool call: {}", e))?;
+
+        // Signal completion so VS Code invokes the tool
+        history_handle
+            .send_from_session(session_id, SessionToHistoryMessage::Complete)
+            .map_err(|e| format!("failed to send complete: {}", e))?;
+
+        // Wait for the next request (which should have the tool result)
+        let Some(next_request) = Pin::new(&mut *request_rx).peek().await else {
+            return Err("channel closed while waiting for tool result".to_string());
+        };
+
+        // Check if canceled (history mismatch)
+        if next_request.canceled {
+            return Err("tool invocation canceled".to_string());
+        }
+
+        // Find the tool result in the response
+        let tool_result = next_request
+            .messages
+            .iter()
+            .find_map(|msg| {
+                msg.content.iter().find_map(|part| {
+                    if let ContentPart::ToolResult {
+                        tool_call_id: id,
+                        result,
+                    } = part
+                    {
+                        if id == &tool_call_id {
+                            Some(result.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or_else(|| "no tool result found in response".to_string())?;
+
+        // Consume the request and update state for the next iteration
+        let SessionRequest { state, .. } = request_rx.next().await.expect("message is waiting");
+        *request_state = state;
+
+        // Convert the result to rmcp CallToolResult
+        // The result from VS Code is a JSON value - convert to text content
+        let result_text = match &tool_result {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+
+        Ok(rmcp::model::CallToolResult::success(vec![
+            rmcp::model::Content::text(result_text),
+        ]))
     }
 }
 
