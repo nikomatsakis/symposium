@@ -8,7 +8,9 @@ use futures::channel::{mpsc, oneshot};
 use futures::stream::Peekable;
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use futures_concurrency::future::FutureExt as _;
-use sacp::schema::{ToolCallUpdate, ToolCallUpdateFields};
+use sacp::schema::{
+    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+};
 use sacp::JrConnectionCx;
 use sacp::{
     schema::{
@@ -18,12 +20,129 @@ use sacp::{
     ClientToAgent, Component, MessageCx,
 };
 use sacp_tokio::AcpAgent;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::pin::Pin;
 use uuid::Uuid;
 
 use super::history_actor::{HistoryActorHandle, SessionToHistoryMessage};
 use super::{ContentPart, Message, ROLE_USER, SYMPOSIUM_AGENT_ACTION};
+
+/// Tracks the state of tool calls and renders them to markdown.
+///
+/// Tool calls arrive as an initial `ToolCall` followed by `ToolCallUpdate` messages.
+/// We accumulate the state and re-render the markdown on each update, streaming
+/// the result to VS Code as text parts.
+#[derive(Debug, Default)]
+struct ToolCallTracker {
+    /// Current state of each tool call, keyed by tool_call_id
+    tool_calls: HashMap<ToolCallId, ToolCallState>,
+}
+
+/// Accumulated state for a single tool call
+#[derive(Debug, Clone)]
+struct ToolCallState {
+    title: String,
+    status: ToolCallStatus,
+    content: Vec<ToolCallContent>,
+}
+
+impl ToolCallTracker {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Process an initial tool call notification
+    fn handle_tool_call(&mut self, tool_call: ToolCall) -> String {
+        let state = ToolCallState {
+            title: tool_call.title,
+            status: tool_call.status,
+            content: tool_call.content,
+        };
+        self.tool_calls
+            .insert(tool_call.tool_call_id.clone(), state.clone());
+        self.render_tool_call(&state)
+    }
+
+    /// Process a tool call update notification
+    fn handle_tool_call_update(&mut self, update: ToolCallUpdate) -> Option<String> {
+        let state = self.tool_calls.get_mut(&update.tool_call_id)?;
+
+        // Apply updates
+        if let Some(title) = update.fields.title {
+            state.title = title;
+        }
+        if let Some(status) = update.fields.status {
+            state.status = status;
+        }
+        if let Some(content) = update.fields.content {
+            state.content = content;
+        }
+
+        // Clone to avoid borrow conflict
+        let state = state.clone();
+        Some(self.render_tool_call(&state))
+    }
+
+    /// Render a tool call state to markdown
+    fn render_tool_call(&self, state: &ToolCallState) -> String {
+        let mut output = String::new();
+
+        // Status indicator
+        let status_icon = match state.status {
+            ToolCallStatus::Pending => "⏳",
+            ToolCallStatus::InProgress => "⚙️",
+            ToolCallStatus::Completed => "✅",
+            ToolCallStatus::Failed => "❌",
+            _ => "•",
+        };
+
+        // Header with title
+        output.push_str(&format!("{} **{}**\n", status_icon, state.title));
+
+        // Content - render in a long code fence to allow nested fences
+        if !state.content.is_empty() {
+            output.push_str("``````````\n");
+            for content in &state.content {
+                output.push_str(&tool_call_content_to_string(content));
+            }
+            // Ensure content ends with newline before closing fence
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("``````````\n");
+        }
+
+        output
+    }
+
+    /// Clear all tracked tool calls (call at end of turn)
+    fn clear(&mut self) {
+        self.tool_calls.clear();
+    }
+}
+
+/// Convert tool call content to a string representation
+fn tool_call_content_to_string(content: &ToolCallContent) -> String {
+    match content {
+        ToolCallContent::Content(c) => {
+            // Content contains a ContentBlock
+            content_block_to_string(&c.content)
+        }
+        ToolCallContent::Diff(diff) => {
+            format!(
+                "--- {}\n+++ {}\n{}",
+                diff.path.display(),
+                diff.path.display(),
+                diff.new_text
+            )
+        }
+        ToolCallContent::Terminal(terminal) => {
+            format!("[Terminal: {}]", terminal.terminal_id)
+        }
+        _ => "[Unknown content]".to_string(),
+    }
+}
 
 /// Defines which agent backend to use for a session.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -187,6 +306,7 @@ impl SessionActor {
         tracing::debug!(%session_id, "session created, waiting for messages");
 
         let mut request_rx = request_rx.peekable();
+        let mut tool_call_tracker = ToolCallTracker::new();
 
         while let Some(request) = request_rx.next().await {
             let new_message_count = request.messages.len();
@@ -236,6 +356,7 @@ impl SessionActor {
                             &history_handle,
                             &mut request_rx,
                             request_state,
+                            &mut tool_call_tracker,
                             session_id,
                         )
                         .await?;
@@ -263,6 +384,9 @@ impl SessionActor {
                 // Turn completed normally
                 history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete)?;
             }
+
+            // Clear tool call state for next turn
+            tool_call_tracker.clear();
         }
 
         tracing::debug!(%session_id, "session actor shutting down");
@@ -278,6 +402,7 @@ impl SessionActor {
         history_handle: &HistoryActorHandle,
         request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
         request_state: RequestState,
+        tool_call_tracker: &mut ToolCallTracker,
         session_id: Uuid,
     ) -> Result<Option<RequestState>, sacp::Error> {
         use sacp::util::MatchMessage;
@@ -287,13 +412,33 @@ impl SessionActor {
 
         MatchMessage::new(message)
             .if_notification(async |notif: SessionNotification| {
-                if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
-                    let text = content_block_to_string(&chunk.content);
-                    if !text.is_empty() {
+                match notif.update {
+                    SessionUpdate::AgentMessageChunk(chunk) => {
+                        let text = content_block_to_string(&chunk.content);
+                        if !text.is_empty() {
+                            history_handle.send_from_session(
+                                session_id,
+                                SessionToHistoryMessage::Part(ContentPart::Text { value: text }),
+                            )?;
+                        }
+                    }
+                    SessionUpdate::ToolCall(tool_call) => {
+                        let markdown = tool_call_tracker.handle_tool_call(tool_call);
                         history_handle.send_from_session(
                             session_id,
-                            SessionToHistoryMessage::Part(ContentPart::Text { value: text }),
+                            SessionToHistoryMessage::Part(ContentPart::Text { value: markdown }),
                         )?;
+                    }
+                    SessionUpdate::ToolCallUpdate(update) => {
+                        if let Some(markdown) = tool_call_tracker.handle_tool_call_update(update) {
+                            history_handle.send_from_session(
+                                session_id,
+                                SessionToHistoryMessage::Part(ContentPart::Text { value: markdown }),
+                            )?;
+                        }
+                    }
+                    _ => {
+                        // Ignore other update types
                     }
                 }
                 Ok(())
@@ -446,3 +591,94 @@ fn content_block_to_string(block: &sacp::schema::ContentBlock) -> String {
 // TODO: request_response module is currently unused after refactoring to HistoryActor pattern.
 // It may be useful later for a cleaner tool-call API, but needs to be updated for the new architecture.
 // mod request_response;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use expect_test::expect;
+    use sacp::schema::{ContentBlock, TextContent, ToolKind};
+
+    #[test]
+    fn test_tool_call_tracker_initial_call() {
+        let mut tracker = ToolCallTracker::new();
+
+        let tool_call = ToolCall::new("test-123", "Read src/main.rs")
+            .kind(ToolKind::Read)
+            .status(ToolCallStatus::InProgress);
+
+        let markdown = tracker.handle_tool_call(tool_call);
+
+        expect![[r#"
+            ⚙️ **Read src/main.rs**
+        "#]]
+        .assert_eq(&markdown);
+    }
+
+    #[test]
+    fn test_tool_call_tracker_with_content() {
+        let mut tracker = ToolCallTracker::new();
+
+        let tool_call = ToolCall::new("test-456", "grep -n pattern file.rs")
+            .kind(ToolKind::Search)
+            .status(ToolCallStatus::Completed)
+            .content(vec![ContentBlock::Text(TextContent::new(
+                "10: let pattern = \"hello\";\n20: println!(\"{}\", pattern);",
+            ))
+            .into()]);
+
+        let markdown = tracker.handle_tool_call(tool_call);
+
+        expect![[r#"
+            ✅ **grep -n pattern file.rs**
+            ``````````
+            10: let pattern = "hello";
+            20: println!("{}", pattern);
+            ``````````
+        "#]]
+        .assert_eq(&markdown);
+    }
+
+    #[test]
+    fn test_tool_call_tracker_update() {
+        let mut tracker = ToolCallTracker::new();
+
+        // Initial call
+        let tool_call = ToolCall::new("test-789", "Running cargo build")
+            .kind(ToolKind::Execute)
+            .status(ToolCallStatus::InProgress);
+        tracker.handle_tool_call(tool_call);
+
+        // Update with completion and content
+        let update = ToolCallUpdate::new(
+            "test-789",
+            ToolCallUpdateFields::new()
+                .status(ToolCallStatus::Completed)
+                .content(vec![ContentBlock::Text(TextContent::new(
+                    "Build succeeded!",
+                ))
+                .into()]),
+        );
+
+        let markdown = tracker.handle_tool_call_update(update).unwrap();
+
+        expect![[r#"
+            ✅ **Running cargo build**
+            ``````````
+            Build succeeded!
+            ``````````
+        "#]]
+        .assert_eq(&markdown);
+    }
+
+    #[test]
+    fn test_tool_call_tracker_unknown_id_returns_none() {
+        let mut tracker = ToolCallTracker::new();
+
+        let update = ToolCallUpdate::new(
+            "unknown-id",
+            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+        );
+
+        assert!(tracker.handle_tool_call_update(update).is_none());
+    }
+}
