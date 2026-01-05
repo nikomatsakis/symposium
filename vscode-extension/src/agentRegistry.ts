@@ -64,18 +64,6 @@ const AVAILABILITY_CHECKS: Record<string, () => Promise<AvailabilityStatus>> = {
     }
     return { available: false, reason: "~/.claude not found" };
   },
-  "zed-codex": async () => {
-    if (await commandExists("codex")) {
-      return { available: true };
-    }
-    return { available: false, reason: "codex not found on PATH" };
-  },
-  "google-gemini": async () => {
-    if (await commandExists("gemini")) {
-      return { available: true };
-    }
-    return { available: false, reason: "gemini not found on PATH" };
-  },
   "kiro-cli": async () => {
     if (await commandExists("kiro-cli-chat")) {
       return { available: true };
@@ -182,25 +170,6 @@ export const BUILT_IN_AGENTS: AgentConfig[] = [
     name: "Claude Code",
     distribution: {
       npx: { package: "@zed-industries/claude-code-acp@latest" },
-    },
-    _source: "custom",
-  },
-  {
-    id: "zed-codex",
-    name: "Codex",
-    distribution: {
-      npx: { package: "@zed-industries/codex-acp@latest" },
-    },
-    _source: "custom",
-  },
-  {
-    id: "google-gemini",
-    name: "Gemini",
-    distribution: {
-      npx: {
-        package: "@google/gemini-cli@latest",
-        args: ["--experimental-acp"],
-      },
     },
     _source: "custom",
   },
