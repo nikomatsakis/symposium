@@ -137,13 +137,6 @@ impl Message {
         self.content.len() == 1 && self.has_tool_result(tool_call_id)
     }
 
-    /// Check if the message contains a tool call with the given ID
-    pub fn has_tool_call(&self, tool_call_id: &str) -> bool {
-        self.content.iter().any(|part| {
-            matches!(part, ContentPart::ToolCall { tool_call_id: id, .. } if id == tool_call_id)
-        })
-    }
-
     /// Normalize the message by coalescing consecutive Text parts.
     pub fn normalize(&mut self) {
         let mut normalized = Vec::with_capacity(self.content.len());

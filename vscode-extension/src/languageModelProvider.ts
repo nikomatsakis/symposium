@@ -11,9 +11,11 @@ import * as cp from "child_process";
 import { getConductorCommand } from "./binaryPath";
 import { logger } from "./extension";
 import {
-  getCurrentAgent,
+  getEffectiveAgents,
+  getAgentById,
   resolveDistribution,
   ResolvedCommand,
+  AgentConfig,
 } from "./agentRegistry";
 
 /**
@@ -352,36 +354,24 @@ export class SymposiumLanguageModelProvider
   }
 
   /**
-   * Provide information about available language models
+   * Provide information about available language models.
+   * Returns one model per effective agent from the agent registry.
    */
   async provideLanguageModelChatInformation(
     _options: { silent: boolean },
     _token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
-    const result = (await this.sendRequest(
-      "lm/provideLanguageModelChatInformation",
-      {},
-    )) as {
-      models: Array<{
-        id: string;
-        name: string;
-        family: string;
-        version: string;
-        maxInputTokens: number;
-        maxOutputTokens: number;
-        capabilities: { toolCalling?: boolean };
-      }>;
-    };
+    const agents = getEffectiveAgents();
 
-    return result.models.map((info) => ({
-      id: info.id,
-      name: info.name,
-      family: info.family,
-      version: info.version,
-      maxInputTokens: info.maxInputTokens,
-      maxOutputTokens: info.maxOutputTokens,
+    return agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name ?? agent.id,
+      family: "symposium",
+      version: agent.version ?? "1.0.0",
+      maxInputTokens: 100000,
+      maxOutputTokens: 100000,
       capabilities: {
-        toolCalling: info.capabilities.toolCalling ?? false,
+        toolCalling: true,
       },
     }));
   }
@@ -396,10 +386,10 @@ export class SymposiumLanguageModelProvider
     progress: vscode.Progress<vscode.LanguageModelTextPart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    // Get the current agent configuration
-    const agent = getCurrentAgent();
+    // Look up the agent by the model ID (which is the agent ID)
+    const agent = getAgentById(model.id);
     if (!agent) {
-      throw new Error("No agent configured");
+      throw new Error(`Unknown agent: ${model.id}`);
     }
 
     // Resolve the agent distribution to a spawn command

@@ -325,11 +325,12 @@ impl HistoryActor {
         // This ensures consistent comparison with our provisional history.
         normalize_messages(&mut request.messages);
 
-        // Find session with best history match
+        // Find session with best history match (must also match agent)
         let best_match = self
             .sessions
             .iter()
             .enumerate()
+            .filter(|(_, s)| s.agent_definition == request.agent)
             .filter_map(|(i, s)| s.match_history(&request.messages).map(|m| (i, m)))
             .max_by_key(|(_, m)| !m.canceled); // prefer non-canceled matches
 

@@ -145,7 +145,7 @@ fn tool_call_content_to_string(content: &ToolCallContent) -> String {
 }
 
 /// Defines which agent backend to use for a session.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentDefinition {
     /// Use the in-process Eliza chatbot (for testing)
