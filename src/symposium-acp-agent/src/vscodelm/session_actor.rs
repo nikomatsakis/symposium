@@ -184,6 +184,16 @@ pub struct RequestState {
     pub has_internal_tool: bool,
 }
 
+impl RequestState {
+    /// Wait for cancellation and return the provided value.
+    ///
+    /// This is useful for racing cancellation against other futures.
+    pub async fn on_cancel<T>(&mut self, value: T) -> T {
+        let _ = (&mut self.cancel_rx).await;
+        value
+    }
+}
+
 /// Handle for communicating with a session actor.
 pub struct SessionActor {
     /// Channel to send requests to the actor
@@ -376,10 +386,7 @@ impl SessionActor {
                 let event = Race::race((
                     async { Event::AgentUpdate(session.read_update().await) },
                     async { Event::ToolInvocation(invocation_rx.next().await) },
-                    async {
-                        let _ = (&mut request_state.cancel_rx).await;
-                        Event::Canceled
-                    },
+                    request_state.on_cancel(Event::Canceled),
                 ))
                 .await;
 
@@ -709,10 +716,7 @@ impl SessionActor {
                     None => PeekResult::ChannelClosed,
                 }
             },
-            async {
-                let _ = (&mut request_state.cancel_rx).await;
-                PeekResult::Canceled
-            },
+            request_state.on_cancel(PeekResult::Canceled),
         ))
         .await;
 
