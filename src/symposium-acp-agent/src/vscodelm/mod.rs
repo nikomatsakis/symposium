@@ -727,7 +727,8 @@ mod tests {
                     .await
                     .expect("timeout");
 
-                expect!["I don't have feelings, but I'm functioning well. What about you?"].assert_eq(&parts.lock().unwrap().text());
+                expect!["I don't have feelings, but I'm functioning well. What about you?"]
+                    .assert_eq(&parts.lock().unwrap().text());
                 Ok(())
             })
             .await
@@ -776,7 +777,8 @@ mod tests {
                     .expect("timeout");
 
                 // Eliza responds regardless of tools
-                expect!["How do you do. Please state your problem."].assert_eq(&parts.lock().unwrap().text());
+                expect!["How do you do. Please state your problem."]
+                    .assert_eq(&parts.lock().unwrap().text());
                 Ok(())
             })
             .await
@@ -812,7 +814,8 @@ mod tests {
                     .await
                     .expect("timeout");
 
-                expect!["How do you do. Please state your problem."].assert_eq(&parts.lock().unwrap().text());
+                expect!["How do you do. Please state your problem."]
+                    .assert_eq(&parts.lock().unwrap().text());
                 parts.lock().unwrap().clear();
 
                 // Second turn - send full history
@@ -826,7 +829,7 @@ mod tests {
                     Message {
                         role: ROLE_ASSISTANT.to_string(),
                         content: vec![ContentPart::Text {
-                            value: "How are you today?".to_string(),
+                            value: "How do you do. Please state your problem.".to_string(),
                         }],
                     },
                     Message {
@@ -853,7 +856,7 @@ mod tests {
                     .expect("timeout");
 
                 // Eliza responds to the second turn
-                expect!["How do you do. Please state your problem."]
+                expect!["Do you believe it is normal to be doing well thanks?"]
                     .assert_eq(&parts.lock().unwrap().text());
                 Ok(())
             })
