@@ -276,6 +276,7 @@ export class AcpAgentActor {
     this.agentProcess = spawn(conductorCommand, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env: env as NodeJS.ProcessEnv,
+      cwd: config.workspaceFolder.uri.fsPath,
     });
 
     // Capture stderr and pipe to logger
