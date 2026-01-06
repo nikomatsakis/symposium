@@ -6,6 +6,7 @@
 //!
 //! Usage:
 //!   cargo run --example vscodelm_cli
+//!   cargo run --example vscodelm_cli -- --log-file /tmp/vscodelm.log
 //!
 //! Then type prompts at the `> ` prompt. The example includes an "average" tool
 //! that computes the average of a list of numbers - ask Claude to use it!
@@ -15,12 +16,24 @@
 //!   > Can you calculate the average of these test scores: 85, 92, 78, 95, 88?
 
 use anyhow::Result;
+use clap::Parser;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use sacp::{on_receive_notification, JrLink};
 use serde_json::json;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+#[derive(Parser, Debug)]
+#[command(name = "vscodelm_cli")]
+#[command(about = "Interactive CLI for debugging VS Code LM Provider integration")]
+struct Args {
+    /// Log file path. If provided, traces are written to this file.
+    /// Use RUST_LOG to control log level (e.g., RUST_LOG=debug).
+    #[arg(long)]
+    log_file: Option<PathBuf>,
+}
 
 // Import vscodelm types - we need to make these pub or use a different approach
 use symposium_acp_agent::vscodelm::session_actor::AgentDefinition;
@@ -113,8 +126,24 @@ impl ResponseCollector {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing if RUST_LOG is set
-    if std::env::var("RUST_LOG").is_ok() {
+    let args = Args::parse();
+
+    // Initialize tracing
+    if let Some(log_file) = args.log_file {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)?;
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::DEBUG.into()),
+            )
+            .with_writer(Mutex::new(file))
+            .with_ansi(false)
+            .init();
+        eprintln!("Logging to: {}", log_file.display());
+    } else if std::env::var("RUST_LOG").is_ok() {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .with_writer(std::io::stderr)
