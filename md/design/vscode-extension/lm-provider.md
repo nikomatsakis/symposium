@@ -1,6 +1,22 @@
 # Language Model Provider
 
+> **Experimental:** This feature is disabled by default. Set `symposium.enableExperimentalLM: true` in VS Code settings to enable it.
+
 This chapter describes the architecture for exposing ACP agents as VS Code Language Models via the `LanguageModelChatProvider` API (introduced in VS Code 1.104). This allows ACP agents to appear in VS Code's model picker and be used by any extension that consumes the Language Model API.
+
+## Current Status
+
+The Language Model Provider is experimental and may not be the right approach for Symposium.
+
+**What works:**
+- Basic message flow between VS Code LM API and ACP agents
+- Session management with committed/provisional history model
+- Tool bridging architecture (both directions)
+
+**Known issues:**
+- Tool invocation fails when multiple VS Code-provided tools are bridged to the agent. A single isolated tool works correctly, but when multiple tools are available, the model doesn't invoke them properly. The root cause is not yet understood.
+
+**Open question:** VS Code LM consumers (like GitHub Copilot) inject their own context into requests - project details, file contents, editor state, etc. ACP agents like Claude Code also inject their own context. When both layers add context, they may "fight" each other, confusing the model. The LM API may be better suited for raw model access rather than wrapping agents that have their own context management.
 
 ## Overview
 
