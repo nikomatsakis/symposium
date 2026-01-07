@@ -249,6 +249,21 @@ export class AcpAgentActor {
       spawnArgs.push("--trace-dir", traceDir);
     }
 
+    // Add extension proxies from settings
+    const extensions = vsConfig.get<Array<{ id: string; enabled: boolean }>>(
+      "extensions",
+      [
+        { id: "sparkle", enabled: true },
+        { id: "ferris", enabled: true },
+        { id: "cargo", enabled: true },
+      ],
+    );
+    for (const ext of extensions) {
+      if (ext.enabled) {
+        spawnArgs.push("--proxy", ext.id);
+      }
+    }
+
     if (resolved.isSymposiumBuiltin) {
       // Symposium builtin (e.g., eliza) - wrap with conductor using the same binary
       spawnArgs.push(
