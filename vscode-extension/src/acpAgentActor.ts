@@ -238,7 +238,8 @@ export class AcpAgentActor {
     }
 
     // Build the spawn command and args
-    const spawnArgs: string[] = [];
+    // The symposium-acp-agent binary uses subcommands: act-as-agent wraps a downstream agent
+    const spawnArgs: string[] = ["act-as-agent"];
 
     if (agentLogLevel) {
       spawnArgs.push("--log", agentLogLevel);
@@ -262,7 +263,7 @@ export class AcpAgentActor {
     }
 
     if (resolved.isSymposiumBuiltin) {
-      // Symposium builtin (e.g., eliza) - wrap with conductor using the same binary
+      // Symposium builtin (e.g., eliza) - run with the same binary
       spawnArgs.push(
         "--",
         conductorCommand,
