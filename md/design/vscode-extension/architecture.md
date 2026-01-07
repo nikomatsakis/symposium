@@ -167,3 +167,5 @@ sequenceDiagram
 ```
 
 The extension maintains tab↔session mappings and handles webview visibility, while the agent maintains session state and generates responses.
+
+See also: [Common Issues](../common-issues.md) for recurring bug patterns.

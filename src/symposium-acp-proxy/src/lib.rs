@@ -21,22 +21,60 @@ use sacp::{Component, DynComponent};
 use sacp_conductor::{Conductor, McpBridgeMode};
 use std::path::PathBuf;
 
+/// Known proxy/extension names that can be configured.
+pub const KNOWN_PROXIES: &[&str] = &["sparkle", "ferris", "cargo"];
+
 /// Shared configuration for Symposium proxy chains.
 struct SymposiumConfig {
-    ferris: Option<symposium_ferris::Ferris>,
-    cargo: bool,
-    sparkle: bool,
+    /// Ordered list of proxy names to include in the chain.
+    proxy_names: Vec<String>,
     trace_dir: Option<PathBuf>,
 }
 
 impl SymposiumConfig {
     fn new() -> Self {
         SymposiumConfig {
-            sparkle: true,
-            ferris: Some(symposium_ferris::Ferris::default()),
-            cargo: true,
+            // Default: all proxies enabled
+            proxy_names: KNOWN_PROXIES.iter().map(|s| s.to_string()).collect(),
             trace_dir: None,
         }
+    }
+
+    fn from_proxy_names(names: &[String]) -> Self {
+        SymposiumConfig {
+            proxy_names: names.to_vec(),
+            trace_dir: None,
+        }
+    }
+
+    /// Build proxy components from the configured names, preserving order.
+    fn build_proxies(&self) -> Vec<DynComponent<ProxyToConductor>> {
+        let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
+
+        for name in &self.proxy_names {
+            match name.as_str() {
+                "sparkle" => {
+                    proxies.push(DynComponent::new(sparkle::SparkleComponent::new()));
+                }
+                "ferris" => {
+                    // Enable all Ferris tools by default
+                    let ferris_config = symposium_ferris::Ferris::new()
+                        .crate_sources(true)
+                        .rust_researcher(true);
+                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
+                        ferris_config,
+                    )));
+                }
+                "cargo" => {
+                    proxies.push(DynComponent::new(symposium_cargo::CargoProxy));
+                }
+                other => {
+                    tracing::warn!("Unknown proxy name: {}", other);
+                }
+            }
+        }
+
+        proxies
     }
 }
 
@@ -49,27 +87,34 @@ pub struct Symposium {
 }
 
 impl Symposium {
+    /// Create a new Symposium with all default proxies enabled.
     pub fn new() -> Self {
         Symposium {
             config: SymposiumConfig::new(),
         }
     }
 
-    pub fn sparkle(mut self, enable: bool) -> Self {
-        self.config.sparkle = enable;
-        self
-    }
+    /// Create a Symposium from a list of proxy names.
+    ///
+    /// Order matters - proxies are chained in the order specified.
+    /// Known proxy names: "sparkle", "ferris", "cargo"
+    ///
+    /// Returns an error if any proxy name is unknown.
+    pub fn from_proxy_names(names: &[String]) -> Result<Self, anyhow::Error> {
+        // Validate all proxy names
+        for name in names {
+            if !KNOWN_PROXIES.contains(&name.as_str()) {
+                anyhow::bail!(
+                    "Unknown proxy name: '{}'. Known proxies: {}",
+                    name,
+                    KNOWN_PROXIES.join(", ")
+                );
+            }
+        }
 
-    /// Configure Ferris tools. Pass `None` to disable Ferris entirely.
-    pub fn ferris(mut self, config: Option<symposium_ferris::Ferris>) -> Self {
-        self.config.ferris = config;
-        self
-    }
-
-    /// Enable or disable Cargo tools.
-    pub fn cargo(mut self, enable: bool) -> Self {
-        self.config.cargo = enable;
-        self
+        Ok(Symposium {
+            config: SymposiumConfig::from_proxy_names(names),
+        })
     }
 
     /// Enable trace logging to a directory.
@@ -91,33 +136,17 @@ impl Component<ProxyToConductor> for Symposium {
         tracing::debug!("Symposium::serve starting (proxy mode)");
         let Self { config } = self;
 
-        let ferris = config.ferris;
-        let cargo = config.cargo;
-        let sparkle = config.sparkle;
-        let trace_dir = config.trace_dir;
+        let trace_dir = config.trace_dir.clone();
 
         tracing::debug!("Creating conductor (proxy mode)");
         let mut conductor = Conductor::new_proxy(
             "symposium",
             move |init_req| async move {
-                tracing::info!("Building proxy chain based on capabilities");
-
-                let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
-
-                if let Some(ferris_config) = ferris {
-                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
-                        ferris_config,
-                    )));
-                }
-
-                if cargo {
-                    proxies.push(DynComponent::new(symposium_cargo::CargoProxy));
-                }
-
-                if sparkle {
-                    proxies.push(DynComponent::new(sparkle::SparkleComponent::new()));
-                }
-
+                tracing::info!(
+                    "Building proxy chain with extensions: {:?}",
+                    config.proxy_names
+                );
+                let proxies = config.build_proxies();
                 Ok((init_req, proxies))
             },
             McpBridgeMode::default(),
@@ -165,33 +194,17 @@ impl Component<AgentToClient> for SymposiumAgent {
         tracing::debug!("SymposiumAgent::serve starting (agent mode)");
         let Self { config, agent } = self;
 
-        let ferris = config.ferris;
-        let cargo = config.cargo;
-        let sparkle = config.sparkle;
-        let trace_dir = config.trace_dir;
+        let trace_dir = config.trace_dir.clone();
 
         tracing::debug!("Creating conductor (agent mode)");
         let mut conductor = Conductor::new_agent(
             "symposium",
             move |init_req| async move {
-                tracing::info!("Building proxy chain based on capabilities");
-
-                let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
-
-                if let Some(ferris_config) = ferris {
-                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
-                        ferris_config,
-                    )));
-                }
-
-                if cargo {
-                    proxies.push(DynComponent::new(symposium_cargo::CargoProxy));
-                }
-
-                if sparkle {
-                    proxies.push(DynComponent::new(sparkle::SparkleComponent::new()));
-                }
-
+                tracing::info!(
+                    "Building proxy chain with extensions: {:?}",
+                    config.proxy_names
+                );
+                let proxies = config.build_proxies();
                 Ok((init_req, proxies, agent))
             },
             McpBridgeMode::default(),

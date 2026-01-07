@@ -249,6 +249,13 @@ export class AcpAgentActor {
       spawnArgs.push("--trace-dir", traceDir);
     }
 
+    // Add extension proxies from configuration
+    for (const ext of config.extensions) {
+      if (ext._enabled) {
+        spawnArgs.push("--proxy", ext.id);
+      }
+    }
+
     if (resolved.isSymposiumBuiltin) {
       // Symposium builtin (e.g., eliza) - wrap with conductor using the same binary
       spawnArgs.push(
