@@ -21,6 +21,7 @@
 # Design and implementation
 
 - [Overview](./design/implementation-overview.md)
+- [Common Issues](./design/common-issues.md)
 - [Distribution](./design/distribution.md)
 - [Components](./design/components.md)
 - [Rust Crate Sources](./design/rust-crate-sources.md)
