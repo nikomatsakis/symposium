@@ -620,7 +620,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 
     <div class="section">
         <a href="#" id="configure-link" style="color: var(--vscode-textLink-foreground); text-decoration: none;">
-            Configure agents...
+            Edit all settings...
         </a>
     </div>
 
