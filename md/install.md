@@ -22,8 +22,21 @@
     </a>
   </li>
   <li>
-    <a href="./install-other.md" class="other-editors">
-      <span class="editor-name">Other editors</span>
+    <a href="./install-other.md">
+      <img src="./artwork/logos/neovim.svg" alt="NeoVim"/>
+      <span class="editor-name">NeoVim</span>
+    </a>
+  </li>
+  <li>
+    <a href="./install-other.md">
+      <img src="./artwork/logos/emacs.png" alt="Emacs"/>
+      <span class="editor-name">Emacs</span>
+    </a>
+  </li>
+  <li>
+    <a href="./install-other.md">
+      <img src="./artwork/logos/acp.png" alt="ACP"/>
+      <span class="editor-name">Other ACP-supporting editors</span>
     </a>
   </li>
 </ul>
