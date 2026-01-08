@@ -60,12 +60,16 @@ impl SymposiumUserConfig {
 
     /// Save config to the default path.
     pub fn save(&self) -> Result<()> {
-        let dir = Self::dir()?;
-        std::fs::create_dir_all(&dir)?;
+        self.save_to(&Self::path()?)
+    }
 
-        let path = Self::path()?;
+    /// Save config to a specific path.
+    pub fn save_to(&self, path: &PathBuf) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        std::fs::write(path, content)?;
         Ok(())
     }
 
@@ -158,13 +162,22 @@ struct ConfigSessionData {
 #[derive(Clone)]
 pub struct ConfigurationAgent {
     sessions: Arc<Mutex<HashMap<SessionId, ConfigSessionData>>>,
+    /// Custom config path for testing. If None, uses the default ~/.symposium/config.jsonc
+    config_path: Option<PathBuf>,
 }
 
 impl ConfigurationAgent {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            config_path: None,
         }
+    }
+
+    /// Set a custom config path (for testing).
+    pub fn with_config_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config_path = Some(path.into());
+        self
     }
 
     fn create_session(&self, session_id: &SessionId) {
@@ -249,7 +262,11 @@ impl ConfigurationAgent {
 
                         // Save configuration
                         let config = SymposiumUserConfig::with_agent(agent.command);
-                        if let Err(e) = config.save() {
+                        let save_result = match &self.config_path {
+                            Some(path) => config.save_to(path),
+                            None => config.save(),
+                        };
+                        if let Err(e) = save_result {
                             return format!("Error saving configuration: {}", e);
                         }
 
@@ -360,6 +377,294 @@ impl Component<sacp::link::AgentToClient> for ConfigurationAgent {
             )
             .connect_to(client)?
             .serve()
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use expect_test::expect;
+    use sacp::link::ClientToAgent;
+    use sacp::on_receive_notification;
+    use sacp::schema::ProtocolVersion;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    /// Extract text from a ContentBlock.
+    fn content_block_text(block: &ContentBlock) -> Option<String> {
+        match block {
+            ContentBlock::Text(text) => Some(text.text.clone()),
+            _ => None,
+        }
+    }
+
+    /// Collected session notifications from the configuration agent.
+    #[derive(Debug, Default)]
+    struct CollectedMessages {
+        chunks: Vec<String>,
+    }
+
+    impl CollectedMessages {
+        fn text(&self) -> String {
+            self.chunks.join("")
+        }
+
+        fn clear(&mut self) {
+            self.chunks.clear();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_configuration_agent_welcome_message() -> Result<(), sacp::Error> {
+        let messages = Arc::new(Mutex::new(CollectedMessages::default()));
+
+        let messages_clone = messages.clone();
+        ClientToAgent::builder()
+            .on_receive_notification(
+                async move |n: SessionNotification, _| {
+                    if let SessionUpdate::AgentMessageChunk(chunk) = n.update {
+                        if let Some(text) = content_block_text(&chunk.content) {
+                            messages_clone.lock().unwrap().chunks.push(text);
+                        }
+                    }
+                    Ok(())
+                },
+                on_receive_notification!(),
+            )
+            .connect_to(ConfigurationAgent::new())?
+            .run_until(async |cx| {
+                // Initialize the agent
+                let init_response = cx
+                    .send_request(InitializeRequest::new(ProtocolVersion::LATEST))
+                    .block_task()
+                    .await?;
+                assert_eq!(init_response.protocol_version, ProtocolVersion::LATEST);
+
+                // Create a new session - this should trigger welcome message
+                let _session_response = cx
+                    .send_request(NewSessionRequest::new("."))
+                    .block_task()
+                    .await?;
+
+                // Give a moment for the notification to arrive
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let text = messages.lock().unwrap().text();
+                expect![[r#"
+                    Welcome to Symposium!
+
+                    No configuration found. Let's set up your AI agent.
+
+                    Which agent would you like to use?
+
+                      1. Claude Code
+                      2. Gemini CLI
+                      3. Codex
+                      4. Kiro CLI
+
+                    Type a number (1-4) to select:"#]]
+                .assert_eq(&text);
+
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn test_configuration_agent_select_agent() -> Result<(), sacp::Error> {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.jsonc");
+
+        let messages = Arc::new(Mutex::new(CollectedMessages::default()));
+
+        let messages_clone = messages.clone();
+        ClientToAgent::builder()
+            .on_receive_notification(
+                async move |n: SessionNotification, _| {
+                    if let SessionUpdate::AgentMessageChunk(chunk) = n.update {
+                        if let Some(text) = content_block_text(&chunk.content) {
+                            messages_clone.lock().unwrap().chunks.push(text);
+                        }
+                    }
+                    Ok(())
+                },
+                on_receive_notification!(),
+            )
+            .connect_to(ConfigurationAgent::new().with_config_path(&config_path))?
+            .run_until(async |cx| {
+                // Initialize
+                cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
+                    .block_task()
+                    .await?;
+
+                // Create session
+                let session_response = cx
+                    .send_request(NewSessionRequest::new("."))
+                    .block_task()
+                    .await?;
+                let session_id = session_response.session_id;
+
+                // Clear welcome message
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                messages.lock().unwrap().clear();
+
+                // Select Claude Code (option 1)
+                let prompt_response = cx
+                    .send_request(PromptRequest::new(
+                        session_id.clone(),
+                        vec![ContentBlock::Text(TextContent::new("1".to_string()))],
+                    ))
+                    .block_task()
+                    .await?;
+
+                assert_eq!(prompt_response.stop_reason, StopReason::EndTurn);
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let text = messages.lock().unwrap().text();
+                expect![[r#"
+                    Configuration saved!
+
+                    Agent: Claude Code
+                    Proxies: sparkle, ferris, cargo (all enabled)
+
+                    Please restart your editor to start using Symposium with Claude Code."#]]
+                .assert_eq(&text);
+
+                // Verify config file was created
+                assert!(config_path.exists(), "Config file should exist");
+                let content = std::fs::read_to_string(&config_path).unwrap();
+                let saved_config: SymposiumUserConfig = serde_json::from_str(&content).unwrap();
+                assert_eq!(saved_config.agent, "npx -y @zed-industries/claude-code-acp");
+                assert_eq!(saved_config.proxies.len(), 3);
+
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn test_configuration_agent_invalid_input() -> Result<(), sacp::Error> {
+        let messages = Arc::new(Mutex::new(CollectedMessages::default()));
+
+        let messages_clone = messages.clone();
+        ClientToAgent::builder()
+            .on_receive_notification(
+                async move |n: SessionNotification, _| {
+                    if let SessionUpdate::AgentMessageChunk(chunk) = n.update {
+                        if let Some(text) = content_block_text(&chunk.content) {
+                            messages_clone.lock().unwrap().chunks.push(text);
+                        }
+                    }
+                    Ok(())
+                },
+                on_receive_notification!(),
+            )
+            .connect_to(ConfigurationAgent::new())?
+            .run_until(async |cx| {
+                // Initialize
+                cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
+                    .block_task()
+                    .await?;
+
+                // Create session
+                let session_response = cx
+                    .send_request(NewSessionRequest::new("."))
+                    .block_task()
+                    .await?;
+                let session_id = session_response.session_id;
+
+                // Clear welcome message
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                messages.lock().unwrap().clear();
+
+                // Send invalid input
+                cx.send_request(PromptRequest::new(
+                    session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new("invalid".to_string()))],
+                ))
+                .block_task()
+                .await?;
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let text = messages.lock().unwrap().text();
+                assert!(text.contains("Invalid selection"));
+                assert!(text.contains("1 to 4"));
+
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn test_configuration_agent_done_state() -> Result<(), sacp::Error> {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.jsonc");
+
+        let messages = Arc::new(Mutex::new(CollectedMessages::default()));
+
+        let messages_clone = messages.clone();
+        ClientToAgent::builder()
+            .on_receive_notification(
+                async move |n: SessionNotification, _| {
+                    if let SessionUpdate::AgentMessageChunk(chunk) = n.update {
+                        if let Some(text) = content_block_text(&chunk.content) {
+                            messages_clone.lock().unwrap().chunks.push(text);
+                        }
+                    }
+                    Ok(())
+                },
+                on_receive_notification!(),
+            )
+            .connect_to(ConfigurationAgent::new().with_config_path(&config_path))?
+            .run_until(async |cx| {
+                // Initialize
+                cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
+                    .block_task()
+                    .await?;
+
+                // Create session
+                let session_response = cx
+                    .send_request(NewSessionRequest::new("."))
+                    .block_task()
+                    .await?;
+                let session_id = session_response.session_id;
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                messages.lock().unwrap().clear();
+
+                // Select an agent
+                cx.send_request(PromptRequest::new(
+                    session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new("2".to_string()))],
+                ))
+                .block_task()
+                .await?;
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                messages.lock().unwrap().clear();
+
+                // Try to send another prompt after done
+                cx.send_request(PromptRequest::new(
+                    session_id.clone(),
+                    vec![ContentBlock::Text(TextContent::new(
+                        "something else".to_string(),
+                    ))],
+                ))
+                .block_task()
+                .await?;
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let text = messages.lock().unwrap().text();
+                expect!["Configuration is complete. Please restart your editor to use Symposium."]
+                    .assert_eq(&text);
+
+                Ok(())
+            })
             .await
     }
 }

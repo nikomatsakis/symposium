@@ -50,3 +50,4 @@ path = "examples/vscodelm_cli.rs"
 
 [dev-dependencies]
 expect-test.workspace = true
+tempfile = "3"
