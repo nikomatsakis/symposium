@@ -304,26 +304,7 @@ export function getCurrentAgent(): AgentConfig | undefined {
 }
 
 /**
- * Resolved spawn command
- */
-export interface ResolvedCommand {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-}
-
-/**
- * Output format from `registry resolve` command
- */
-interface RegistryResolveOutput {
-  name: string;
-  command: string;
-  args: string[];
-  env: Array<{ name: string; value: string }>;
-}
-
-/**
- * Resolve an agent's distribution to a spawn command.
+ * Resolve an agent to a JSON string for passing to `symposium-acp-agent run-with --agent`.
  *
  * First tries `registry resolve <id>` which handles:
  * - Built-in agents (elizacp, etc.)
@@ -335,58 +316,57 @@ interface RegistryResolveOutput {
  *
  * @throws Error if no compatible distribution is found
  */
-export async function resolveDistribution(
-  agent: AgentConfig,
-): Promise<ResolvedCommand> {
+export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
   // First, try resolving via the binary (handles built-ins and registry agents)
   try {
-    const output = await runRegistryCommand(["resolve", agent.id]);
-    const resolved = JSON.parse(output) as RegistryResolveOutput;
-
-    // Convert env array to record
-    const env: Record<string, string> = {};
-    for (const { name, value } of resolved.env) {
-      env[name] = value;
-    }
-
-    return {
-      command: resolved.command,
-      args: resolved.args,
-      env: Object.keys(env).length > 0 ? env : undefined,
-    };
+    return await runRegistryCommand(["resolve", agent.id]);
   } catch {
     // Agent not in registry - fall back to local resolution
   }
 
   // Fall back to local distribution resolution for custom agents
   const dist = agent.distribution;
+  const name = agent.name ?? agent.id;
 
-  // Try local (explicit path)
+  // Build McpServer JSON format
+  interface McpServerJson {
+    name: string;
+    command: string;
+    args: string[];
+    env: Array<{ name: string; value: string }>;
+  }
+
+  let result: McpServerJson;
+
   if (dist.local) {
-    return {
+    const envArray = dist.local.env
+      ? Object.entries(dist.local.env).map(([k, v]) => ({ name: k, value: v }))
+      : [];
+    result = {
+      name,
       command: dist.local.command,
       args: dist.local.args ?? [],
-      env: dist.local.env,
+      env: envArray,
     };
-  }
-
-  // Try npx
-  if (dist.npx) {
-    return {
+  } else if (dist.npx) {
+    result = {
+      name,
       command: "npx",
       args: ["-y", dist.npx.package, ...(dist.npx.args ?? [])],
+      env: [],
     };
-  }
-
-  // Try pipx
-  if (dist.pipx) {
-    return {
+  } else if (dist.pipx) {
+    result = {
+      name,
       command: "pipx",
       args: ["run", dist.pipx.package, ...(dist.pipx.args ?? [])],
+      env: [],
     };
+  } else {
+    throw new Error(`No compatible distribution found for agent "${agent.id}"`);
   }
 
-  throw new Error(`No compatible distribution found for agent "${agent.id}"`);
+  return JSON.stringify(result);
 }
 
 /**

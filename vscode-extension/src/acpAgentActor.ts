@@ -10,7 +10,7 @@ import { Writable, Readable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import { AgentConfiguration } from "./agentConfiguration";
-import { getAgentById, resolveDistribution } from "./agentRegistry";
+import { getAgentById, resolveAgentJson } from "./agentRegistry";
 import { logger } from "./extension";
 
 /**
@@ -225,8 +225,8 @@ export class AcpAgentActor {
       );
     }
 
-    // Resolve distribution to command and args
-    const resolved = await resolveDistribution(agent);
+    // Resolve agent to JSON
+    const agentJson = await resolveAgentJson(agent);
 
     // Get log level if configured
     let agentLogLevel = vsConfig.get<string>("agentLogLevel", "");
@@ -238,8 +238,7 @@ export class AcpAgentActor {
     }
 
     // Build the spawn command and args
-    // The symposium-acp-agent binary uses subcommands: act-as-agent wraps a downstream agent
-    const spawnArgs: string[] = ["act-as-agent"];
+    const spawnArgs: string[] = ["run-with"];
 
     if (agentLogLevel) {
       spawnArgs.push("--log", agentLogLevel);
@@ -262,23 +261,18 @@ export class AcpAgentActor {
       spawnArgs.push(arg);
     }
 
-    // Add the downstream agent command after "--"
-    spawnArgs.push("--", resolved.command, ...resolved.args);
+    // Add the agent JSON
+    spawnArgs.push("--agent", agentJson);
 
     logger.important("agent", "Spawning ACP agent", {
       command: conductorCommand,
       args: spawnArgs,
     });
 
-    // Merge environment variables (from resolved distribution if any)
-    const env = resolved.env
-      ? { ...process.env, ...resolved.env }
-      : process.env;
-
     // Spawn the agent process
     this.agentProcess = spawn(conductorCommand, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: env as NodeJS.ProcessEnv,
+      env: process.env,
       cwd: config.workspaceFolder.uri.fsPath,
     });
 

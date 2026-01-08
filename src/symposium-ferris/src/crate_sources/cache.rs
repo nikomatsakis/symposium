@@ -1,6 +1,6 @@
 //! Cache management for extracted crates
 
-use crate::{Result, FerrisError};
+use crate::{FerrisError, Result};
 use std::path::PathBuf;
 
 /// Manages access to cargo's cache and our extraction cache
@@ -12,8 +12,7 @@ pub struct CacheManager {
 impl CacheManager {
     /// Create a new cache manager
     pub fn new() -> Result<Self> {
-        let cargo_home = home::cargo_home()
-            .map_err(FerrisError::CargoHomeNotFound)?;
+        let cargo_home = home::cargo_home().map_err(FerrisError::CargoHomeNotFound)?;
 
         let cargo_cache_dir = cargo_home.join("registry");
 
@@ -37,7 +36,9 @@ impl CacheManager {
         extractor: &super::CrateExtractor,
     ) -> Result<PathBuf> {
         // 1. Check if already extracted in our cache
-        let extraction_path = self.extraction_cache_dir.join(format!("{}-{}", crate_name, version));
+        let extraction_path = self
+            .extraction_cache_dir
+            .join(format!("{}-{}", crate_name, version));
         if extraction_path.exists() {
             return Ok(extraction_path);
         }
@@ -49,15 +50,23 @@ impl CacheManager {
 
         // 3. Check cargo's .crate cache
         if let Some(cached_crate_path) = self.find_cached_crate(crate_name, version)? {
-            return extractor.extract_crate_to_cache(&cached_crate_path, &extraction_path).await;
+            return extractor
+                .extract_crate_to_cache(&cached_crate_path, &extraction_path)
+                .await;
         }
 
         // 4. Download and extract
-        extractor.download_and_extract_crate(crate_name, version, &extraction_path).await
+        extractor
+            .download_and_extract_crate(crate_name, version, &extraction_path)
+            .await
     }
 
     /// Find extracted crate in cargo's src cache
-    fn find_cargo_extracted_crate(&self, crate_name: &str, version: &str) -> Result<Option<PathBuf>> {
+    fn find_cargo_extracted_crate(
+        &self,
+        crate_name: &str,
+        version: &str,
+    ) -> Result<Option<PathBuf>> {
         let src_dir = self.cargo_cache_dir.join("src");
         if !src_dir.exists() {
             return Ok(None);

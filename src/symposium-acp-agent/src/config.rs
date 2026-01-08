@@ -3,6 +3,8 @@
 //! Reads configuration from `~/.symposium/config.jsonc`.
 
 use anyhow::Result;
+use futures::future::{BoxFuture, Shared};
+use futures::FutureExt;
 use sacp::schema::{
     AgentCapabilities, ContentBlock, ContentChunk, InitializeRequest, InitializeResponse,
     NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionId,
@@ -144,8 +146,8 @@ struct ConfigSessionData {
 #[derive(Clone)]
 pub struct ConfigurationAgent {
     sessions: Arc<Mutex<HashMap<SessionId, ConfigSessionData>>>,
-    /// Available agents (fetched from registry + built-ins)
-    agents: Vec<AvailableAgent>,
+    /// Shared future that resolves available agents (fetched from registry + built-ins)
+    agents: Shared<BoxFuture<'static, Arc<Vec<AvailableAgent>>>>,
     /// Custom config path for testing. If None, uses the default ~/.symposium/config.jsonc
     config_path: Option<PathBuf>,
 }
@@ -153,19 +155,22 @@ pub struct ConfigurationAgent {
 impl ConfigurationAgent {
     /// Create a new ConfigurationAgent with agents from the registry.
     pub async fn new() -> Self {
-        let agents = Self::fetch_agents().await;
+        let agents_future = async move { Arc::new(Self::fetch_agents().await) }
+            .boxed()
+            .shared();
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            agents,
+            agents: agents_future,
             config_path: None,
         }
     }
 
     /// Create with a pre-set list of agents (for testing).
     pub fn with_agents(agents: Vec<AvailableAgent>) -> Self {
+        let agents_future = futures::future::ready(Arc::new(agents)).boxed().shared();
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            agents,
+            agents: agents_future,
             config_path: None,
         }
     }
@@ -203,7 +208,33 @@ impl ConfigurationAgent {
             }
             Err(e) => {
                 tracing::warn!("Failed to fetch registry, using fallback agents: {}", e);
-                Self::fallback_agents()
+                let mut result = Vec::new();
+
+                // Try built-ins even if registry fetch failed
+                if let Ok(built_ins) = registry::built_in_agents() {
+                    for agent in built_ins {
+                        match registry::resolve_agent(&agent.id).await {
+                            Ok(server) => {
+                                let command = Self::server_to_command(&server);
+                                result.push(AvailableAgent {
+                                    id: agent.id,
+                                    name: agent.name,
+                                    command,
+                                });
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to resolve built-in agent {}: {}",
+                                    agent.id,
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+
+                result.extend(Self::fallback_agents());
+                result
             }
         }
     }
@@ -262,31 +293,31 @@ impl ConfigurationAgent {
     }
 
     /// Generate the welcome message with agent options.
-    fn welcome_message(&self) -> String {
+    fn welcome_message(agents: &[AvailableAgent]) -> String {
         let mut msg = String::from(
             "Welcome to Symposium!\n\n\
              No configuration found. Let's set up your AI agent.\n\n\
              Which agent would you like to use?\n\n",
         );
 
-        for (i, agent) in self.agents.iter().enumerate() {
+        for (i, agent) in agents.iter().enumerate() {
             msg.push_str(&format!("  {}. {}\n", i + 1, agent.name));
         }
 
         msg.push_str("\nType a number (1-");
-        msg.push_str(&self.agents.len().to_string());
+        msg.push_str(&agents.len().to_string());
         msg.push_str(") to select:");
 
         msg
     }
 
     /// Generate invalid input message.
-    fn invalid_input_message(&self) -> String {
+    fn invalid_input_message(agents: &[AvailableAgent]) -> String {
         let mut msg = String::from("Invalid selection. Please type a number from 1 to ");
-        msg.push_str(&self.agents.len().to_string());
+        msg.push_str(&agents.len().to_string());
         msg.push_str(".\n\n");
 
-        for (i, agent) in self.agents.iter().enumerate() {
+        for (i, agent) in agents.iter().enumerate() {
             msg.push_str(&format!("  {}. {}\n", i + 1, agent.name));
         }
 
@@ -305,7 +336,12 @@ impl ConfigurationAgent {
     }
 
     /// Process user input and return response.
-    fn process_input(&self, session_id: &SessionId, input: &str) -> String {
+    fn process_input(
+        &self,
+        session_id: &SessionId,
+        input: &str,
+        agents: &[AvailableAgent],
+    ) -> String {
         let state = match self.get_state(session_id) {
             Some(s) => s,
             None => return "Session not found. Please restart.".to_string(),
@@ -315,27 +351,30 @@ impl ConfigurationAgent {
             ConfigState::SelectAgent => {
                 // Parse input as number
                 let trimmed = input.trim();
-                if let Ok(num) = trimmed.parse::<usize>() {
-                    if num >= 1 && num <= self.agents.len() {
-                        let agent = &self.agents[num - 1];
 
-                        // Save configuration
-                        let config = SymposiumUserConfig::with_agent(&agent.command);
-                        let save_result = match &self.config_path {
-                            Some(path) => config.save_to(path),
-                            None => config.save(),
-                        };
-                        if let Err(e) = save_result {
-                            return format!("Error saving configuration: {}", e);
-                        }
+                let selected = trimmed
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|num| agents.get(num.saturating_sub(1)))
+                    .map(|agent| (agent.name.clone(), agent.command.clone()));
 
-                        self.set_state(session_id, ConfigState::Done);
-                        return Self::success_message(&agent.name);
+                if let Some((agent_name, agent_command)) = selected {
+                    // Save configuration
+                    let config = SymposiumUserConfig::with_agent(&agent_command);
+                    let save_result = match &self.config_path {
+                        Some(path) => config.save_to(path),
+                        None => config.save(),
+                    };
+                    if let Err(e) = save_result {
+                        return format!("Error saving configuration: {}", e);
                     }
+
+                    self.set_state(session_id, ConfigState::Done);
+                    return Self::success_message(&agent_name);
                 }
 
                 // Invalid input
-                self.invalid_input_message()
+                Self::invalid_input_message(&agents)
             }
             ConfigState::Done => {
                 "Configuration is complete. Please restart your editor to use Symposium."
@@ -353,13 +392,26 @@ impl ConfigurationAgent {
         let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
         self.create_session(&session_id);
 
-        // Send welcome message immediately
+        let loading_message = "Hello, welcome to Symposium! I am fetching the list of agents from the [ACP Agent Registry](https://github.com/agentclientprotocol/registry). Give me a second...\n\n";
         cx.send_notification(SessionNotification::new(
             session_id.clone(),
-            SessionUpdate::AgentMessageChunk(ContentChunk::new(self.welcome_message().into())),
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(loading_message.into())),
         ))?;
 
-        request_cx.respond(NewSessionResponse::new(session_id))
+        // Respond immediately so the client isn't blocked while we fetch agents
+        request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
+
+        // Load agents (registry + built-ins), then send options
+        let agents = self.agents.clone().await;
+
+        cx.send_notification(SessionNotification::new(
+            session_id.clone(),
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                Self::welcome_message(&agents).into(),
+            )),
+        ))?;
+
+        Ok(())
     }
 
     async fn handle_prompt(
@@ -369,6 +421,8 @@ impl ConfigurationAgent {
         cx: JrConnectionCx<AgentToClient>,
     ) -> Result<(), sacp::Error> {
         let session_id = request.session_id.clone();
+
+        let agents = self.agents.clone().await;
 
         // Extract text from prompt
         let input = request
@@ -382,7 +436,7 @@ impl ConfigurationAgent {
             .join(" ");
 
         // Process input and get response
-        let response = self.process_input(&session_id, &input);
+        let response = self.process_input(&session_id, &input, &agents);
 
         // Send response
         cx.send_notification(SessionNotification::new(
@@ -532,6 +586,8 @@ mod tests {
 
                 let text = messages.lock().unwrap().text();
                 expect![[r#"
+                    Hello, welcome to Symposium! I am fetching the list of agents from the [ACP Agent Registry](https://github.com/agentclientprotocol/registry). Give me a second...
+
                     Welcome to Symposium!
 
                     No configuration found. Let's set up your AI agent.

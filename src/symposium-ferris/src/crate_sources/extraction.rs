@@ -1,6 +1,6 @@
 //! Crate extraction to local cache
 
-use crate::{Result, FerrisError};
+use crate::{FerrisError, Result};
 use flate2::read::GzDecoder;
 use std::fs;
 use std::io::Read;
@@ -47,7 +47,8 @@ impl CrateExtractor {
         }
 
         let bytes = response.bytes().await?;
-        self.extract_from_reader(std::io::Cursor::new(bytes), extraction_path).await?;
+        self.extract_from_reader(std::io::Cursor::new(bytes), extraction_path)
+            .await?;
         Ok(extraction_path.clone())
     }
 
@@ -64,8 +65,9 @@ impl CrateExtractor {
         let mut archive = Archive::new(gz_decoder);
 
         // Extract all files
-        archive.unpack(extraction_path)
-            .map_err(|e| FerrisError::ExtractionError(format!("Failed to extract archive: {}", e)))?;
+        archive.unpack(extraction_path).map_err(|e| {
+            FerrisError::ExtractionError(format!("Failed to extract archive: {}", e))
+        })?;
 
         // The archive typically contains a single directory with the crate name-version
         // We want to flatten this structure
@@ -76,8 +78,8 @@ impl CrateExtractor {
 
     /// Flatten the extraction if it contains a single top-level directory
     fn flatten_extraction(&self, extraction_path: &PathBuf) -> Result<()> {
-        let entries: Vec<_> = fs::read_dir(extraction_path)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let entries: Vec<_> =
+            fs::read_dir(extraction_path)?.collect::<std::result::Result<Vec<_>, _>>()?;
 
         // If there's exactly one entry and it's a directory, move its contents up
         if entries.len() == 1 {
