@@ -18,7 +18,13 @@ Symposium works with any editor that supports ACP. See the [editors on ACP](http
    ~/.cargo/bin/symposium-acp-agent act-as-configured
    ```
 
-## Configuration
+Instructions for configuring ACP support in common editors can be found here:
+
+- [RustRover, IntelliJ, and other JetBrains IDEs](https://www.jetbrains.com/help/ai-assistant/acp.html)
+- [NeoVim (CodeCompanion)](https://codecompanion.olimorris.dev/configuration/adapters-acp)
+- [Emacs (agent-shell)](https://github.com/xenodium/agent-shell?tab=readme-ov-file#configuration)
+
+## Configuring Symposium
 
 On first run, Symposium will ask you a few questions to create your configuration file at `~/.symposium/config.jsonc`:
 
@@ -69,5 +75,3 @@ You can edit `~/.symposium/config.jsonc` directly for more control. The format i
 | `sparkle` | AI collaboration identity and memory |
 | `ferris` | Rust crate source fetching |
 | `cargo` | Cargo build/test/check commands |
-
-
