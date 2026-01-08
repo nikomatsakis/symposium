@@ -4,16 +4,14 @@
 //!
 //! ## Commands
 //!
-//! ### act-as-agent
-//! Wraps a downstream agent with Symposium's proxy chain:
+//! ### run
+//! Run Symposium with optional agent wrapping:
 //! ```bash
-//! symposium-acp-agent act-as-agent --proxy sparkle --proxy ferris -- npx -y @anthropic-ai/claude-code-acp
-//! ```
+//! # Agent mode: wrap a downstream agent
+//! symposium-acp-agent run --proxy sparkle --proxy ferris --agent '{"name":"...","command":"npx",...}'
 //!
-//! ### act-as-proxy
-//! Sits between an editor and an existing agent as a pure proxy:
-//! ```bash
-//! symposium-acp-agent act-as-proxy --proxy sparkle --proxy ferris
+//! # Proxy mode: sit between editor and existing agent
+//! symposium-acp-agent run --proxy sparkle --proxy ferris
 //! ```
 //!
 //! ### eliza
@@ -64,20 +62,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Wrap a downstream agent with Symposium's proxy chain
-    ActAsAgent {
+    /// Run Symposium with optional agent wrapping
+    ///
+    /// Without --agent: proxy mode (sits between editor and existing agent)
+    /// With --agent: agent mode (wraps the specified downstream agent)
+    Run {
         #[command(flatten)]
         proxy_opts: ProxyOptions,
 
-        /// The agent command and arguments (e.g., npx -y @anthropic-ai/claude-code-acp)
-        #[arg(last = true, required = true, num_args = 1..)]
-        agent: Vec<String>,
-    },
-
-    /// Run as a proxy between editor and an existing agent
-    ActAsProxy {
-        #[command(flatten)]
-        proxy_opts: ProxyOptions,
+        /// Agent specification: JSON from `registry resolve` or a command string.
+        /// If omitted, runs in proxy mode.
+        #[arg(long)]
+        agent: Option<String>,
     },
 
     /// Run the built-in Eliza agent (useful for testing)
@@ -203,33 +199,25 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::ActAsAgent { proxy_opts, agent } => {
+        Command::Run { proxy_opts, agent } => {
             proxy_opts.setup_logging();
-
-            let config = proxy_opts.into_config()?;
-            let agent = AcpAgent::from_args(&agent)?;
-
-            tracing::debug!(
-                "Starting in agent mode with downstream: {:?}",
-                agent.server()
-            );
-
-            Symposium::new(config)
-                .with_agent(agent)
-                .serve(sacp_tokio::Stdio::new())
-                .await?;
-        }
-
-        Command::ActAsProxy { proxy_opts } => {
-            proxy_opts.setup_logging();
-
             let config = proxy_opts.into_config()?;
 
-            tracing::debug!("Starting in proxy mode");
-
-            Symposium::new(config)
-                .serve(sacp_tokio::Stdio::new())
-                .await?;
+            let symposium = Symposium::new(config);
+            if let Some(agent_spec) = agent {
+                let agent: AcpAgent = agent_spec.parse()?;
+                tracing::debug!(
+                    "Starting in agent mode with downstream: {:?}",
+                    agent.server()
+                );
+                symposium
+                    .with_agent(agent)
+                    .serve(sacp_tokio::Stdio::new())
+                    .await?;
+            } else {
+                tracing::debug!("Starting in proxy mode");
+                symposium.serve(sacp_tokio::Stdio::new()).await?;
+            }
         }
 
         Command::Eliza => {

@@ -13,8 +13,7 @@ import { logger } from "./extension";
 import {
   getEffectiveAgents,
   getAgentById,
-  resolveDistribution,
-  ResolvedCommand,
+  resolveAgentJson,
   AgentConfig,
   fetchRegistry,
   addAgentFromRegistry,
@@ -62,46 +61,6 @@ type ContentPart =
       toolCallId: string;
       result: unknown;
     };
-
-/**
- * MCP Server configuration matching sacp::schema::McpServerStdio
- */
-interface McpServerStdio {
-  name: string;
-  command: string;
-  args: string[];
-  env: Array<{ name: string; value: string }>;
-}
-
-/**
- * Agent definition - matches session_actor::AgentDefinition in Rust.
- * The protocol supports both eliza and mcp_server variants, but the
- * extension always sends mcp_server (resolving builtins to the binary path).
- */
-// eslint-disable-next-line @typescript-eslint/naming-convention -- matches Rust serde naming
-type AgentDefinition = { mcp_server: McpServerStdio };
-
-/**
- * Convert a resolved agent command to AgentDefinition format.
- */
-function resolvedCommandToAgentDefinition(
-  name: string,
-  resolved: ResolvedCommand,
-): AgentDefinition {
-  const envArray = resolved.env
-    ? Object.entries(resolved.env).map(([k, v]) => ({ name: k, value: v }))
-    : [];
-
-  // eslint-disable-next-line @typescript-eslint/naming-convention -- matches Rust serde naming
-  return {
-    mcp_server: {
-      name,
-      command: resolved.command,
-      args: resolved.args,
-      env: envArray,
-    },
-  };
-}
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -409,14 +368,9 @@ export class SymposiumLanguageModelProvider
       agent = await this.installAgentFromRegistry(model.id);
     }
 
-    // Resolve the agent distribution to a spawn command
-    const resolved = await resolveDistribution(agent);
-
-    // Convert to AgentDefinition format
-    const agentDef = resolvedCommandToAgentDefinition(
-      agent.name ?? agent.id,
-      resolved,
-    );
+    // Resolve the agent to JSON (via registry resolve or local fallback)
+    const agentJson = await resolveAgentJson(agent);
+    const agentDef = JSON.parse(agentJson);
 
     // Convert VS Code messages to our format
     const convertedMessages = messages.map((msg) => ({
