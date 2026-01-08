@@ -116,22 +116,40 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
     let exe = current_exe()?;
     let exe_str = exe.to_string_lossy().to_string();
 
-    Ok(vec![RegistryEntry {
-        id: "elizacp".to_string(),
-        name: "ElizACP".to_string(),
-        version: String::new(),
-        description: Some("Built-in Eliza agent for testing".to_string()),
-        distribution: Distribution {
-            local: Some(LocalDistribution {
-                command: exe_str.clone(),
-                args: vec!["eliza".to_string()],
-                env: HashMap::new(),
-            }),
-            npx: None,
-            pipx: None,
-            binary: None,
+    Ok(vec![
+        RegistryEntry {
+            id: "zed-claude-code".to_string(),
+            name: "Claude Code".to_string(),
+            version: String::new(),
+            description: Some("Zed's Claude Code agent".to_string()),
+            distribution: Distribution {
+                local: None,
+                npx: Some(NpxDistribution {
+                    package: "@zed-industries/claude-code-acp@latest".to_string(),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                }),
+                pipx: None,
+                binary: None,
+            },
         },
-    }])
+        RegistryEntry {
+            id: "elizacp".to_string(),
+            name: "ElizACP".to_string(),
+            version: String::new(),
+            description: Some("Built-in Eliza agent for testing".to_string()),
+            distribution: Distribution {
+                local: Some(LocalDistribution {
+                    command: exe_str.clone(),
+                    args: vec!["eliza".to_string()],
+                    env: HashMap::new(),
+                }),
+                npx: None,
+                pipx: None,
+                binary: None,
+            },
+        },
+    ])
 }
 
 // ============================================================================
@@ -506,5 +524,11 @@ mod tests {
 
         let elizacp = agents.iter().find(|a| a.id == "elizacp");
         assert!(elizacp.is_some(), "Should have elizacp built-in");
+
+        let claude_code = agents.iter().find(|a| a.id == "zed-claude-code");
+        assert!(
+            claude_code.is_some(),
+            "Should have zed-claude-code built-in"
+        );
     }
 }

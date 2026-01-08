@@ -60,7 +60,10 @@ impl CLIAgent for QCLI {
         let output = cmd.output().context("Failed to execute q mcp add")?;
 
         if output.status.success() {
-            println!("✅ MCP server '{}' registered successfully with Q CLI!", mcp.name);
+            println!(
+                "✅ MCP server '{}' registered successfully with Q CLI!",
+                mcp.name
+            );
             Ok(true)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -114,7 +117,10 @@ impl CLIAgent for ClaudeCode {
 
             for line in list_stdout.lines() {
                 if line.contains(&mcp.name) && line.contains(desired_binary_str.as_ref()) {
-                    println!("✅ MCP server '{}' already configured with correct path", mcp.name);
+                    println!(
+                        "✅ MCP server '{}' already configured with correct path",
+                        mcp.name
+                    );
                     return Ok(true);
                 }
             }
@@ -129,12 +135,7 @@ impl CLIAgent for ClaudeCode {
 
         // Add the server
         let mut cmd = Command::new(&self.executable_path);
-        cmd.args([
-            "mcp",
-            "add",
-            &mcp.name,
-            &mcp.binary_path.to_string_lossy(),
-        ]);
+        cmd.args(["mcp", "add", &mcp.name, &mcp.binary_path.to_string_lossy()]);
 
         // Add arguments
         for arg in &mcp.args {
@@ -149,7 +150,10 @@ impl CLIAgent for ClaudeCode {
         let output = cmd.output().context("Failed to execute claude mcp add")?;
 
         if output.status.success() {
-            println!("✅ MCP server '{}' registered successfully with Claude Code!", mcp.name);
+            println!(
+                "✅ MCP server '{}' registered successfully with Claude Code!",
+                mcp.name
+            );
             Ok(true)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
