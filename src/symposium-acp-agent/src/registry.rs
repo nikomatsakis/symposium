@@ -525,7 +525,7 @@ pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
 }
 
 /// Resolve a registry entry's distribution to an McpServer
-async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
+pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
     let dist = &entry.distribution;
 
     // Priority: local > npx > pipx > binary
@@ -825,5 +825,44 @@ mod tests {
         let (version, bin_names) = query_crate_binaries("bat", None).await.unwrap();
         assert!(!version.is_empty());
         assert!(bin_names.contains(&"bat".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_cargo_binstall_sparkle() {
+        // Integration test: actually install sparkle-mcp via cargo binstall
+        // Uses a temp directory so we don't pollute the real cache
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().to_path_buf();
+
+        // Query crates.io to get the binary name and a known version
+        let (version, bin_names) = query_crate_binaries("sparkle-mcp", None)
+            .await
+            .expect("Failed to query crates.io for sparkle-mcp");
+
+        assert!(!version.is_empty(), "Version should not be empty");
+        assert!(!bin_names.is_empty(), "Should have at least one binary");
+
+        let binary_name = &bin_names[0];
+
+        // Actually install via cargo binstall (or cargo install fallback)
+        let binary_path = install_cargo_crate("sparkle-mcp", &version, binary_name, &cache_dir)
+            .await
+            .expect("Failed to install sparkle-mcp");
+
+        // Verify the binary exists
+        assert!(
+            binary_path.exists(),
+            "Binary should exist at {:?}",
+            binary_path
+        );
+
+        // Verify it's executable (on Unix)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&binary_path).unwrap();
+            let mode = metadata.permissions().mode();
+            assert!(mode & 0o111 != 0, "Binary should be executable");
+        }
     }
 }
