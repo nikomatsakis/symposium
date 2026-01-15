@@ -7,9 +7,9 @@ use anyhow::Result;
 use clap::Parser;
 use sacp::DynComponent;
 use sacp_tokio::AcpAgent;
-use symposium_acp_agent::registry::{built_in_proxies, resolve_distribution};
 use std::path::PathBuf;
 use std::str::FromStr;
+use symposium_acp_agent::registry::{built_in_proxies, resolve_distribution};
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-benchmark")]
@@ -108,7 +108,9 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     let mut proxies = vec![];
     for proxy in built_in_proxies()? {
         if proxy.id == "ferris" || proxy.id == "cargo" {
-            let server = resolve_distribution(&proxy).await?;
+            let server = resolve_distribution(&proxy)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Missing extension."))?;
             proxies.push(DynComponent::new(AcpAgent::new(server)));
         }
     }

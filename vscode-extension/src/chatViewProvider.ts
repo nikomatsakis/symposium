@@ -596,6 +596,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Get or create an actor for this configuration (may spawn process)
             const actor = await this.#getOrCreateActor(config);
 
+            logger.important("agent", "Spawned actor", {
+              actor,
+              config: config.describe(),
+            });
+
             // Create a new agent session for this tab
             const agentSessionId = await actor.createSession(
               config.workspaceFolder.uri.fsPath,

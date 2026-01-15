@@ -39,12 +39,8 @@ use std::path::PathBuf;
 
 mod config;
 
-use symposium_acp_agent::registry::{
-    self, built_in_proxies,
-};
-use symposium_acp_agent::symposium::{
-    Symposium, SymposiumConfig,
-};
+use symposium_acp_agent::registry::{self, built_in_proxies};
+use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
 use symposium_acp_agent::vscodelm;
 
 #[derive(Parser, Debug)]
@@ -119,7 +115,7 @@ enum Command {
     ProxyShim {
         #[arg(long)]
         proxy: String,
-    }
+    },
 }
 
 /// Registry subcommands - output JSON for tooling integration
@@ -252,6 +248,8 @@ async fn main() -> Result<()> {
                             let server = crate::registry::resolve_distribution(entry)
                                 .await
                                 .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+                            let server = server
+                                .ok_or_else(|| sacp::Error::new(-32603, "Extension not found."))?;
                             proxies.push(DynComponent::new(AcpAgent::new(server)));
                         }
                     }
@@ -286,8 +284,8 @@ async fn main() -> Result<()> {
                 let extensions = registry::list_extensions().await?;
                 println!("{}", serde_json::to_string(&extensions)?);
             }
-            RegistryCommand::ResolveAgent { agent_id } => {
-                let server = registry::resolve_agent(&agent_id).await?;
+            RegistryCommand::ResolveAgent { agent_id: agent } => {
+                let server = registry::resolve_agent(&agent).await?;
                 println!("{}", serde_json::to_string(&server)?);
             }
             RegistryCommand::ResolveExtension { extension_id } => {
@@ -296,19 +294,21 @@ async fn main() -> Result<()> {
             }
         },
 
-        Command::ProxyShim { proxy } => {
-            match proxy.as_str() {
-                "ferris" => {
-                    symposium_ferris::FerrisComponent::default().serve(sacp_tokio::Stdio::new()).await?;
-                }
-                "cargo" => {
-                    symposium_cargo::CargoProxy.serve(sacp_tokio::Stdio::new()).await?;
-                }
-                _ => {
-                    anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
-                }
+        Command::ProxyShim { proxy } => match proxy.as_str() {
+            "ferris" => {
+                symposium_ferris::FerrisComponent::default()
+                    .serve(sacp_tokio::Stdio::new())
+                    .await?;
             }
-        }
+            "cargo" => {
+                symposium_cargo::CargoProxy
+                    .serve(sacp_tokio::Stdio::new())
+                    .await?;
+            }
+            _ => {
+                anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
+            }
+        },
     }
 
     Ok(())
