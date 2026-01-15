@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::symposium::KNOWN_PROXIES;
+/// Known proxy/extension names that can be configured.
+pub const BUILTIN_PROXIES: &[&str] = &["sparkle", "ferris", "cargo"];
 
 /// Registry URL - same as VSCode extension uses
 const REGISTRY_URL: &str =
@@ -536,7 +537,7 @@ pub enum ExtensionResolution {
 /// Resolve an agent ID to an McpServer configuration
 pub async fn resolve_extension(agent_id: &str) -> Result<ExtensionResolution> {
     // Check built-ins first
-    if KNOWN_PROXIES.contains(&agent_id) {
+    if BUILTIN_PROXIES.contains(&agent_id) {
         return Ok(ExtensionResolution::Builtin(agent_id.to_string()));
     }
 

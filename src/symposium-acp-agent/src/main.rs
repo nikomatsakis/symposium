@@ -40,15 +40,20 @@
 //! ```
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
-use sacp::Component;
+use clap::{Parser, Subcommand};
+use sacp::schema::McpServer;
+use sacp::{Component, DynComponent, ProxyToConductor};
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 
 mod config;
 
-use symposium_acp_agent::registry;
-use symposium_acp_agent::symposium::{ProxySource, Symposium, SymposiumConfig, KNOWN_PROXIES};
+use symposium_acp_agent::registry::{
+    self, CargoDistribution, Distribution, RegistryEntry, BUILTIN_PROXIES,
+};
+use symposium_acp_agent::symposium::{
+    cargo_proxy, ferris_proxy, sparkle_proxy, Symposium, SymposiumConfig,
+};
 use symposium_acp_agent::vscodelm;
 
 #[derive(Parser, Debug)]
@@ -66,13 +71,29 @@ enum Command {
     /// Without --agent: proxy mode (sits between editor and existing agent)
     /// With --agent: agent mode (wraps the specified downstream agent)
     RunWith {
-        #[command(flatten)]
-        proxy_opts: ProxyOptions,
+        /// Extension proxy to include in the chain (can be specified multiple times).
+        /// Order matters - proxies are chained in the order specified.
+        ///
+        /// Known proxies: sparkle, ferris, cargo
+        ///
+        /// Special value "defaults" expands to all known proxies.
+        #[arg(long = "proxy", value_name = "NAME")]
+        proxies: Vec<String>,
 
         /// Agent specification: JSON from `registry resolve` or a command string.
         /// If omitted, runs in proxy mode.
         #[arg(long)]
         agent: Option<String>,
+
+        /// Enable trace logging to the specified directory.
+        /// Traces are written as timestamped .jsons files viewable with sacp-trace-viewer.
+        #[arg(long)]
+        trace_dir: Option<PathBuf>,
+
+        /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
+        /// or a RUST_LOG-style filter string (e.g., "sacp=debug,symposium=trace").
+        #[arg(long)]
+        log: Option<String>,
     },
 
     /// Run the built-in Eliza agent (useful for testing)
@@ -127,90 +148,89 @@ enum RegistryCommand {
     },
 }
 
-/// Shared proxy configuration options
-#[derive(Args, Debug)]
-struct ProxyOptions {
-    /// Extension proxy to include in the chain (can be specified multiple times).
-    /// Order matters - proxies are chained in the order specified.
-    ///
-    /// Known proxies: sparkle, ferris, cargo
-    ///
-    /// Special value "defaults" expands to all known proxies.
-    #[arg(long = "proxy", value_name = "NAME")]
-    proxies: Vec<String>,
-
-    /// Enable trace logging to the specified directory.
-    /// Traces are written as timestamped .jsons files viewable with sacp-trace-viewer.
-    #[arg(long)]
-    trace_dir: Option<PathBuf>,
-
-    /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
-    /// or a RUST_LOG-style filter string (e.g., "sacp=debug,symposium=trace").
-    #[arg(long)]
-    log: Option<String>,
+#[derive(Clone, Debug)]
+enum ProxySource {
+    Builtin(String),
+    AcpProxy(McpServer),
 }
 
-impl ProxyOptions {
-    /// Expand proxy names, handling "defaults" expansion.
-    /// Returns an error if any proxy name is unknown.
-    fn expand_proxies(raw_proxies: Vec<String>) -> Result<Vec<ProxySource>> {
-        let mut proxies = Vec::with_capacity(raw_proxies.len());
-        for proxy in raw_proxies {
-            let proxy = proxy.trim();
+/// Expand proxy names, handling "defaults" expansion.
+/// Returns an error if any proxy name is unknown.
+fn expand_proxies(raw_proxies: Vec<String>) -> Result<Vec<ProxySource>> {
+    let mut proxies = Vec::with_capacity(raw_proxies.len());
+    for proxy in raw_proxies {
+        let proxy = proxy.trim();
 
-            if proxy.starts_with('{') {
-                let server: sacp::schema::McpServer = serde_json::from_str(proxy).map_err(|e| {
-                    sacp::util::internal_error(format!("Failed to parse JSON: {}", e))
-                })?;
-                proxies.push(ProxySource::AcpProxy(server));
-                continue;
-            }
+        if proxy.starts_with('{') {
+            let server: sacp::schema::McpServer = serde_json::from_str(proxy)
+                .map_err(|e| sacp::util::internal_error(format!("Failed to parse JSON: {}", e)))?;
+            proxies.push(ProxySource::AcpProxy(server));
+            continue;
+        }
 
-            if proxy == "defaults" {
-                proxies.extend(
-                    KNOWN_PROXIES
-                        .iter()
-                        .map(|s| ProxySource::Builtin(s.to_string())),
-                );
-                continue;
-            }
-
-            if KNOWN_PROXIES.contains(&proxy) {
-                proxies.push(ProxySource::Builtin(proxy.to_string()));
-                continue;
-            }
-
-            anyhow::bail!(
-                "Unknown proxy name: '{}'. Expected a known proxy ({}, defaults) or json.",
-                proxy,
-                KNOWN_PROXIES.join(", ")
+        if proxy == "defaults" {
+            proxies.extend(
+                BUILTIN_PROXIES
+                    .iter()
+                    .map(|s| ProxySource::Builtin(s.to_string())),
             );
+            continue;
         }
 
-        Ok(proxies)
+        if BUILTIN_PROXIES.contains(&proxy) {
+            proxies.push(ProxySource::Builtin(proxy.to_string()));
+            continue;
+        }
+
+        anyhow::bail!(
+            "Unknown proxy name: '{}'. Expected a known proxy ({}, defaults) or json.",
+            proxy,
+            BUILTIN_PROXIES.join(", ")
+        );
     }
 
-    /// Build a SymposiumConfig from these options.
-    fn into_config(self) -> Result<SymposiumConfig> {
-        let proxies = Self::expand_proxies(self.proxies)?;
-        let mut config = SymposiumConfig::from_proxies(proxies);
+    Ok(proxies)
+}
 
-        if let Some(trace_dir) = self.trace_dir {
-            config = config.trace_dir(trace_dir);
+/// Build proxy components from the configured sources, preserving order.
+async fn build_proxies(
+    proxy_sources: Vec<ProxySource>,
+) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
+    let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
+
+    for proxy in proxy_sources {
+        match proxy {
+            ProxySource::AcpProxy(server) => {
+                proxies.push(DynComponent::new(AcpAgent::new(server)));
+            }
+            ProxySource::Builtin(name) => match name.as_str() {
+                "sparkle" => {
+                    proxies.push(sparkle_proxy().await?);
+                }
+                "ferris" => {
+                    proxies.push(ferris_proxy());
+                }
+                "cargo" => {
+                    proxies.push(cargo_proxy());
+                }
+                other => {
+                    tracing::warn!("Unknown proxy name: {}", other);
+                }
+            },
         }
-
-        Ok(config)
     }
 
-    /// Set up logging if requested.
-    fn setup_logging(&self) {
-        if let Some(filter) = &self.log {
-            use tracing_subscriber::EnvFilter;
-            tracing_subscriber::fmt()
-                .with_env_filter(EnvFilter::new(filter))
-                .with_writer(std::io::stderr)
-                .init();
-        }
+    Ok(proxies)
+}
+
+/// Set up logging if requested.
+fn setup_logging(log: Option<String>) {
+    if let Some(filter) = &log {
+        use tracing_subscriber::EnvFilter;
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new(filter))
+            .with_writer(std::io::stderr)
+            .init();
     }
 }
 
@@ -219,11 +239,23 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::RunWith { proxy_opts, agent } => {
-            proxy_opts.setup_logging();
-            let config = proxy_opts.into_config()?;
+        Command::RunWith {
+            proxies,
+            agent,
+            trace_dir,
+            log,
+        } => {
+            let proxy_sources = expand_proxies(proxies)?;
+            let proxies = build_proxies(proxy_sources).await?;
+            let mut config = SymposiumConfig::new();
 
-            let symposium = Symposium::new(config);
+            if let Some(trace_dir) = trace_dir {
+                config = config.trace_dir(trace_dir);
+            }
+
+            setup_logging(log);
+
+            let symposium = Symposium::new(config, proxies);
             if let Some(agent_spec) = agent {
                 let agent: AcpAgent = agent_spec.parse()?;
                 tracing::debug!(
@@ -269,16 +301,18 @@ async fn main() -> Result<()> {
                     let agent_args = user_config.agent_args()?;
 
                     // The user config is currently just a set of (builtin) proxy names.
-                    let mut config = SymposiumConfig::from_proxies(
-                        proxy_names
-                            .into_iter()
-                            .map(|proxy| ProxySource::Builtin(proxy))
-                            .collect(),
-                    );
+                    let mut config = SymposiumConfig::new();
                     if let Some(trace_dir) = trace_dir {
                         config = config.trace_dir(trace_dir);
                     }
 
+                    let proxies = build_proxies(
+                        proxy_names
+                            .into_iter()
+                            .map(|proxy| ProxySource::Builtin(proxy))
+                            .collect(),
+                    )
+                    .await?;
                     let agent = AcpAgent::from_args(&agent_args)?;
 
                     tracing::debug!(
@@ -286,7 +320,7 @@ async fn main() -> Result<()> {
                         agent.server()
                     );
 
-                    Symposium::new(config)
+                    Symposium::new(config, proxies)
                         .with_agent(agent)
                         .serve(sacp_tokio::Stdio::new())
                         .await?;
