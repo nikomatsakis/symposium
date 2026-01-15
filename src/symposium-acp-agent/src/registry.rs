@@ -642,7 +642,7 @@ pub async fn resolve_extension(extension: &str) -> Result<McpServer> {
     // Fetch registry and find the agent
     let registry = fetch_registry().await?;
     let entry = registry
-        .agents
+        .extensions
         .into_iter()
         .find(|a| a.id == ext_id)
         .with_context(|| format!("Extension '{}' not found in registry", ext_id))?;
