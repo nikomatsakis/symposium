@@ -162,7 +162,7 @@ impl ProxyOptions {
                 let server: sacp::schema::McpServer = serde_json::from_str(proxy).map_err(|e| {
                     sacp::util::internal_error(format!("Failed to parse JSON: {}", e))
                 })?;
-                proxies.push(ProxySource::McpServer(server));
+                proxies.push(ProxySource::AcpProxy(server));
                 continue;
             }
 

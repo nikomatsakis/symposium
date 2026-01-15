@@ -530,7 +530,7 @@ pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
 #[serde(untagged)]
 pub enum ExtensionResolution {
     Builtin(String),
-    McpServer(McpServer),
+    AcpProxy(McpServer),
 }
 
 /// Resolve an agent ID to an McpServer configuration
@@ -548,7 +548,7 @@ pub async fn resolve_extension(agent_id: &str) -> Result<ExtensionResolution> {
         .find(|a| a.id == agent_id)
         .with_context(|| format!("Extension '{}' not found in registry", agent_id))?;
 
-    Ok(ExtensionResolution::McpServer(
+    Ok(ExtensionResolution::AcpProxy(
         resolve_distribution(&entry).await?,
     ))
 }

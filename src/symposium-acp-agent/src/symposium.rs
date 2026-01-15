@@ -22,7 +22,7 @@ pub const KNOWN_PROXIES: &[&str] = &["sparkle", "ferris", "cargo"];
 #[derive(Clone, Debug)]
 pub enum ProxySource {
     Builtin(String),
-    McpServer(McpServer),
+    AcpProxy(McpServer),
 }
 
 /// Shared configuration for Symposium proxy chains.
@@ -54,7 +54,7 @@ impl SymposiumConfig {
 
         for proxy in self.proxies {
             match proxy {
-                ProxySource::McpServer(server) => {
+                ProxySource::AcpProxy(server) => {
                     proxies.push(DynComponent::new(AcpAgent::new(server)));
                 }
                 ProxySource::Builtin(name) => match name.as_str() {
