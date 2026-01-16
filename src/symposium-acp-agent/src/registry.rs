@@ -172,6 +172,74 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
     ])
 }
 
+pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
+    let exe = current_exe()?;
+    let exe_str = exe.to_string_lossy().to_string();
+
+    Ok(vec![
+        RegistryEntry {
+            id: "sparkle".to_string(),
+            name: "Sparkle".to_string(),
+            version: String::new(),
+            description: Some("Sparkle AI Collaboration Identity Framework".to_string()),
+            distribution: Distribution {
+                local: None,
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: Some(CargoDistribution {
+                    crate_name: "sparkle-mcp".to_string(),
+                    version: None, // Use latest
+                    binary: None,  // Auto-discover from crates.io
+                    args: vec![],
+                }),
+            },
+        },
+        RegistryEntry {
+            id: "ferris".to_string(),
+            name: "Ferris".to_string(),
+            version: String::new(),
+            description: Some("Built-in Ferris component".to_string()),
+            distribution: Distribution {
+                local: Some(LocalDistribution {
+                    command: exe_str.clone(),
+                    args: vec![
+                        "proxy-shim".to_string(),
+                        "--proxy".to_string(),
+                        "ferris".to_string(),
+                    ],
+                    env: HashMap::new(),
+                }),
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: None,
+            },
+        },
+        RegistryEntry {
+            id: "cargo".to_string(),
+            name: "Cargo".to_string(),
+            version: String::new(),
+            description: Some("Built-in Cargo component".to_string()),
+            distribution: Distribution {
+                local: Some(LocalDistribution {
+                    command: exe_str.clone(),
+                    args: vec![
+                        "proxy-shim".to_string(),
+                        "--proxy".to_string(),
+                        "cargo".to_string(),
+                    ],
+                    env: HashMap::new(),
+                }),
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: None,
+            },
+        },
+    ])
+}
+
 // ============================================================================
 // Registry Fetching
 // ============================================================================
@@ -504,12 +572,27 @@ pub fn get_binary_cache_dir(agent_id: &str, version: &str) -> Result<PathBuf> {
         .join(version))
 }
 
-/// Resolve an agent ID to an McpServer configuration
-pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
+/// Resolve an agent JSON or ID to an McpServer configuration
+pub async fn resolve_agent(agent: &str) -> Result<McpServer> {
+    let agent_id = if agent.starts_with('{') {
+        let entry: RegistryEntry = serde_json::from_str(agent)
+            .map_err(|e| sacp::util::internal_error(format!("Failed to parse JSON: {}", e)))?;
+
+        let resolved = resolve_distribution(&entry).await?;
+        if let Some(agent) = resolved {
+            return Ok(agent);
+        }
+        entry.id
+    } else {
+        agent.to_string()
+    };
     // Check built-ins first
-    for agent in built_in_agents()? {
-        if agent.id == agent_id {
-            return resolve_distribution(&agent).await;
+    for entry in built_in_agents()? {
+        if entry.id == agent_id {
+            let Some(agent) = resolve_distribution(&entry).await? else {
+                bail!("Failed to resolve built-in agent: {}", entry.id);
+            };
+            return Ok(agent);
         }
     }
 
@@ -521,11 +604,62 @@ pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
         .find(|a| a.id == agent_id)
         .with_context(|| format!("Agent '{}' not found in registry", agent_id))?;
 
-    resolve_distribution(&entry).await
+    if let Some(agent) = resolve_distribution(&entry).await? {
+        return Ok(agent);
+    }
+
+    bail!(
+        "No compatible distribution found for agent '{}' on platform {}",
+        entry.id,
+        get_platform_key()
+    );
+}
+
+/// Resolve an agent JSON or ID to an McpServer configuration
+pub async fn resolve_extension(extension: &str) -> Result<McpServer> {
+    let ext_id = if extension.starts_with('{') {
+        let entry: RegistryEntry = serde_json::from_str(extension)
+            .map_err(|e| sacp::util::internal_error(format!("Failed to parse JSON: {}", e)))?;
+
+        let resolved = resolve_distribution(&entry).await?;
+        if let Some(agent) = resolved {
+            return Ok(agent);
+        }
+        entry.id
+    } else {
+        extension.to_string()
+    };
+    // Check built-ins first
+    for entry in built_in_proxies()? {
+        if entry.id == ext_id {
+            let Some(agent) = resolve_distribution(&entry).await? else {
+                bail!("Failed to resolve built-in extension: {}", entry.id);
+            };
+            return Ok(agent);
+        }
+    }
+
+    // Fetch registry and find the agent
+    let registry = fetch_registry().await?;
+    let entry = registry
+        .extensions
+        .into_iter()
+        .find(|a| a.id == ext_id)
+        .with_context(|| format!("Extension '{}' not found in registry", ext_id))?;
+
+    if let Some(agent) = resolve_distribution(&entry).await? {
+        return Ok(agent);
+    }
+
+    bail!(
+        "No compatible distribution found for extension '{}' on platform {}",
+        entry.id,
+        get_platform_key()
+    );
 }
 
 /// Resolve a registry entry's distribution to an McpServer
-pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
+pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpServer>> {
     let dist = &entry.distribution;
 
     // Priority: local > npx > pipx > binary
@@ -537,11 +671,11 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
             .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
             .collect();
 
-        return Ok(McpServer::Stdio(
+        return Ok(Some(McpServer::Stdio(
             McpServerStdio::new(&entry.name, &local.command)
                 .args(local.args.clone())
                 .env(env),
-        ));
+        )));
     }
 
     if let Some(npx) = &dist.npx {
@@ -554,18 +688,18 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
             .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
             .collect();
 
-        return Ok(McpServer::Stdio(
+        return Ok(Some(McpServer::Stdio(
             McpServerStdio::new(&entry.name, "npx").args(args).env(env),
-        ));
+        )));
     }
 
     if let Some(pipx) = &dist.pipx {
         let mut args = vec!["run".to_string(), pipx.package.clone()];
         args.extend(pipx.args.clone());
 
-        return Ok(McpServer::Stdio(
+        return Ok(Some(McpServer::Stdio(
             McpServerStdio::new(&entry.name, "pipx").args(args),
-        ));
+        )));
     }
 
     if let Some(cargo) = &dist.cargo {
@@ -599,9 +733,9 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
             install_cargo_crate(&cargo.crate_name, &version, &binary_name, &cache_dir).await?;
         }
 
-        return Ok(McpServer::Stdio(
+        return Ok(Some(McpServer::Stdio(
             McpServerStdio::new(&entry.name, &binary_path).args(cargo.args.clone()),
-        ));
+        )));
     }
 
     if let Some(binary_map) = &dist.binary {
@@ -621,17 +755,13 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<McpServer> {
                 download_and_cache_binary(&entry.id, version, binary, &cache_dir).await?;
             }
 
-            return Ok(McpServer::Stdio(
+            return Ok(Some(McpServer::Stdio(
                 McpServerStdio::new(&entry.name, executable_path).args(binary.args.clone()),
-            ));
+            )));
         }
     }
 
-    bail!(
-        "No compatible distribution found for agent '{}' on platform {}",
-        entry.id,
-        get_platform_key()
-    );
+    Ok(None)
 }
 
 /// Download and cache a binary distribution

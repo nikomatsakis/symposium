@@ -5,9 +5,11 @@
 
 use anyhow::Result;
 use clap::Parser;
+use sacp::DynComponent;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
+use symposium_acp_agent::registry::{built_in_proxies, resolve_distribution};
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-benchmark")]
@@ -102,12 +104,18 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
 
     // Build Symposium agent with ferris proxy only (no sparkle for benchmarks)
     let agent = AcpAgent::from_str("npx -y '@zed-industries/claude-code-acp'")?;
-    let config = symposium_acp_agent::symposium::SymposiumConfig::from_proxy_names(vec![
-        "ferris".to_string(),
-        "cargo".to_string(),
-    ])
-    .trace_dir(".");
-    let symposium = symposium_acp_agent::symposium::Symposium::new(config).with_agent(agent);
+    let config = symposium_acp_agent::symposium::SymposiumConfig::new().trace_dir(".");
+    let mut proxies = vec![];
+    for proxy in built_in_proxies()? {
+        if proxy.id == "ferris" || proxy.id == "cargo" {
+            let server = resolve_distribution(&proxy)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Missing extension."))?;
+            proxies.push(DynComponent::new(AcpAgent::new(server)));
+        }
+    }
+    let symposium =
+        symposium_acp_agent::symposium::Symposium::new(config, proxies).with_agent(agent);
 
     // Run prompt
     let response = yopo::prompt(symposium, research_prompt).await?;

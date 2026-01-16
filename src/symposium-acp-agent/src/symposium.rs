@@ -9,94 +9,25 @@
 
 use sacp::link::{AgentToClient, ConductorToProxy, ProxyToConductor};
 use sacp::{Component, DynComponent};
-use sacp_conductor::{Conductor, McpBridgeMode};
-use sacp_tokio::AcpAgent;
+use sacp_conductor::{Conductor, McpBridgeMode, ProxiesAndAgent};
 use std::path::PathBuf;
-
-use crate::registry::{CargoDistribution, Distribution, RegistryEntry};
-
-/// Known proxy/extension names that can be configured.
-pub const KNOWN_PROXIES: &[&str] = &["sparkle", "ferris", "cargo"];
 
 /// Shared configuration for Symposium proxy chains.
 #[derive(Clone)]
 pub struct SymposiumConfig {
-    /// Ordered list of proxy names to include in the chain.
-    proxy_names: Vec<String>,
     trace_dir: Option<PathBuf>,
 }
 
 impl SymposiumConfig {
-    /// Create with no proxies.
+    /// Create an empty config.
     pub fn new() -> Self {
-        SymposiumConfig {
-            proxy_names: Vec::new(),
-            trace_dir: None,
-        }
-    }
-
-    /// Create from a list of proxy names.
-    pub fn from_proxy_names(names: Vec<String>) -> Self {
-        SymposiumConfig {
-            proxy_names: names,
-            trace_dir: None,
-        }
+        SymposiumConfig { trace_dir: None }
     }
 
     /// Set the trace directory.
     pub fn trace_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.trace_dir = Some(dir.into());
         self
-    }
-
-    /// Build proxy components from the configured names, preserving order.
-    async fn build_proxies(&self) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
-        let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
-
-        for name in &self.proxy_names {
-            match name.as_str() {
-                "sparkle" => {
-                    // Sparkle is installed via cargo-binstall from crates.io
-                    let entry = RegistryEntry {
-                        id: "sparkle".to_string(),
-                        name: "Sparkle".to_string(),
-                        version: String::new(),
-                        description: Some(
-                            "Sparkle AI Collaboration Identity Framework".to_string(),
-                        ),
-                        distribution: Distribution {
-                            local: None,
-                            npx: None,
-                            pipx: None,
-                            binary: None,
-                            cargo: Some(CargoDistribution {
-                                crate_name: "sparkle-mcp".to_string(),
-                                version: None, // Use latest
-                                binary: None,  // Auto-discover from crates.io
-                                args: vec![],
-                            }),
-                        },
-                    };
-                    let server = crate::registry::resolve_distribution(&entry)
-                        .await
-                        .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
-                    proxies.push(DynComponent::new(AcpAgent::new(server)));
-                }
-                "ferris" => {
-                    proxies.push(DynComponent::new(
-                        symposium_ferris::FerrisComponent::default(),
-                    ));
-                }
-                "cargo" => {
-                    proxies.push(DynComponent::new(symposium_cargo::CargoProxy));
-                }
-                other => {
-                    tracing::warn!("Unknown proxy name: {}", other);
-                }
-            }
-        }
-
-        Ok(proxies)
     }
 
     /// Configure a conductor with tracing and other settings.
@@ -120,54 +51,35 @@ impl SymposiumConfig {
     }
 }
 
-impl Default for SymposiumConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Symposium in proxy mode - sits between an editor and an existing agent.
 ///
 /// Use this when you want to add Symposium's capabilities to an existing
 /// agent setup without Symposium managing the agent lifecycle.
 pub struct Symposium {
     config: SymposiumConfig,
+    proxies: Vec<DynComponent<ProxyToConductor>>,
 }
 
 impl Symposium {
     /// Create a new Symposium from configuration.
-    pub fn new(config: SymposiumConfig) -> Self {
-        Symposium { config }
+    pub fn new(config: SymposiumConfig, proxies: Vec<DynComponent<ProxyToConductor>>) -> Self {
+        Symposium { config, proxies }
     }
 
     /// Pair the symposium proxy with an agent, producing a new composite agent
     pub fn with_agent(self, agent: impl Component<AgentToClient>) -> SymposiumAgent {
-        let Symposium { config } = self;
-        SymposiumAgent::new(config, agent)
+        let Symposium { config, proxies } = self;
+        SymposiumAgent::new(config, proxies, agent)
     }
 }
 
 impl Component<ProxyToConductor> for Symposium {
     async fn serve(self, client: impl Component<ConductorToProxy>) -> Result<(), sacp::Error> {
         tracing::debug!("Symposium::serve starting (proxy mode)");
-        let Self { config } = self;
+        let Self { config, proxies } = self;
 
         tracing::debug!("Creating conductor (proxy mode)");
-        let conductor = Conductor::new_proxy(
-            "symposium",
-            {
-                let config = config.clone();
-                async move |init_req| {
-                    tracing::info!(
-                        "Building proxy chain with extensions: {:?}",
-                        config.proxy_names
-                    );
-                    let proxies = config.build_proxies().await?;
-                    Ok((init_req, proxies))
-                }
-            },
-            McpBridgeMode::default(),
-        );
+        let conductor = Conductor::new_proxy("symposium", proxies, McpBridgeMode::default());
 
         let conductor = config.configure_conductor(conductor)?;
 
@@ -182,13 +94,19 @@ impl Component<ProxyToConductor> for Symposium {
 /// building a standalone enriched agent binary.
 pub struct SymposiumAgent {
     config: SymposiumConfig,
+    proxies: Vec<DynComponent<ProxyToConductor>>,
     agent: DynComponent<AgentToClient>,
 }
 
 impl SymposiumAgent {
-    fn new<C: Component<AgentToClient>>(config: SymposiumConfig, agent: C) -> Self {
+    fn new<C: Component<AgentToClient>>(
+        config: SymposiumConfig,
+        proxies: Vec<DynComponent<ProxyToConductor>>,
+        agent: C,
+    ) -> Self {
         SymposiumAgent {
             config,
+            proxies,
             agent: DynComponent::new(agent),
         }
     }
@@ -200,22 +118,16 @@ impl Component<AgentToClient> for SymposiumAgent {
         client: impl Component<sacp::link::ClientToAgent>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!("SymposiumAgent::serve starting (agent mode)");
-        let Self { config, agent } = self;
+        let Self {
+            config,
+            proxies,
+            agent,
+        } = self;
 
         tracing::debug!("Creating conductor (agent mode)");
         let conductor = Conductor::new_agent(
             "symposium",
-            {
-                let config = config.clone();
-                async move |init_req| {
-                    tracing::info!(
-                        "Building proxy chain with extensions: {:?}",
-                        config.proxy_names
-                    );
-                    let proxies = config.build_proxies().await?;
-                    Ok((init_req, proxies, agent))
-                }
-            },
+            ProxiesAndAgent::new(agent).proxies(proxies),
             McpBridgeMode::default(),
         );
 

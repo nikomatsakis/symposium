@@ -16,6 +16,7 @@ import * as fs from "fs";
 import { promisify } from "util";
 import { exec, spawn } from "child_process";
 import { getConductorCommand } from "./binaryPath";
+import { logger } from "./extension";
 
 const execAsync = promisify(exec);
 
@@ -45,6 +46,9 @@ export async function runRegistryCommand(args: string[]): Promise<string> {
   const command = getConductorCommand(extensionContext);
 
   return new Promise((resolve, reject) => {
+    logger.important("agent", "Resolving extension", {
+      args,
+    });
     const proc = spawn(command, ["registry", ...args], {
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -66,8 +70,19 @@ export async function runRegistryCommand(args: string[]): Promise<string> {
 
     proc.on("close", (code) => {
       if (code === 0) {
+        logger.important("agent", "Resolve success", {
+          command,
+          args,
+          stdout,
+        });
         resolve(stdout.trim());
       } else {
+        logger.important("agent", "Resolve error", {
+          command,
+          args,
+          code,
+          stderr,
+        });
         reject(
           new Error(
             `${command} registry ${args.join(" ")} failed with code ${code}: ${stderr}`,
@@ -306,7 +321,7 @@ export function getCurrentAgent(): AgentConfig | undefined {
 /**
  * Resolve an agent to a JSON string for passing to `symposium-acp-agent run-with --agent`.
  *
- * First tries `registry resolve <id>` which handles:
+ * First tries `registry resolve-agent <id>` which handles:
  * - Built-in agents (elizacp, etc.)
  * - Registry agents (gemini, auggie, etc.)
  * - Binary downloads and caching
@@ -317,56 +332,17 @@ export function getCurrentAgent(): AgentConfig | undefined {
  * @throws Error if no compatible distribution is found
  */
 export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
-  // First, try resolving via the binary (handles built-ins and registry agents)
-  try {
-    return await runRegistryCommand(["resolve", agent.id]);
-  } catch {
-    // Agent not in registry - fall back to local resolution
-  }
-
-  // Fall back to local distribution resolution for custom agents
-  const dist = agent.distribution;
-  const name = agent.name ?? agent.id;
-
-  // Build McpServer JSON format
-  interface McpServerJson {
-    name: string;
-    command: string;
-    args: string[];
-    env: Array<{ name: string; value: string }>;
-  }
-
-  let result: McpServerJson;
-
-  if (dist.local) {
-    const envArray = dist.local.env
-      ? Object.entries(dist.local.env).map(([k, v]) => ({ name: k, value: v }))
-      : [];
-    result = {
-      name,
-      command: dist.local.command,
-      args: dist.local.args ?? [],
-      env: envArray,
-    };
-  } else if (dist.npx) {
-    result = {
-      name,
-      command: "npx",
-      args: ["-y", dist.npx.package, ...(dist.npx.args ?? [])],
-      env: [],
-    };
-  } else if (dist.pipx) {
-    result = {
-      name,
-      command: "pipx",
-      args: ["run", dist.pipx.package, ...(dist.pipx.args ?? [])],
-      env: [],
-    };
-  } else {
-    throw new Error(`No compatible distribution found for agent "${agent.id}"`);
-  }
-
-  return JSON.stringify(result);
+  let config = {
+    id: agent.id,
+    name: agent.name,
+    distribution: agent.distribution,
+  };
+  let resolved = await runRegistryCommand(["resolve-agent", JSON.stringify(config)]);
+  // On the Rust side, returns an `McpServer`, which doesn't have an id
+  return JSON.stringify({
+    id: agent.id,
+    ...(JSON.parse(resolved))
+  });
 }
 
 /**

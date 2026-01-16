@@ -649,3 +649,30 @@ async function handleCustomExtension(
       return false;
   }
 }
+
+/**
+ * Resolves extensions to a JSON string for passing to `symposium-acp-agent run-with --proxy`.
+ *
+ * First tries `registry resolve-extension <id>` which handles:
+ * - Built-in extensions (sparkle, ferris, cargo)
+ * - Registry extensions
+ * - Binary downloads and caching
+ *
+ * Falls back to local distribution resolution for custom extensions
+ * configured in settings with explicit distribution.
+ *
+ * @throws Error if no compatible distribution is found
+ */
+export async function resolveExtensionJson(extension: ExtensionSettingsEntry): Promise<string> {
+  let config = {
+    id: extension.id,
+    name: extension.name || extension.id,
+    distribution: extension.distribution || {},
+  };
+  let resolved = await runRegistryCommand(["resolve-extension", JSON.stringify(config)]);
+  // On the Rust side, returns an `McpServer`, which doesn't have an id
+  return JSON.stringify({
+    id: extension.id,
+    ...(JSON.parse(resolved))
+  });
+}
