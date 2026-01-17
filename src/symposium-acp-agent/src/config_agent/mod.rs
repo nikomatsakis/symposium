@@ -10,6 +10,9 @@ mod conductor_actor;
 mod config_mode_actor;
 mod uberconductor_actor;
 
+#[cfg(test)]
+mod tests;
+
 use crate::user_config::SymposiumUserConfig;
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
@@ -18,9 +21,9 @@ use futures::StreamExt;
 use fxhash::FxHashMap;
 use sacp::link::AgentToClient;
 use sacp::schema::{
-    AgentCapabilities, AvailableCommand, ContentBlock, ContentChunk, InitializeRequest,
-    InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-    SessionId, SessionNotification, SessionUpdate, StopReason, TextContent,
+    AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
+    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, SessionId, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use sacp::util::MatchMessage;
 use sacp::{ClientPeer, Component, JrConnectionCx, JrRequestCx, MessageCx};
@@ -79,6 +82,9 @@ pub struct ConfigAgent {
 
     /// Trace directory for conductors.
     trace_dir: Option<PathBuf>,
+
+    /// Injected agents for config mode (for testing). If Some, bypasses registry fetch.
+    injected_agents: Option<Vec<crate::registry::AgentListEntry>>,
 }
 
 impl ConfigAgent {
@@ -88,6 +94,7 @@ impl ConfigAgent {
             sessions: Default::default(),
             config_path: None,
             trace_dir: None,
+            injected_agents: None,
         }
     }
 
@@ -100,6 +107,13 @@ impl ConfigAgent {
     /// Set trace directory for conductors.
     pub fn with_trace_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.trace_dir = Some(dir.into());
+        self
+    }
+
+    /// Set injected agents for config mode (for testing).
+    /// When set, config mode will use these agents instead of fetching from registry.
+    pub fn with_injected_agents(mut self, agents: Vec<crate::registry::AgentListEntry>) -> Self {
+        self.injected_agents = Some(agents);
         self
     }
 
@@ -128,13 +142,27 @@ impl ConfigAgent {
                 }
 
                 ConfigAgentMessage::NewSessionCreated(response, conductor, request_cx) => {
+                    let session_id = response.session_id.clone();
+
                     // Store the session mapping before responding
-                    self.sessions.insert(
-                        response.session_id.clone(),
-                        SessionState::Delegating { conductor },
-                    );
-                    // Now respond to the client
+                    self.sessions
+                        .insert(session_id.clone(), SessionState::Delegating { conductor });
+
+                    // Respond to the client
                     request_cx.respond(response)?;
+
+                    // Send initial available commands with /symposium:config
+                    // This ensures the command is available even if the downstream agent
+                    // doesn't send its own AvailableCommandsUpdate
+                    cx.send_notification(SessionNotification::new(
+                        session_id,
+                        SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(vec![
+                            AvailableCommand::new(
+                                CONFIG_SLASH_COMMAND,
+                                "Configure Symposium settings",
+                            ),
+                        ])),
+                    ))?;
                 }
 
                 ConfigAgentMessage::ConfigModeOutput(session_id, output) => {
@@ -306,12 +334,13 @@ impl ConfigAgent {
             .unwrap_or_else(|| SymposiumUserConfig::with_agent(""));
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
-        let actor_handle = ConfigModeHandle::spawn(
+        let actor_handle = ConfigModeHandle::spawn_with_agents(
             current_config,
             session_id.clone(),
             config_agent_tx.clone(),
             resume_tx,
             cx,
+            self.injected_agents.clone(),
         )?;
 
         // Transition to config state

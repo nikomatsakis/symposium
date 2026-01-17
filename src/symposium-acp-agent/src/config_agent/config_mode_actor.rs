@@ -61,12 +61,28 @@ impl ConfigModeHandle {
     /// The `resume_tx` is an optional oneshot sender that, when dropped, will
     /// signal the conductor to resume processing. If provided, it will be
     /// dropped when the actor exits (either save or cancel).
+    #[allow(dead_code)] // Convenience wrapper, kept for future non-test use
     pub fn spawn(
         config: SymposiumUserConfig,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
         cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        Self::spawn_with_agents(config, session_id, config_agent_tx, resume_tx, cx, None)
+    }
+
+    /// Spawn a new config mode actor with a pre-populated agent list.
+    ///
+    /// If `agents` is Some, skips the registry fetch and uses the provided list.
+    /// This is useful for testing.
+    pub fn spawn_with_agents(
+        config: SymposiumUserConfig,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        resume_tx: Option<oneshot::Sender<()>>,
+        cx: &JrConnectionCx<AgentToClient>,
+        agents: Option<Vec<AgentListEntry>>,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
         let handle = Self { tx };
@@ -77,6 +93,7 @@ impl ConfigModeHandle {
             config_agent_tx,
             rx,
             available_agents: Vec::new(),
+            injected_agents: agents,
             _resume_tx: resume_tx,
         };
 
@@ -101,6 +118,8 @@ struct ConfigModeActor {
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     rx: mpsc::Receiver<ConfigModeInput>,
     available_agents: Vec<AgentListEntry>,
+    /// If Some, use these agents instead of fetching from registry.
+    injected_agents: Option<Vec<AgentListEntry>>,
     /// When dropped, signals the conductor to resume. We never send to this,
     /// just hold it until the actor exits.
     _resume_tx: Option<oneshot::Sender<()>>,
@@ -109,10 +128,14 @@ struct ConfigModeActor {
 impl ConfigModeActor {
     /// Main entry point - runs the actor.
     async fn run(mut self) -> Result<(), sacp::Error> {
-        // Fetch available agents
-        match registry::list_agents().await {
-            Ok(agents) => self.available_agents = agents,
-            Err(e) => self.send_message(format!("Warning: Failed to fetch registry: {}", e)),
+        // Use injected agents if provided, otherwise fetch from registry
+        if let Some(agents) = self.injected_agents.take() {
+            self.available_agents = agents;
+        } else {
+            match registry::list_agents().await {
+                Ok(agents) => self.available_agents = agents,
+                Err(e) => self.send_message(format!("Warning: Failed to fetch registry: {}", e)),
+            }
         }
 
         self.main_menu_loop().await;
