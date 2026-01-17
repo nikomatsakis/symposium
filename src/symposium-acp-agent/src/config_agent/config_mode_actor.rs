@@ -15,6 +15,16 @@ use sacp::schema::SessionId;
 use sacp::JrConnectionCx;
 use std::sync::LazyLock;
 
+/// Result of handling menu input.
+enum MenuAction {
+    /// Exit the menu loop (save or cancel was chosen).
+    Done,
+    /// Redisplay the menu (state changed).
+    Redisplay,
+    /// Just wait for more input (invalid command, no state change).
+    Continue,
+}
+
 /// Messages sent to the config mode actor.
 pub enum ConfigModeInput {
     /// User sent a prompt (the text content).
@@ -142,40 +152,42 @@ impl ConfigModeActor {
 
     /// Main menu loop.
     async fn main_menu_loop(&mut self) {
-        loop {
-            self.show_main_menu();
+        self.show_main_menu();
 
+        loop {
             let Some(input) = self.next_input().await else {
                 return;
             };
 
-            if !self.handle_main_menu_input(&input).await {
-                return;
+            match self.handle_main_menu_input(&input).await {
+                MenuAction::Done => return,
+                MenuAction::Redisplay => self.show_main_menu(),
+                MenuAction::Continue => {}
             }
         }
     }
 
-    /// Handle input in the main menu. Returns false if we should exit.
-    async fn handle_main_menu_input(&mut self, text: &str) -> bool {
+    /// Handle input in the main menu.
+    async fn handle_main_menu_input(&mut self, text: &str) -> MenuAction {
         let text = text.trim();
         let text_upper = text.to_uppercase();
 
         // Save and exit
         if text_upper == "SAVE" {
             self.done();
-            return false;
+            return MenuAction::Done;
         }
 
         // Cancel without saving
         if text_upper == "CANCEL" {
             self.cancelled();
-            return false;
+            return MenuAction::Done;
         }
 
         // Agent selection
         if text_upper == "A" || text_upper == "AGENT" {
             self.agent_selection_loop().await;
-            return true;
+            return MenuAction::Redisplay;
         }
 
         // Toggle proxy by index
@@ -185,13 +197,14 @@ impl ConfigModeActor {
                 let proxy = &self.config.proxies[index];
                 let status = if proxy.enabled { "enabled" } else { "disabled" };
                 self.send_message(format!("Proxy `{}` is now {}.", proxy.name, status));
+                return MenuAction::Redisplay;
             } else {
                 self.send_message(format!(
                     "Invalid index. Please enter 0-{}.",
                     self.config.proxies.len().saturating_sub(1)
                 ));
+                return MenuAction::Continue;
             }
-            return true;
         }
 
         // Move command: "move X to Y"
@@ -209,15 +222,16 @@ impl ConfigModeActor {
                 self.config
                     .proxies
                     .insert(insert_at.min(self.config.proxies.len()), proxy);
+                return MenuAction::Redisplay;
             } else {
                 self.send_message("Invalid indices for move.");
+                return MenuAction::Continue;
             }
-            return true;
         }
 
         // Unknown command
         self.send_message(format!("Unknown command: `{}`", text));
-        true
+        MenuAction::Continue
     }
 
     /// Agent selection loop.
@@ -297,7 +311,7 @@ impl ConfigModeActor {
         msg.push_str("  `A` or `AGENT` - Select a different agent\n");
         msg.push_str("  `0`, `1`, ... - Toggle proxy enabled/disabled\n");
         msg.push_str("  `move X to Y` - Reorder proxies\n");
-        msg.push_str("  `save` - Save and exit\n");
+        msg.push_str("  `save` - Save for future sessions\n");
         msg.push_str("  `cancel` - Exit without saving\n");
 
         self.send_message(msg);
