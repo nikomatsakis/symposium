@@ -29,41 +29,121 @@ The file uses JSONC (JSON with comments) format:
 | `agent` | string | Shell command to spawn the downstream agent. Parsed using shell word splitting. |
 | `proxies` | array | List of proxy extensions with `name` and `enabled` fields. |
 
-## Architecture: SessionAgent
+## Architecture: Three-Actor Pattern
 
-The `run` command spawns a **SessionAgent** that manages the lifecycle of sessions and conductors:
+The `run` command uses a **ConfigAgent** that manages configuration and delegates sessions to conductors. The architecture uses three actors to separate concerns:
 
 ```
 Client (editor)
     │
     ▼
-SessionAgent
-    │
-    ├── handles InitializeRequest (returns default capabilities)
-    ├── handles /symposium:config slash command (modal config mode)
-    │
-    │  on NewSessionRequest:
-    │    1. Load current config
-    │    2. Find or create Conductor for that config
-    │    3. Forward session to Conductor
-    │
-    │  on PromptRequest:
-    │    route to appropriate Conductor by session ID
+┌─────────────────────────────────────────────────────────┐
+│ ConfigAgent                                             │
+│   • Handles InitializeRequest                           │
+│   • Intercepts /symposium:config slash command          │
+│   • Routes messages by session ID                       │
+│   • Spawns ConfigModeActor for config UI                │
+└─────────────────────────────────────────────────────────┘
     │
     ▼
-Conductor A (config v1) ──→ proxies ──→ downstream agent
-    └── handles sessions 1, 2, 3
-
-Conductor B (config v2) ──→ proxies ──→ downstream agent
-    └── handles sessions 4, 5
+┌─────────────────────────────────────────────────────────┐
+│ UberconductorActor                                      │
+│   • Manages conductor lifecycle                         │
+│   • Groups sessions by config (deduplication)           │
+│   • Creates new conductors when config changes          │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│ ConductorActor (one per unique config)                  │
+│   • Owns proxy chain + downstream agent process         │
+│   • Handles multiple sessions                           │
+│   • Forwards messages bidirectionally                   │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+Downstream Agent (claude-code, etc.)
 ```
+
+### Why Three Actors?
+
+**ConfigAgent** owns the client connection and must respond to requests. But creating a conductor requires async initialization (spawning processes, capability negotiation). The three-actor pattern solves this:
+
+1. **ConfigAgent** - Stateful message router. Owns session-to-conductor mapping and responds to clients.
+2. **UberconductorActor** - Conductor factory. Manages conductor lifecycle and deduplicates by config.
+3. **ConductorActor** - Session handler. Owns the actual proxy chain and downstream agent.
+
+This separation ensures ConfigAgent never blocks waiting for conductor initialization.
+
+### New Session Flow
+
+When a client requests a new session:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ConfigAgent
+    participant Uberconductor
+    participant Conductor
+    participant Agent as Downstream Agent
+
+    Client->>ConfigAgent: NewSessionRequest
+    ConfigAgent->>ConfigAgent: Load config from disk
+    ConfigAgent->>Uberconductor: new_session(config, request)
+    
+    opt No conductor for this config yet
+        Uberconductor->>Conductor: spawn new conductor
+        Conductor->>Agent: spawn downstream agent
+        Agent-->>Conductor: InitializeResponse
+    end
+    
+    Uberconductor->>Conductor: forward request
+    Conductor->>Agent: NewSessionRequest
+    Agent-->>Conductor: NewSessionResponse
+    Conductor-->>ConfigAgent: NewSessionCreated(response, handle)
+    Note over ConfigAgent: Store session→conductor mapping
+    ConfigAgent-->>Client: NewSessionResponse
+```
+
+Key insight: The conductor sends `NewSessionCreated` back to ConfigAgent *carrying the request context*. This ensures ConfigAgent stores the session mapping *before* responding to the client, avoiding race conditions.
+
+### Prompt Routing
+
+Once a session is established, prompts route through ConfigAgent:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ConfigAgent
+    participant Conductor
+    participant Agent as Downstream Agent
+
+    Client->>ConfigAgent: PromptRequest(session_id)
+    ConfigAgent->>ConfigAgent: Lookup session→conductor
+    
+    alt Is /symposium:config command
+        ConfigAgent->>ConfigAgent: Enter config mode
+        ConfigAgent-->>Client: PromptResponse
+    else Normal prompt
+        ConfigAgent->>Conductor: forward prompt
+        Conductor->>Agent: PromptRequest
+        Agent-->>Conductor: streaming notifications/requests
+        Conductor->>ConfigAgent: MessageToClient
+        ConfigAgent-->>Client: forward message
+        Note over ConfigAgent: Repeats for each message from agent
+        Conductor->>ConfigAgent: MessageToClient(PromptResponse)
+        ConfigAgent-->>Client: PromptResponse
+    end
+```
+
+All messages from conductors flow back through ConfigAgent as `MessageToClient`. This allows ConfigAgent to intercept and modify messages (e.g., injecting the `/symposium:config` command into `AvailableCommandsUpdate` notifications).
 
 ### Session-to-Conductor Mapping
 
-The SessionAgent groups sessions by configuration:
+The ConfigAgent groups sessions by configuration:
 
-- When a new session starts, the SessionAgent loads the current config from disk
-- If a Conductor already exists for that config (compared by equality), the session is delegated to it
+- When a new session starts, ConfigAgent loads the current config from disk
+- UberconductorActor checks if a Conductor already exists for that config (compared by equality)
 - If not, a new Conductor is spawned, initialized, and the session is delegated to it
 
 This means:
@@ -71,72 +151,96 @@ This means:
 - Config changes take effect on the next session, not immediately
 - Existing sessions continue with their original config
 
-### Conductor Lifecycle
+## Configuration Mode
 
-Each Conductor:
-- Is keyed by config (agent command + proxy settings)
-- Receives an `InitializeRequest` when first created
-- Builds its proxy chain based on the config
-- Handles multiple sessions over its lifetime
-- Spawns and manages the downstream agent process
+Users can modify configuration at any time via the `/symposium:config` slash command.
 
-## Configuration Slash Command
+### Entering Config Mode
 
-Users can modify configuration at any time via the `/symposium:config` slash command. When invoked:
+When ConfigAgent detects the config command in a prompt:
 
-1. The SessionAgent intercepts the prompt (before routing to any Conductor)
-2. Enters **modal config mode** for that session - all subsequent prompts go to the config handler
-3. Displays current configuration:
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ConfigAgent
+    participant ConfigMode as ConfigModeActor
+    participant Conductor
 
-```
-# Current Setup
-
-* Agent: Claude Code
-* Extensions:
-  - sparkle (enabled)
-  - ferris (enabled)
-  - cargo (enabled)
-
-What would you like to change?
-
-1) Change agent
-2) Done, save changes and exit
-3) Cancel all changes
+    Client->>ConfigAgent: PromptRequest("/symposium:config")
+    ConfigAgent->>ConfigAgent: Detect config command
+    ConfigAgent->>ConfigMode: spawn actor
+    ConfigAgent->>ConfigAgent: Store session state as Config{actor, return_to: conductor}
+    ConfigMode-->>Client: Main menu (via notification)
+    ConfigAgent-->>Client: PromptResponse(EndTurn)
 ```
 
-4. On save: writes config to disk, tells user "Changes saved! New sessions will use the updated configuration."
-5. On done/cancel: exits config mode, resumes normal routing to the Conductor
+The session transitions from `Delegating{conductor}` to `Config{actor, return_to}`. The `return_to` field preserves the conductor handle so we can resume the session after config mode exits.
 
-The modal takeover ensures the config interaction is isolated from the downstream agent.
+### Config Mode UI
+
+ConfigModeActor presents an interactive "phone tree" menu:
+
+```
+## Current Configuration
+
+**Agent:** Claude Code
+
+**Extensions:**
+1. [x] sparkle
+2. [x] ferris  
+3. [x] cargo
+
+## Commands
+
+- `SAVE` - Save changes and exit
+- `CANCEL` - Discard changes and exit
+- `A` or `AGENT` - Change agent
+- `1`, `2`, `3` - Toggle extension on/off
+- `move X to Y` - Reorder extensions
+```
+
+The actor uses **async control flow as a state machine**: nested async loops replace explicit state enums. Each submenu (like agent selection) is a function that awaits input and returns when complete.
+
+Commands return a `MenuAction` to control redisplay:
+- `Done` - Exit config mode entirely
+- `Redisplay` - Show the menu again (after successful command)
+- `Continue` - Don't redisplay (for invalid input, just wait for next)
+
+### Exiting Config Mode
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ConfigAgent
+    participant ConfigMode as ConfigModeActor
+
+    Client->>ConfigAgent: PromptRequest("SAVE")
+    ConfigAgent->>ConfigMode: send input
+    ConfigMode->>ConfigMode: Save config to disk
+    ConfigMode-->>ConfigAgent: ConfigModeOutput::Done{config}
+    ConfigAgent->>ConfigAgent: Restore session to Delegating{return_to}
+    ConfigAgent-->>Client: "Configuration saved. Returning to your session."
+```
 
 ## First-Time Setup
 
-When no configuration file exists, the SessionAgent runs an interactive setup wizard instead of delegating to a Conductor:
+When no configuration file exists, ConfigAgent enters `InitialSetup` state instead of delegating to a conductor. The setup flow:
 
 1. Fetches available agents from the [ACP Agent Registry](https://github.com/agentclientprotocol/registry)
 2. Presents a numbered list of agents
 3. User types a number to select
 4. Saves configuration with all proxies enabled by default
-5. Continues with the selected agent
-
-### Known Agents
-
-The setup wizard offers agents from the registry, with fallback to:
-
-| Name | Command |
-|------|---------|
-| Claude Code | `npx -y @zed-industries/claude-code-acp` |
-| Gemini CLI | `npx -y -- @google/gemini-cli@latest --experimental-acp` |
-| Codex | `npx -y @zed-industries/codex-acp` |
-| Kiro CLI | `kiro-cli-chat acp` |
+5. Transitions to normal operation
 
 ## Implementation
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `SymposiumUserConfig` | `src/symposium-acp-agent/src/config.rs` | Config types with `Eq`/`Hash` for comparison |
-| `SessionAgent` | `src/symposium-acp-agent/src/session_agent.rs` | Session routing and config mode |
-| CLI integration | `src/symposium-acp-agent/src/main.rs` | `run` subcommand |
+| `ConfigAgent` | `config_agent/mod.rs` | Message routing and session state |
+| `UberconductorActor` | `config_agent/uberconductor_actor.rs` | Conductor lifecycle management |
+| `ConductorActor` | `config_agent/conductor_actor.rs` | Proxy chain and agent process |
+| `ConfigModeActor` | `config_agent/config_mode_actor.rs` | Interactive config UI |
+| `SymposiumUserConfig` | `user_config.rs` | Config file parsing and persistence |
 
 ### Dependencies
 
