@@ -8,3 +8,5 @@ pub mod registry;
 pub mod symposium;
 pub mod user_config;
 pub mod vscodelm;
+
+pub use config_agent::ConfigAgent;
