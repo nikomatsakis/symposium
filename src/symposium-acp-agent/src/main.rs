@@ -157,6 +157,7 @@ fn setup_logging(log: Option<String>) {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new(filter))
             .with_writer(std::io::stderr)
+            .with_ansi(false)
             .init();
     }
 }

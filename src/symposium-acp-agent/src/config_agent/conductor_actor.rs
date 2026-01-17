@@ -7,10 +7,10 @@
 //! - Forwards notifications from the conductor back to the client
 
 use super::ConfigAgentMessage;
-use crate::symposium::SymposiumConfig;
+use crate::registry::{built_in_proxies, resolve_distribution};
 use crate::user_config::SymposiumUserConfig;
 use futures::channel::mpsc::UnboundedSender;
-use sacp::link::{AgentToClient, ClientToAgent};
+use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
 use sacp::schema::{
     InitializeRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
 };
@@ -137,10 +137,35 @@ impl ConductorHandle {
     }
 }
 
+/// Build proxy components from names using the registry.
+async fn build_proxies(
+    proxy_names: Vec<String>,
+) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
+    let possible_proxies =
+        built_in_proxies().map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+
+    let mut proxies = vec![];
+    for name in &proxy_names {
+        if let Some(entry) = possible_proxies.iter().find(|p| p.id == *name) {
+            let server = resolve_distribution(entry)
+                .await
+                .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+            let server = server.ok_or_else(|| {
+                sacp::Error::new(-32603, format!("Extension {} not found", name))
+            })?;
+            proxies.push(DynComponent::new(AcpAgent::new(server)));
+        } else {
+            tracing::warn!("Unknown proxy name: {}", name);
+        }
+    }
+
+    Ok(proxies)
+}
+
 /// The main actor loop.
 async fn run_actor(
     config: SymposiumUserConfig,
-    trace_dir: Option<PathBuf>,
+    _trace_dir: Option<PathBuf>,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     self_handle: ConductorHandle,
     mut rx: mpsc::Receiver<ConductorMessage>,
@@ -151,11 +176,7 @@ async fn run_actor(
         .agent_args()
         .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
-    let mut symposium_config = SymposiumConfig::from_proxy_names(proxy_names);
-
-    if let Some(trace_dir) = trace_dir {
-        symposium_config = symposium_config.trace_dir(trace_dir.clone());
-    }
+    // TODO: Apply trace_dir to conductor when needed
 
     let agent =
         AcpAgent::from_args(&agent_args).map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
@@ -164,13 +185,9 @@ async fn run_actor(
     let conductor = Conductor::new_agent(
         "symposium-conductor",
         {
-            let symposium_config = symposium_config.clone();
             async move |init_req| {
-                tracing::info!(
-                    "Building proxy chain with extensions: {:?}",
-                    symposium_config.proxy_names()
-                );
-                let proxies = symposium_config.build_proxies().await?;
+                tracing::info!("Building proxy chain with extensions: {:?}", proxy_names);
+                let proxies = build_proxies(proxy_names).await?;
                 Ok((init_req, proxies, DynComponent::new(agent)))
             }
         },
