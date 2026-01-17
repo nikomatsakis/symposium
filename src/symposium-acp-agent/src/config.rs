@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 // Re-export the shared config types
-pub use symposium_acp_agent::user_config::{ProxyEntry, SymposiumUserConfig};
+pub use symposium_acp_agent::user_config::SymposiumUserConfig;
 
 /// An agent available for configuration.
 #[derive(Debug, Clone)]
