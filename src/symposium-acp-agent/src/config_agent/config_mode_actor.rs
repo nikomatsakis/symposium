@@ -5,15 +5,15 @@
 //! text-based menu system.
 
 use super::ConfigAgentMessage;
-use crate::recommendations::WorkspaceRecommendations;
+use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::{list_agents_with_sources, ComponentSource};
 use crate::user_config::{GlobalAgentConfig, WorkspaceConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
 use sacp::link::AgentToClient;
-use sacp::schema::SessionId;
-use sacp::JrConnectionCx;
+use sacp::schema::{NewSessionRequest, NewSessionResponse, SessionId};
+use sacp::{JrConnectionCx, JrRequestCx};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::oneshot;
@@ -79,18 +79,78 @@ impl ConfigModeHandle {
         resume_tx: Option<oneshot::Sender<()>>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
+        Self::spawn_inner(
+            config,
+            workspace_path,
+            false, // Not diff-only
+            recommendations,
+            default_agent_override,
+            session_id,
+            config_agent_tx,
+            resume_tx,
+            None, // No pending request for regular config mode
+            cx,
+        )
+    }
+
+    /// Spawn a config mode actor in diff-only mode.
+    ///
+    /// This is used when starting a new session with an existing config.
+    /// The actor will only handle the recommendation diff prompt, then send
+    /// `DiffCompleted` or `DiffCancelled` instead of showing the main menu.
+    ///
+    /// The `pending_request` and `pending_request_cx` are passed through the actor
+    /// and sent back via `DiffCompleted` so that the session can be created.
+    pub fn spawn_diff_only(
+        config: WorkspaceConfig,
+        workspace_path: PathBuf,
+        recommendations: WorkspaceRecommendations,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        pending_request: NewSessionRequest,
+        pending_request_cx: JrRequestCx<NewSessionResponse>,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        Self::spawn_inner(
+            Some(config),
+            workspace_path,
+            true, // Diff-only
+            Some(recommendations),
+            None,
+            session_id,
+            config_agent_tx,
+            None, // No resume_tx for diff-only mode
+            Some((pending_request, pending_request_cx)),
+            cx,
+        )
+    }
+
+    fn spawn_inner(
+        config: Option<WorkspaceConfig>,
+        workspace_path: PathBuf,
+        diff_only: bool,
+        recommendations: Option<WorkspaceRecommendations>,
+        default_agent_override: Option<ComponentSource>,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        resume_tx: Option<oneshot::Sender<()>>,
+        pending_request: Option<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
         let handle = Self { tx };
 
         let actor = ConfigModeActor {
             config,
             workspace_path,
+            diff_only,
             recommendations,
             default_agent_override,
             session_id,
             config_agent_tx,
             rx,
             _resume_tx: resume_tx,
+            pending_request,
         };
 
         cx.spawn(actor.run())?;
@@ -107,12 +167,25 @@ impl ConfigModeHandle {
     }
 }
 
+/// Result of handling the recommendation diff prompt.
+enum DiffResult {
+    /// Continue to main menu (config may have been updated)
+    Continue,
+    /// User chose LATER - exit without changes
+    Later,
+    /// Actor was cancelled (e.g., channel closed)
+    Cancelled,
+}
+
 /// The config mode actor state.
 struct ConfigModeActor {
     /// Current configuration. None means initial setup (no config exists yet).
     config: Option<WorkspaceConfig>,
     /// The workspace this configuration is for.
     workspace_path: PathBuf,
+    /// If true, only handle recommendation diff then exit (don't show main menu).
+    /// Used when spawned from session creation with existing config.
+    diff_only: bool,
     /// Recommendations for this workspace.
     recommendations: Option<WorkspaceRecommendations>,
     /// Override for the global agent config. If Some, bypasses GlobalAgentConfig::load().
@@ -124,6 +197,9 @@ struct ConfigModeActor {
     /// When dropped, signals the conductor to resume. We never send to this,
     /// just hold it until the actor exits.
     _resume_tx: Option<oneshot::Sender<()>>,
+    /// For diff-only mode: the pending session request that triggered this diff.
+    /// When diff handling completes, we send DiffCompleted with this info.
+    pending_request: Option<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>,
 }
 
 impl ConfigModeActor {
@@ -189,9 +265,118 @@ impl ConfigModeActor {
             }
         };
 
+        // Check for recommendation diff if we have recommendations
+        if let Some(ref recs) = self.recommendations {
+            let diff = RecommendationDiff::compute(recs, &config);
+            if diff.has_changes() {
+                match self.handle_recommendation_diff(diff, &mut config).await {
+                    DiffResult::Continue => {
+                        // Config was updated, continue
+                    }
+                    DiffResult::Later => {
+                        // User wants to defer
+                        if self.diff_only {
+                            // In diff-only mode, proceed with original config
+                            self.proceed_with_session(&config);
+                        } else {
+                            // In full mode, exit without going to menu
+                            self.done(&config);
+                        }
+                        return Ok(());
+                    }
+                    DiffResult::Cancelled => {
+                        self.cancelled();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // In diff-only mode, we're done after handling the diff (or if no diff)
+        if self.diff_only {
+            self.proceed_with_session(&config);
+            return Ok(());
+        }
+
         self.main_menu_loop(&mut config).await;
 
         Ok(())
+    }
+
+    /// Handle the recommendation diff prompt.
+    /// Returns the result of the interaction.
+    async fn handle_recommendation_diff(
+        &mut self,
+        mut diff: RecommendationDiff,
+        config: &mut WorkspaceConfig,
+    ) -> DiffResult {
+        // Show the initial prompt
+        self.send_message(&diff.format_prompt());
+
+        loop {
+            let Some(input) = self.next_input().await else {
+                return DiffResult::Cancelled;
+            };
+            let input = input.trim();
+            let input_upper = input.to_uppercase();
+
+            // Handle stale-only case (ENTER or LATER)
+            if diff.is_stale_only() {
+                if input.is_empty() {
+                    // ENTER - remove stale and continue
+                    diff.apply_stale_removal(config);
+                    if let Err(e) = config.save(&self.workspace_path) {
+                        self.send_message(&format!("Warning: Failed to save config: {}\n", e));
+                    }
+                    return DiffResult::Continue;
+                } else if input_upper == "LATER" {
+                    return DiffResult::Later;
+                } else {
+                    self.send_message("Please press ENTER to continue, or say LATER.\n");
+                    continue;
+                }
+            }
+
+            // Handle full prompt (SAVE, IGNORE, LATER, or number)
+            if input_upper == "SAVE" {
+                diff.apply_save(config);
+                if let Err(e) = config.save(&self.workspace_path) {
+                    self.send_message(&format!("Warning: Failed to save config: {}\n", e));
+                }
+                self.send_message("Recommendations saved.\n\n");
+                return DiffResult::Continue;
+            }
+
+            if input_upper == "IGNORE" {
+                diff.apply_ignore(config);
+                if let Err(e) = config.save(&self.workspace_path) {
+                    self.send_message(&format!("Warning: Failed to save config: {}\n", e));
+                }
+                self.send_message("New recommendations ignored. You can enable them later via /symposium:config.\n\n");
+                return DiffResult::Continue;
+            }
+
+            if input_upper == "LATER" {
+                return DiffResult::Later;
+            }
+
+            // Try to parse as a number for toggling
+            if let Ok(index) = input.parse::<usize>() {
+                match diff.toggle(index) {
+                    Ok(()) => {
+                        // Redisplay the prompt with updated state
+                        self.send_message(&diff.format_prompt());
+                    }
+                    Err(msg) => {
+                        self.send_message(&format!("{}\n", msg));
+                    }
+                }
+                continue;
+            }
+
+            // Unknown input
+            self.send_message(&format!("Unknown command: `{}`\n", input));
+        }
     }
 
     /// Prompt user to select an agent from the registry.
@@ -305,13 +490,46 @@ impl ConfigModeActor {
     }
 
     /// Signal that configuration was cancelled.
-    fn cancelled(&self) {
+    fn cancelled(&mut self) {
+        // In diff-only mode, send DiffCancelled with the pending request
+        if self.diff_only {
+            if let Some((_, pending_request_cx)) = self.pending_request.take() {
+                self.config_agent_tx
+                    .unbounded_send(ConfigAgentMessage::DiffCancelled { pending_request_cx })
+                    .ok();
+                return;
+            }
+        }
+
+        // Regular config mode cancellation
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
                 self.session_id.clone(),
                 ConfigModeOutput::Cancelled,
             ))
             .ok();
+    }
+
+    /// Signal that diff handling is complete and session should proceed.
+    /// Used in diff-only mode.
+    fn proceed_with_session(&mut self, config: &WorkspaceConfig) {
+        if let Some((pending_request, pending_request_cx)) = self.pending_request.take() {
+            self.config_agent_tx
+                .unbounded_send(ConfigAgentMessage::DiffCompleted {
+                    session_id: self.session_id.clone(),
+                    workspace_path: self.workspace_path.clone(),
+                    config: config.clone(),
+                    pending_request,
+                    pending_request_cx,
+                })
+                .ok();
+        } else {
+            // Fallback (shouldn't happen in normal usage)
+            tracing::warn!(
+                "proceed_with_session called without pending_request for session {:?}",
+                self.session_id
+            );
+        }
     }
 
     /// Main menu loop.

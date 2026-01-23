@@ -210,6 +210,14 @@ pub struct Recommendations {
 }
 
 impl Recommendations {
+    /// Create empty recommendations (for testing)
+    pub fn empty() -> Self {
+        Self {
+            agent: None,
+            extensions: vec![],
+        }
+    }
+
     /// Load the built-in recommendations
     pub fn load_builtin() -> Result<Self> {
         Self::from_toml(BUILTIN_RECOMMENDATIONS_TOML)

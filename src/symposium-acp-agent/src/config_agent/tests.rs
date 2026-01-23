@@ -213,7 +213,8 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    let agent = ConfigAgent::new();
+    // Use empty recommendations to avoid triggering the diff prompt
+    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -298,7 +299,8 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    let agent = ConfigAgent::new();
+    // Use empty recommendations to avoid triggering the diff prompt
+    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(

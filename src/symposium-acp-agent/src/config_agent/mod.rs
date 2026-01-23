@@ -13,7 +13,7 @@ mod uberconductor_actor;
 #[cfg(test)]
 mod tests;
 
-use crate::recommendations::Recommendations;
+use crate::recommendations::{RecommendationDiff, Recommendations};
 use crate::registry::ComponentSource;
 use crate::user_config::WorkspaceConfig;
 use conductor_actor::ConductorHandle;
@@ -70,7 +70,13 @@ enum SessionState {
         conductor: ConductorHandle,
         workspace_path: PathBuf,
     },
+
+    /// Session is pending diff resolution before being created.
+    /// The actor is handling the diff prompt; when done, we'll create the real session.
+    /// Note: workspace_path is stored in the actor and passed back via DiffCompleted message.
+    PendingDiff { actor: ConfigModeHandle },
 }
+
 
 /// The ConfigAgent manages sessions and configuration.
 ///
@@ -184,8 +190,32 @@ impl ConfigAgent {
                 }
 
                 ConfigAgentMessage::ConfigModeOutput(session_id, output) => {
-                    self.handle_config_mode_output(session_id, output, &cx)
+                    self.handle_config_mode_output(session_id, output, &uberconductor, &cx)
                         .await?;
+                }
+
+                ConfigAgentMessage::DiffCompleted {
+                    session_id,
+                    workspace_path,
+                    config,
+                    pending_request,
+                    pending_request_cx,
+                } => {
+                    // Remove the PendingDiff session state
+                    self.sessions.remove(&session_id);
+
+                    // Forward to uberconductor with the (possibly updated) config
+                    uberconductor
+                        .new_session(workspace_path, config, pending_request, pending_request_cx)
+                        .await?;
+                }
+
+                ConfigAgentMessage::DiffCancelled { pending_request_cx } => {
+                    // Diff was cancelled - fail the session creation
+                    pending_request_cx.respond_with_error(sacp::Error::new(
+                        -32000,
+                        "Session creation cancelled",
+                    ))?;
                 }
             }
         }
@@ -197,6 +227,7 @@ impl ConfigAgent {
         &mut self,
         session_id: SessionId,
         output: ConfigModeOutput,
+        _uberconductor: &UberconductorHandle,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<(), sacp::Error> {
         match output {
@@ -260,6 +291,9 @@ impl ConfigAgent {
             }
 
             ConfigModeOutput::Cancelled => {
+                // Note: PendingDiff cancellation is now handled via DiffCancelled message,
+                // so we only need to handle regular config mode cancellation here.
+
                 // Get session info (workspace_path and return_to)
                 let (workspace_path, return_to) = match self.sessions.get(&session_id) {
                     Some(SessionState::Config {
@@ -267,6 +301,14 @@ impl ConfigAgent {
                         return_to,
                         ..
                     }) => (workspace_path.clone(), return_to.clone()),
+                    Some(SessionState::PendingDiff { .. }) => {
+                        // PendingDiff cancellation should come via DiffCancelled message
+                        tracing::warn!(
+                            "Unexpected Cancelled output for PendingDiff session: {:?}",
+                            session_id
+                        );
+                        return Ok(());
+                    }
                     _ => {
                         tracing::warn!(
                             "Config mode cancelled for unknown session: {:?}",
@@ -316,11 +358,12 @@ impl ConfigAgent {
         cx: &JrConnectionCx<AgentToClient>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
-        let workspace_path = &request.cwd;
+        // Clone workspace_path upfront so we can move request later
+        let workspace_path = request.cwd.clone();
 
         // Load configuration for this workspace
         let config = self
-            .load_config(workspace_path)
+            .load_config(&workspace_path)
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
         match config {
@@ -336,12 +379,12 @@ impl ConfigAgent {
                 let workspace_recs = self
                     .recommendations
                     .as_ref()
-                    .map(|r| r.for_workspace(workspace_path));
+                    .map(|r| r.for_workspace(&workspace_path));
 
                 // Spawn the config mode actor with None config (triggers initial setup)
                 let actor_handle = ConfigModeHandle::spawn(
                     None,
-                    workspace_path.to_path_buf(),
+                    workspace_path.clone(),
                     workspace_recs,
                     self.default_agent_override.clone(),
                     session_id.clone(),
@@ -354,7 +397,7 @@ impl ConfigAgent {
                     session_id,
                     SessionState::Config {
                         actor: actor_handle,
-                        workspace_path: workspace_path.to_path_buf(),
+                        workspace_path,
                         return_to: None,
                     },
                 );
@@ -362,10 +405,42 @@ impl ConfigAgent {
                 Ok(())
             }
             Some(config) => {
-                // Send to uberconductor - it will get/create a conductor and forward the request.
-                // The conductor will send NewSessionCreated back to us when done.
+                // Check for recommendation diff
+                if let Some(ref recs) = self.recommendations {
+                    let workspace_recs = recs.for_workspace(&workspace_path);
+                    let diff = RecommendationDiff::compute(&workspace_recs, &config);
+
+                    if diff.has_changes() {
+                        // We have changes to present - spawn diff-only actor
+                        let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
+
+                        // Don't respond yet - wait for diff resolution.
+                        // The actor will send DiffCompleted/DiffCancelled with the request info.
+                        let actor_handle = ConfigModeHandle::spawn_diff_only(
+                            config,
+                            workspace_path.clone(),
+                            workspace_recs,
+                            session_id.clone(),
+                            config_agent_tx.clone(),
+                            request,
+                            request_cx,
+                            cx,
+                        )?;
+
+                        self.sessions.insert(
+                            session_id,
+                            SessionState::PendingDiff {
+                                actor: actor_handle,
+                            },
+                        );
+
+                        return Ok(());
+                    }
+                }
+
+                // No diff changes - proceed directly to uberconductor
                 uberconductor
-                    .new_session(workspace_path.to_path_buf(), config, request, request_cx)
+                    .new_session(workspace_path, config, request, request_cx)
                     .await
             }
         }
@@ -389,6 +464,13 @@ impl ConfigAgent {
                 workspace_path,
             }) => (Some(conductor.clone()), workspace_path.clone()),
             Some(SessionState::Config { workspace_path, .. }) => (None, workspace_path.clone()),
+            Some(SessionState::PendingDiff { .. }) => {
+                // Can't enter config mode while diff is pending
+                return request_cx.respond_with_error(sacp::Error::new(
+                    -32600,
+                    "Cannot enter config mode while recommendation diff is pending",
+                ));
+            }
             None => {
                 return request_cx.respond_with_error(sacp::Error::new(-32600, "Unknown session"));
             }
@@ -481,7 +563,8 @@ impl ConfigAgent {
                     conductor.send_prompt(request, request_cx).await
                 }
             }
-            Some(SessionState::Config { actor, .. }) => {
+            Some(SessionState::Config { actor, .. })
+            | Some(SessionState::PendingDiff { actor, .. }) => {
                 // Forward input to the config mode actor
                 let input = Self::extract_prompt_text(&request);
                 if actor.send_input(input).await.is_err() {
@@ -519,8 +602,8 @@ impl ConfigAgent {
             Some(SessionState::Delegating { conductor, .. }) => {
                 conductor.forward_message(message).await
             }
-            Some(SessionState::Config { .. }) => {
-                // Config mode doesn't handle arbitrary messages
+            Some(SessionState::Config { .. }) | Some(SessionState::PendingDiff { .. }) => {
+                // Config mode and pending diff don't handle arbitrary messages
                 match message {
                     MessageCx::Request(req, request_cx) => {
                         request_cx.respond_with_error(sacp::Error::new(
@@ -640,6 +723,21 @@ pub enum ConfigAgentMessage {
 
     /// Output from a config mode actor.
     ConfigModeOutput(SessionId, ConfigModeOutput),
+
+    /// Diff-only mode completed - proceed with session creation.
+    /// The request_cx is passed here rather than stored in session state.
+    DiffCompleted {
+        session_id: SessionId,
+        workspace_path: PathBuf,
+        config: WorkspaceConfig,
+        pending_request: NewSessionRequest,
+        pending_request_cx: JrRequestCx<NewSessionResponse>,
+    },
+
+    /// Diff-only mode was cancelled.
+    DiffCancelled {
+        pending_request_cx: JrRequestCx<NewSessionResponse>,
+    },
 }
 
 impl Default for ConfigAgent {
