@@ -44,6 +44,7 @@ serde_jsonc = "1"
 shell-words = "1"
 dirs = "5"
 toml = "0.8"
+base64 = "0.22"
 
 # Registry
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
