@@ -366,41 +366,94 @@ pub async fn fetch_registry() -> Result<RegistryJson> {
 
 /// List all available agents (built-ins + registry)
 pub async fn list_agents() -> Result<Vec<AgentListEntry>> {
-    // Start with built-ins
-    let mut agents: Vec<AgentListEntry> = built_in_agents()?
-        .into_iter()
-        .map(|e| AgentListEntry {
-            id: e.id,
-            name: e.name,
-            version: if e.version.is_empty() {
-                None
-            } else {
-                Some(e.version)
+    let agents_with_sources = list_agents_with_sources().await?;
+    Ok(agents_with_sources.into_iter().map(|(entry, _)| entry).collect())
+}
+
+/// Agent selection entry - agent info paired with its ComponentSource for storage.
+#[derive(Debug, Clone)]
+pub struct AgentSelectionEntry {
+    pub id: String,
+    pub name: String,
+    pub source: ComponentSource,
+}
+
+/// List all available agents with their ComponentSource for selection UI.
+///
+/// Returns pairs of (AgentListEntry, ComponentSource) so the UI can display
+/// the agent info and store the appropriate ComponentSource when selected.
+pub async fn list_agents_with_sources() -> Result<Vec<(AgentListEntry, ComponentSource)>> {
+    let mut agents = Vec::new();
+
+    // Built-in agents - use their specific distribution as the source
+    for entry in built_in_agents()? {
+        let source = entry_to_component_source(&entry);
+        agents.push((
+            AgentListEntry {
+                id: entry.id,
+                name: entry.name,
+                version: if entry.version.is_empty() {
+                    None
+                } else {
+                    Some(entry.version)
+                },
+                description: entry.description,
             },
-            description: e.description,
-        })
-        .collect();
+            source,
+        ));
+    }
 
     // Fetch and merge registry agents
     let registry = fetch_registry().await?;
     for entry in registry.agents {
         // Skip if we already have this agent (built-in takes precedence)
-        if agents.iter().any(|a| a.id == entry.id) {
+        if agents.iter().any(|(a, _)| a.id == entry.id) {
             continue;
         }
-        agents.push(AgentListEntry {
-            id: entry.id,
-            name: entry.name,
-            version: if entry.version.is_empty() {
-                None
-            } else {
-                Some(entry.version)
+        let source = entry_to_component_source(&entry);
+        agents.push((
+            AgentListEntry {
+                id: entry.id,
+                name: entry.name,
+                version: if entry.version.is_empty() {
+                    None
+                } else {
+                    Some(entry.version)
+                },
+                description: entry.description,
             },
-            description: entry.description,
-        });
+            source,
+        ));
     }
 
     Ok(agents)
+}
+
+/// Convert a RegistryEntry to the appropriate ComponentSource.
+///
+/// Uses the entry's distribution to determine the most specific source type.
+fn entry_to_component_source(entry: &RegistryEntry) -> ComponentSource {
+    let dist = &entry.distribution;
+
+    // Use the most specific source based on distribution type
+    if let Some(local) = &dist.local {
+        ComponentSource::Local(local.clone())
+    } else if let Some(npx) = &dist.npx {
+        ComponentSource::Npx(npx.clone())
+    } else if let Some(pipx) = &dist.pipx {
+        ComponentSource::Pipx(pipx.clone())
+    } else if let Some(cargo) = &dist.cargo {
+        ComponentSource::Cargo(cargo.clone())
+    } else if let Some(binary) = &dist.binary {
+        // Convert HashMap to BTreeMap for ComponentSource
+        let btree: BTreeMap<String, BinaryDistribution> = binary.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        ComponentSource::Binary(btree)
+    } else {
+        // Fallback to registry ID if no distribution specified
+        ComponentSource::Registry(entry.id.clone())
+    }
 }
 
 /// Extension listing entry - what `registry list-extensions` outputs

@@ -14,6 +14,7 @@ mod uberconductor_actor;
 mod tests;
 
 use crate::recommendations::Recommendations;
+use crate::registry::ComponentSource;
 use crate::user_config::WorkspaceConfig;
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
@@ -84,6 +85,9 @@ pub struct ConfigAgent {
 
     /// Recommendations for initial setup. Loaded once on startup.
     recommendations: Option<Recommendations>,
+
+    /// Override for the default agent (for testing). If set, bypasses GlobalAgentConfig::load().
+    default_agent_override: Option<ComponentSource>,
 }
 
 impl ConfigAgent {
@@ -98,6 +102,7 @@ impl ConfigAgent {
             sessions: Default::default(),
             trace_dir: None,
             recommendations,
+            default_agent_override: None,
         }
     }
 
@@ -110,6 +115,13 @@ impl ConfigAgent {
     /// Set recommendations (for testing).
     pub fn with_recommendations(mut self, recommendations: Recommendations) -> Self {
         self.recommendations = Some(recommendations);
+        self
+    }
+
+    /// Set default agent override (for testing).
+    /// If set, bypasses GlobalAgentConfig::load() during initial setup.
+    pub fn with_default_agent(mut self, agent: ComponentSource) -> Self {
+        self.default_agent_override = Some(agent);
         self
     }
 
@@ -331,6 +343,7 @@ impl ConfigAgent {
                     None,
                     workspace_path.to_path_buf(),
                     workspace_recs,
+                    self.default_agent_override.clone(),
                     session_id.clone(),
                     config_agent_tx.clone(),
                     None, // No resume_tx for initial setup
@@ -404,6 +417,7 @@ impl ConfigAgent {
             current_config,
             workspace_path.clone(),
             workspace_recs,
+            self.default_agent_override.clone(),
             session_id.clone(),
             config_agent_tx.clone(),
             resume_tx,

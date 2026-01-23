@@ -97,7 +97,12 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Use test recommendations
     let recommendations = test_recommendations();
 
-    let agent = ConfigAgent::new().with_recommendations(recommendations);
+    // Get the agent from recommendations to use as default (bypasses GlobalAgentConfig::load())
+    let default_agent = recommendations.agent.as_ref().unwrap().source.clone();
+
+    let agent = ConfigAgent::new()
+        .with_recommendations(recommendations)
+        .with_default_agent(default_agent);
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -135,15 +140,34 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             let text = notifications.lock().unwrap().text();
             assert!(
                 text.contains("Welcome to Symposium!"),
-                "Expected welcome message"
+                "Expected welcome message, got: {}",
+                text
             );
             assert!(
-                text.contains("Created configuration from recommendations"),
-                "Expected config creation message"
+                text.contains("Using your default agent"),
+                "Expected default agent message, got: {}",
+                text
             );
-            assert!(text.contains("# Configuration"), "Expected config menu");
-            assert!(text.contains("eliza"), "Expected eliza agent in config");
-            assert!(text.contains("ferris"), "Expected ferris extension");
+            assert!(
+                text.contains("Configuration created with recommended extensions"),
+                "Expected config creation message, got: {}",
+                text
+            );
+            assert!(
+                text.contains("# Configuration"),
+                "Expected config menu, got: {}",
+                text
+            );
+            assert!(
+                text.contains("eliza"),
+                "Expected eliza agent in config, got: {}",
+                text
+            );
+            assert!(
+                text.contains("ferris"),
+                "Expected ferris extension, got: {}",
+                text
+            );
 
             // Save the configuration
             notifications.lock().unwrap().clear();

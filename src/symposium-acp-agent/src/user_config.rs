@@ -40,6 +40,65 @@ pub struct WorkspaceConfig {
     pub extensions: BTreeMap<String, ExtensionConfig>,
 }
 
+// ============================================================================
+// Global Agent Config (for default agent across workspaces)
+// ============================================================================
+
+/// Global agent configuration.
+///
+/// Stores the user's default agent choice. This is used to populate the initial
+/// agent for new workspaces. Each workspace can override this independently.
+///
+/// Stored at `~/.symposium/config/agent.json`
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GlobalAgentConfig {
+    /// The default agent to use for new workspaces
+    pub agent: ComponentSource,
+}
+
+impl GlobalAgentConfig {
+    /// Create a new global agent config
+    pub fn new(agent: ComponentSource) -> Self {
+        Self { agent }
+    }
+
+    /// Get the path to the global agent config file
+    pub fn path() -> Result<PathBuf> {
+        let home = dirs::home_dir().context("Could not determine home directory")?;
+        Ok(home.join(".symposium").join("config").join("agent.json"))
+    }
+
+    /// Load the global agent config. Returns None if it doesn't exist.
+    pub fn load() -> Result<Option<Self>> {
+        let path = Self::path()?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
+        let config: Self = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
+        Ok(Some(config))
+    }
+
+    /// Save the global agent config
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path()?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
+        }
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, content)
+            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Workspace Config
+// ============================================================================
+
 impl WorkspaceConfig {
     /// Create a new workspace config with the given agent and extensions
     pub fn new(agent: ComponentSource, extensions: Vec<ComponentSource>) -> Self {

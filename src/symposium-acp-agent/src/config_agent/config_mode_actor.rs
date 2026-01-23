@@ -6,8 +6,8 @@
 
 use super::ConfigAgentMessage;
 use crate::recommendations::WorkspaceRecommendations;
-use crate::registry::ComponentSource;
-use crate::user_config::WorkspaceConfig;
+use crate::registry::{list_agents_with_sources, ComponentSource};
+use crate::user_config::{GlobalAgentConfig, WorkspaceConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -66,10 +66,14 @@ impl ConfigModeHandle {
     /// The `resume_tx` is an optional oneshot sender that, when dropped, will
     /// signal the conductor to resume processing. If provided, it will be
     /// dropped when the actor exits (either save or cancel).
+    ///
+    /// The `default_agent_override` is used for testing - if Some, it bypasses
+    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
     pub fn spawn(
         config: Option<WorkspaceConfig>,
         workspace_path: PathBuf,
         recommendations: Option<WorkspaceRecommendations>,
+        default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
@@ -82,6 +86,7 @@ impl ConfigModeHandle {
             config,
             workspace_path,
             recommendations,
+            default_agent_override,
             session_id,
             config_agent_tx,
             rx,
@@ -110,6 +115,9 @@ struct ConfigModeActor {
     workspace_path: PathBuf,
     /// Recommendations for this workspace.
     recommendations: Option<WorkspaceRecommendations>,
+    /// Override for the global agent config. If Some, bypasses GlobalAgentConfig::load().
+    /// Used for testing.
+    default_agent_override: Option<ComponentSource>,
     session_id: SessionId,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     rx: mpsc::Receiver<ConfigModeInput>,
@@ -121,27 +129,63 @@ struct ConfigModeActor {
 impl ConfigModeActor {
     /// Main entry point - runs the actor.
     async fn run(mut self) -> Result<(), sacp::Error> {
-        // If no config exists (initial setup), create from recommendations
+        // If no config exists (initial setup), we need to set up
         let mut config = match self.config.take() {
             Some(config) => config,
             None => {
-                self.send_message(
-                    "Welcome to Symposium!\n\n\
-                     No configuration found. Setting up your workspace.\n",
-                );
-                match self.create_initial_config() {
-                    Some(config) => {
-                        self.send_message("Created configuration from recommendations.\n");
-                        config
+                self.send_message("Welcome to Symposium!\n\n");
+
+                // Check for global agent config (or use override for testing)
+                let global_agent = if let Some(agent) = self.default_agent_override.take() {
+                    Some(agent)
+                } else {
+                    match GlobalAgentConfig::load() {
+                        Ok(Some(global)) => Some(global.agent),
+                        Ok(None) => None,
+                        Err(e) => {
+                            tracing::warn!("Failed to load global agent config: {}", e);
+                            None
+                        }
+                    }
+                };
+
+                let agent = match global_agent {
+                    Some(agent) => {
+                        self.send_message(&format!(
+                            "Using your default agent: **{}**\n\n",
+                            agent.display_name()
+                        ));
+                        agent
                     }
                     None => {
-                        self.send_message(
-                            "No recommendations available. Cannot create configuration.\n",
-                        );
-                        self.cancelled();
-                        return Ok(());
+                        // No global agent - need to select one
+                        self.send_message("No default agent configured. Let's choose one.\n\n");
+                        match self.select_agent().await {
+                            Some(agent) => {
+                                // Save as global default
+                                if let Err(e) = GlobalAgentConfig::new(agent.clone()).save() {
+                                    tracing::warn!("Failed to save global agent config: {}", e);
+                                }
+                                agent
+                            }
+                            None => {
+                                self.send_message("Agent selection cancelled.\n");
+                                self.cancelled();
+                                return Ok(());
+                            }
+                        }
                     }
-                }
+                };
+
+                // Create config with selected agent and recommended extensions
+                let extensions = self
+                    .recommendations
+                    .as_ref()
+                    .map(|r| r.extension_sources())
+                    .unwrap_or_default();
+
+                self.send_message("Configuration created with recommended extensions.\n\n");
+                WorkspaceConfig::new(agent, extensions)
             }
         };
 
@@ -150,7 +194,61 @@ impl ConfigModeActor {
         Ok(())
     }
 
-    /// Create initial configuration from recommendations.
+    /// Prompt user to select an agent from the registry.
+    /// Returns None if cancelled or an error occurred.
+    async fn select_agent(&mut self) -> Option<ComponentSource> {
+        self.send_message("Fetching available agents...\n");
+
+        let agents = match list_agents_with_sources().await {
+            Ok(agents) => agents,
+            Err(e) => {
+                self.send_message(&format!("Failed to fetch agents: {}\n", e));
+                return None;
+            }
+        };
+
+        if agents.is_empty() {
+            self.send_message("No agents available.\n");
+            return None;
+        }
+
+        // Show the list
+        let mut msg = String::new();
+        msg.push_str("# Select an Agent\n\n");
+        for (i, (entry, _)) in agents.iter().enumerate() {
+            msg.push_str(&format!("{}. {}\n", i + 1, entry.name));
+        }
+        msg.push_str("\nEnter a number to select, or `cancel` to abort:\n");
+        self.send_message(msg);
+
+        // Wait for selection
+        loop {
+            let Some(input) = self.next_input().await else {
+                return None;
+            };
+            let input = input.trim();
+
+            if input.eq_ignore_ascii_case("cancel") {
+                return None;
+            }
+
+            if let Ok(idx) = input.parse::<usize>() {
+                if idx >= 1 && idx <= agents.len() {
+                    let (entry, source) = &agents[idx - 1];
+                    self.send_message(&format!("Selected: **{}**\n\n", entry.name));
+                    return Some(source.clone());
+                }
+            }
+
+            self.send_message(&format!(
+                "Invalid selection. Please enter 1-{} or `cancel`.\n",
+                agents.len()
+            ));
+        }
+    }
+
+    /// Create initial configuration from recommendations (legacy, now unused).
+    #[allow(dead_code)]
     fn create_initial_config(&self) -> Option<WorkspaceConfig> {
         let recs = self.recommendations.as_ref()?;
 
@@ -254,6 +352,26 @@ impl ConfigModeActor {
             return MenuAction::Done;
         }
 
+        // Change agent
+        if text_upper == "A" || text_upper == "AGENT" {
+            if let Some(new_agent) = self.select_agent().await {
+                config.agent = new_agent.clone();
+                // Also update global agent config
+                if let Err(e) = GlobalAgentConfig::new(new_agent.clone()).save() {
+                    tracing::warn!("Failed to save global agent config: {}", e);
+                    self.send_message(&format!(
+                        "Note: Could not save as default agent: {}\n",
+                        e
+                    ));
+                } else {
+                    self.send_message("Updated default agent for future workspaces.\n");
+                }
+                return MenuAction::Redisplay;
+            }
+            // Selection was cancelled, just redisplay menu
+            return MenuAction::Redisplay;
+        }
+
         let extensions = self.get_extension_list(config);
 
         // Toggle extension by index (1-based)
@@ -330,6 +448,7 @@ impl ConfigModeActor {
 
         // Commands
         msg.push_str("# Commands\n\n");
+        msg.push_str("- `a` - Change agent\n");
         if !extensions.is_empty() {
             msg.push_str("- `1`, `2`, ... - Toggle extension enabled/disabled\n");
         }
