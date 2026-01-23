@@ -209,22 +209,29 @@ impl WorkspaceConfig {
 }
 
 /// Encode a path for use as a directory name.
-/// Uses base64 with URL-safe characters.
+///
+/// Format: `{last_component}-{truncated_sha256_hash}`
+/// Example: `symposium-e3b0c44298fc1c14`
 fn encode_path(path: &Path) -> String {
-    use base64::Engine;
-    let path_str = path.to_string_lossy();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(path_str.as_bytes())
-}
+    use sha2::{Digest, Sha256};
 
-/// Decode a directory name back to a path.
-#[allow(dead_code)]
-fn decode_path(encoded: &str) -> Result<PathBuf> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(encoded)
-        .context("Failed to decode path")?;
-    let path_str = String::from_utf8(bytes).context("Path is not valid UTF-8")?;
-    Ok(PathBuf::from(path_str))
+    let path_str = path.to_string_lossy();
+
+    // Get the last path component (or "root" for paths like "/")
+    let last_component = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("root");
+
+    // Hash the full path
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let hash = hasher.finalize();
+
+    // Format first 8 bytes (16 hex chars) of hash
+    let hash_hex: String = hash.iter().take(8).map(|b| format!("{:02x}", b)).collect();
+
+    format!("{}-{}", last_component, hash_hex)
 }
 
 // ============================================================================
@@ -399,11 +406,22 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_path() {
-        let original = PathBuf::from("/Users/test/my-project");
-        let encoded = encode_path(&original);
-        let decoded = decode_path(&encoded).unwrap();
-        assert_eq!(original, decoded);
+    fn test_encode_path() {
+        let path = PathBuf::from("/Users/test/my-project");
+        let encoded = encode_path(&path);
+
+        // Should be in format: last_component-truncated_sha256_hash
+        assert!(encoded.starts_with("my-project-"), "Should start with last component");
+        assert_eq!(encoded.len(), "my-project-".len() + 16, "Hash should be 16 hex chars");
+
+        // Same path should produce same encoding
+        let encoded2 = encode_path(&path);
+        assert_eq!(encoded, encoded2);
+
+        // Different path should produce different encoding
+        let other_path = PathBuf::from("/Users/test/other-project");
+        let other_encoded = encode_path(&other_path);
+        assert_ne!(encoded, other_encoded);
     }
 
     #[test]
