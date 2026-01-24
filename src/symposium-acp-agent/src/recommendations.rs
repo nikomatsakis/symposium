@@ -6,7 +6,9 @@
 
 use crate::registry::ComponentSource;
 use anyhow::{Context, Result};
+use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// Built-in recommendations TOML, embedded at compile time
@@ -174,6 +176,74 @@ impl GrepCondition {
     }
 }
 
+/// Check if a crate is a direct dependency of the workspace.
+///
+/// Battery packs (crates ending in `-battery-pack`) are "transparent" - we also
+/// check their dependencies recursively. This means if your workspace depends on
+/// `cli-battery-pack` which depends on `clap`, then `using-crate = "clap"` will match.
+fn is_using_crate(workspace_path: &Path, crate_name: &str) -> bool {
+    let metadata = match MetadataCommand::new()
+        .current_dir(workspace_path)
+        .no_deps() // We only need workspace members initially
+        .exec()
+    {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    // We need the full metadata to resolve battery pack dependencies
+    let full_metadata = match MetadataCommand::new()
+        .current_dir(workspace_path)
+        .exec()
+    {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    let mut visited = HashSet::new();
+
+    // Check direct dependencies of all workspace members
+    for member_id in &metadata.workspace_members {
+        if let Some(package) = full_metadata.packages.iter().find(|p| &p.id == member_id) {
+            if has_dependency_recursive(&full_metadata, package, crate_name, &mut visited) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Recursively check if a package has a dependency on the given crate.
+/// Battery packs are transparent - we recurse into their dependencies.
+fn has_dependency_recursive(
+    metadata: &Metadata,
+    package: &Package,
+    crate_name: &str,
+    visited: &mut HashSet<PackageId>,
+) -> bool {
+    for dep in &package.dependencies {
+        // Check if this dependency matches
+        if dep.name == crate_name {
+            return true;
+        }
+
+        // If it's a battery pack, recurse into its dependencies
+        if dep.name.ends_with("-battery-pack") {
+            // Find the resolved package for this dependency
+            if let Some(dep_package) = metadata.packages.iter().find(|p| p.name == dep.name) {
+                if visited.insert(dep_package.id.clone()) {
+                    if has_dependency_recursive(metadata, dep_package, crate_name, visited) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
 impl When {
     /// Check if this condition is met for the given workspace
     pub fn is_met(&self, workspace_path: &Path) -> bool {
@@ -199,22 +269,20 @@ impl When {
         }
 
         // using-crate
-        if let Some(_crate_name) = &self.using_crate {
+        if let Some(crate_name) = &self.using_crate {
             conditions_checked = true;
-            // TODO: Implement Cargo.lock parsing to check if crate is a dependency
-            // For now, just check if Cargo.toml exists (basic heuristic)
-            if !workspace_path.join("Cargo.toml").exists() {
+            if !is_using_crate(workspace_path, crate_name) {
                 return false;
             }
         }
 
         // using-crates (all must be dependencies)
-        if let Some(_crate_names) = &self.using_crates {
+        if let Some(crate_names) = &self.using_crates {
             conditions_checked = true;
-            // TODO: Implement Cargo.lock parsing to check if all crates are dependencies
-            // For now, just check if Cargo.toml exists (basic heuristic)
-            if !workspace_path.join("Cargo.toml").exists() {
-                return false;
+            for crate_name in crate_names {
+                if !is_using_crate(workspace_path, crate_name) {
+                    return false;
+                }
             }
         }
 
@@ -425,7 +493,6 @@ impl WorkspaceRecommendations {
 // ============================================================================
 
 use crate::user_config::WorkspaceConfig;
-use std::collections::HashSet;
 
 /// A new recommendation that isn't in the user's config yet
 #[derive(Debug, Clone)]
@@ -668,6 +735,7 @@ impl RecommendationDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_load_builtin_recommendations() {
@@ -1088,5 +1156,131 @@ when.grep = { pattern = "println!", path = "**/*.rs" }
         )
         .unwrap();
         assert!(grep.is_met(temp_dir.path()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_using_crate_condition() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a minimal Cargo project
+        std::fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "test-project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1"
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+
+        // Test using-crate condition
+        let when = When {
+            using_crate: Some("serde".to_string()),
+            ..Default::default()
+        };
+        assert!(when.is_met(temp_dir.path()));
+
+        // Test crate that's not a dependency
+        let when = When {
+            using_crate: Some("tokio".to_string()),
+            ..Default::default()
+        };
+        assert!(!when.is_met(temp_dir.path()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_using_crates_condition() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a minimal Cargo project with multiple deps
+        std::fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "test-project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1"
+anyhow = "1"
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+
+        // Both crates are dependencies
+        let when = When {
+            using_crates: Some(vec!["serde".to_string(), "anyhow".to_string()]),
+            ..Default::default()
+        };
+        assert!(when.is_met(temp_dir.path()));
+
+        // One crate is missing
+        let when = When {
+            using_crates: Some(vec!["serde".to_string(), "tokio".to_string()]),
+            ..Default::default()
+        };
+        assert!(!when.is_met(temp_dir.path()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_using_crate_in_recommendation() {
+        let toml = r#"
+[[recommendation]]
+source.builtin = "serde-helper"
+when.using-crate = "serde"
+"#;
+
+        let recs = Recommendations::from_toml(toml).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a project without serde
+        std::fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "test-project"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 0);
+
+        // Add serde dependency
+        std::fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "test-project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1"
+"#,
+        )
+        .unwrap();
+
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 1);
+        assert_eq!(workspace_recs.extensions[0].display_name(), "serde-helper");
     }
 }
