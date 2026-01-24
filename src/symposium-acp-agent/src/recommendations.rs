@@ -108,9 +108,70 @@ pub struct GrepCondition {
     /// Pattern to search for
     pub pattern: String,
 
-    /// Path glob to search in (defaults to "*")
+    /// Path glob to search in (defaults to "**/*")
     #[serde(default)]
     pub path: Option<String>,
+}
+
+impl GrepCondition {
+    /// Check if the pattern is found in files matching the path glob
+    fn is_met(&self, workspace_path: &Path) -> bool {
+        use ignore::WalkBuilder;
+        use regex::Regex;
+        use std::fs;
+
+        // Compile the regex pattern
+        let regex = match Regex::new(&self.pattern) {
+            Ok(r) => r,
+            Err(_) => return false, // Invalid regex pattern
+        };
+
+        // Build a walker that respects .gitignore
+        let walker = WalkBuilder::new(workspace_path)
+            .hidden(true) // Skip hidden files by default
+            .git_ignore(true) // Respect .gitignore
+            .git_global(true) // Respect global gitignore
+            .git_exclude(true) // Respect .git/info/exclude
+            .build();
+
+        // Get the path glob pattern (default to matching everything)
+        let glob_pattern = self.path.as_deref().unwrap_or("**/*");
+
+        // Compile the glob pattern
+        let glob = match glob::Pattern::new(glob_pattern) {
+            Ok(g) => g,
+            Err(_) => return false, // Invalid glob pattern
+        };
+
+        for entry in walker.flatten() {
+            let path = entry.path();
+
+            // Skip directories
+            if path.is_dir() {
+                continue;
+            }
+
+            // Check if path matches the glob pattern
+            // We match against the path relative to workspace
+            let relative_path = match path.strip_prefix(workspace_path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if !glob.matches_path(relative_path) {
+                continue;
+            }
+
+            // Read file contents and search for pattern
+            if let Ok(contents) = fs::read_to_string(path) {
+                if regex.is_match(&contents) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl When {
@@ -158,10 +219,11 @@ impl When {
         }
 
         // grep
-        if let Some(_grep) = &self.grep {
+        if let Some(grep) = &self.grep {
             conditions_checked = true;
-            // TODO: Implement file content searching
-            // For now, always return true (we checked that it's specified)
+            if !grep.is_met(workspace_path) {
+                return false;
+            }
         }
 
         // any (OR - at least one must match)
@@ -919,5 +981,112 @@ when.files-exist = ["src/lib.rs"]
 
         let stale = when.explain_why_stale();
         assert_eq!(stale, vec!["because `Cargo.toml` no longer exists"]);
+    }
+
+    #[test]
+    fn test_grep_condition() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a file with specific content
+        std::fs::write(
+            temp_dir.path().join("test.rs"),
+            r#"
+fn main() {
+    println!("Hello, world!");
+}
+"#,
+        )
+        .unwrap();
+
+        // Pattern that matches
+        let grep = GrepCondition {
+            pattern: r"println!".to_string(),
+            path: Some("**/*.rs".to_string()),
+        };
+        assert!(grep.is_met(temp_dir.path()));
+
+        // Pattern that doesn't match
+        let grep = GrepCondition {
+            pattern: r"eprintln!".to_string(),
+            path: Some("**/*.rs".to_string()),
+        };
+        assert!(!grep.is_met(temp_dir.path()));
+
+        // Path glob that doesn't match the file
+        let grep = GrepCondition {
+            pattern: r"println!".to_string(),
+            path: Some("**/*.py".to_string()),
+        };
+        assert!(!grep.is_met(temp_dir.path()));
+
+        // Default path (matches any file)
+        let grep = GrepCondition {
+            pattern: r"println!".to_string(),
+            path: None,
+        };
+        assert!(grep.is_met(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_grep_condition_in_recommendation() {
+        let toml = r#"
+[[recommendation]]
+source.builtin = "rust-println"
+when.grep = { pattern = "println!", path = "**/*.rs" }
+"#;
+
+        let recs = Recommendations::from_toml(toml).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // No matching files
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 0);
+
+        // Create a matching file
+        std::fs::write(
+            temp_dir.path().join("main.rs"),
+            r#"fn main() { println!("hi"); }"#,
+        )
+        .unwrap();
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 1);
+    }
+
+    #[test]
+    fn test_grep_respects_gitignore() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Initialize as a git repository so .gitignore is respected
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git init should succeed");
+
+        // Create a .gitignore
+        std::fs::write(temp_dir.path().join(".gitignore"), "ignored/\n").unwrap();
+
+        // Create an ignored directory with a matching file
+        std::fs::create_dir(temp_dir.path().join("ignored")).unwrap();
+        std::fs::write(
+            temp_dir.path().join("ignored/test.rs"),
+            "fn main() { secret_pattern!(); }",
+        )
+        .unwrap();
+
+        // Search for pattern that only exists in ignored file
+        let grep = GrepCondition {
+            pattern: r"secret_pattern!".to_string(),
+            path: Some("**/*.rs".to_string()),
+        };
+        assert!(!grep.is_met(temp_dir.path()));
+
+        // Create a non-ignored file with the pattern
+        std::fs::write(
+            temp_dir.path().join("main.rs"),
+            "fn main() { secret_pattern!(); }",
+        )
+        .unwrap();
+        assert!(grep.is_met(temp_dir.path()));
     }
 }
