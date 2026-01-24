@@ -1,13 +1,12 @@
 //! Recommendations - what components to suggest for a workspace
 //!
-//! This module handles recommending agents and extensions based on workspace
+//! This module handles recommending extensions based on workspace
 //! characteristics. Recommendations are loaded from a built-in TOML file that
 //! is embedded in the binary.
 
-use crate::registry::{CargoDistribution, ComponentSource, NpxDistribution};
+use crate::registry::ComponentSource;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Built-in recommendations TOML, embedded at compile time
@@ -19,45 +18,31 @@ pub struct Recommendation {
     /// The source of the component (this IS the identity)
     pub source: ComponentSource,
 
-    /// Human-readable name for display
-    #[serde(default)]
-    pub name: Option<String>,
-
-    /// Description of what this component does
-    #[serde(default)]
-    pub description: Option<String>,
-
     /// Conditions that must be met for this recommendation to apply
     #[serde(default)]
-    pub conditions: Vec<Condition>,
-
-    /// Priority for ordering (higher = more important, shown first)
-    #[serde(default)]
-    pub priority: i32,
+    pub when: Option<When>,
 }
 
 impl Recommendation {
     /// Get the display name for this recommendation
     pub fn display_name(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| self.source.display_name())
+        self.source.display_name()
     }
 
     /// Explain why this recommendation should be added (for new recommendations)
     pub fn explain_why_added(&self) -> Vec<String> {
-        self.conditions
-            .iter()
-            .filter_map(|c| c.explain_why_added())
-            .collect()
+        self.when
+            .as_ref()
+            .map(|w| w.explain_why_added())
+            .unwrap_or_default()
     }
 
     /// Explain why this recommendation is stale (for removed recommendations)
     pub fn explain_why_stale(&self) -> Vec<String> {
-        self.conditions
-            .iter()
-            .filter_map(|c| c.explain_why_stale())
-            .collect()
+        self.when
+            .as_ref()
+            .map(|w| w.explain_why_stale())
+            .unwrap_or_default()
     }
 
     /// Format explanation for display (joins all reasons)
@@ -82,129 +67,241 @@ impl Recommendation {
 }
 
 /// Conditions for when a recommendation applies
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Condition {
-    /// File exists in the workspace root
-    FileExists { path: String },
+///
+/// Multiple fields at the same level are combined with AND.
+/// Use `any` for OR logic, `all` for explicit AND grouping.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct When {
+    /// Single file must exist in workspace root
+    #[serde(default)]
+    pub file_exists: Option<String>,
 
-    /// File matches a glob pattern anywhere in workspace
-    GlobMatches { pattern: String },
+    /// All files must exist in workspace root (AND)
+    #[serde(default)]
+    pub files_exist: Option<Vec<String>>,
 
-    /// Always recommend (unconditional)
-    Always,
+    /// Single crate must be a dependency
+    #[serde(default)]
+    pub using_crate: Option<String>,
+
+    /// All crates must be dependencies (AND)
+    #[serde(default)]
+    pub using_crates: Option<Vec<String>>,
+
+    /// Pattern must match in files
+    #[serde(default)]
+    pub grep: Option<GrepCondition>,
+
+    /// Any of these conditions must match (OR)
+    #[serde(default)]
+    pub any: Option<Vec<When>>,
+
+    /// All of these conditions must match (explicit AND)
+    #[serde(default)]
+    pub all: Option<Vec<When>>,
 }
 
-impl Condition {
+/// Condition for grep pattern matching
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrepCondition {
+    /// Pattern to search for
+    pub pattern: String,
+
+    /// Path glob to search in (defaults to "*")
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+impl When {
     /// Check if this condition is met for the given workspace
     pub fn is_met(&self, workspace_path: &Path) -> bool {
-        match self {
-            Condition::Always => true,
-            Condition::FileExists { path } => workspace_path.join(path).exists(),
-            Condition::GlobMatches { pattern } => {
-                // For now, just check if the pattern file exists at root
-                // TODO: Implement proper glob matching
-                workspace_path.join(pattern).exists()
+        // All specified conditions must be true (AND semantics)
+        let mut conditions_checked = false;
+
+        // file-exists
+        if let Some(path) = &self.file_exists {
+            conditions_checked = true;
+            if !workspace_path.join(path).exists() {
+                return false;
             }
         }
+
+        // files-exist (all must exist)
+        if let Some(paths) = &self.files_exist {
+            conditions_checked = true;
+            for path in paths {
+                if !workspace_path.join(path).exists() {
+                    return false;
+                }
+            }
+        }
+
+        // using-crate
+        if let Some(_crate_name) = &self.using_crate {
+            conditions_checked = true;
+            // TODO: Implement Cargo.lock parsing to check if crate is a dependency
+            // For now, just check if Cargo.toml exists (basic heuristic)
+            if !workspace_path.join("Cargo.toml").exists() {
+                return false;
+            }
+        }
+
+        // using-crates (all must be dependencies)
+        if let Some(_crate_names) = &self.using_crates {
+            conditions_checked = true;
+            // TODO: Implement Cargo.lock parsing to check if all crates are dependencies
+            // For now, just check if Cargo.toml exists (basic heuristic)
+            if !workspace_path.join("Cargo.toml").exists() {
+                return false;
+            }
+        }
+
+        // grep
+        if let Some(_grep) = &self.grep {
+            conditions_checked = true;
+            // TODO: Implement file content searching
+            // For now, always return true (we checked that it's specified)
+        }
+
+        // any (OR - at least one must match)
+        if let Some(conditions) = &self.any {
+            conditions_checked = true;
+            if !conditions.iter().any(|c| c.is_met(workspace_path)) {
+                return false;
+            }
+        }
+
+        // all (explicit AND - all must match)
+        if let Some(conditions) = &self.all {
+            conditions_checked = true;
+            if !conditions.iter().all(|c| c.is_met(workspace_path)) {
+                return false;
+            }
+        }
+
+        // If no conditions were specified, always recommend
+        if !conditions_checked {
+            return true;
+        }
+
+        true
     }
 
     /// Explain why this condition causes a recommendation to be added
-    pub fn explain_why_added(&self) -> Option<String> {
-        match self {
-            Condition::Always => None,
-            Condition::FileExists { path } => Some(format!("because a file `{path}` exists")),
-            Condition::GlobMatches { pattern } => {
-                Some(format!("because files matching `{pattern}` exist"))
+    pub fn explain_why_added(&self) -> Vec<String> {
+        let mut reasons = Vec::new();
+
+        if let Some(path) = &self.file_exists {
+            reasons.push(format!("because `{path}` exists"));
+        }
+
+        if let Some(paths) = &self.files_exist {
+            for path in paths {
+                reasons.push(format!("because `{path}` exists"));
             }
         }
+
+        if let Some(crate_name) = &self.using_crate {
+            reasons.push(format!("because using crate `{crate_name}`"));
+        }
+
+        if let Some(crate_names) = &self.using_crates {
+            for name in crate_names {
+                reasons.push(format!("because using crate `{name}`"));
+            }
+        }
+
+        if let Some(grep) = &self.grep {
+            let path = grep.path.as_deref().unwrap_or("*");
+            reasons.push(format!("because `{}` found in `{}`", grep.pattern, path));
+        }
+
+        if let Some(conditions) = &self.any {
+            // For 'any', just list one that matches
+            for c in conditions {
+                let sub_reasons = c.explain_why_added();
+                if !sub_reasons.is_empty() {
+                    reasons.extend(sub_reasons);
+                    break; // Only need to explain one matching condition
+                }
+            }
+        }
+
+        if let Some(conditions) = &self.all {
+            for c in conditions {
+                reasons.extend(c.explain_why_added());
+            }
+        }
+
+        reasons
     }
 
     /// Explain why this condition causes a recommendation to be stale
-    pub fn explain_why_stale(&self) -> Option<String> {
-        match self {
-            Condition::Always => None,
-            Condition::FileExists { path } => Some(format!("because no file `{path}` exists")),
-            Condition::GlobMatches { pattern } => {
-                Some(format!("because no files matching `{pattern}` exist"))
+    pub fn explain_why_stale(&self) -> Vec<String> {
+        let mut reasons = Vec::new();
+
+        if let Some(path) = &self.file_exists {
+            reasons.push(format!("because `{path}` no longer exists"));
+        }
+
+        if let Some(paths) = &self.files_exist {
+            for path in paths {
+                reasons.push(format!("because `{path}` no longer exists"));
             }
         }
+
+        if let Some(crate_name) = &self.using_crate {
+            reasons.push(format!("because no longer using crate `{crate_name}`"));
+        }
+
+        if let Some(crate_names) = &self.using_crates {
+            for name in crate_names {
+                reasons.push(format!("because no longer using crate `{name}`"));
+            }
+        }
+
+        if let Some(grep) = &self.grep {
+            let path = grep.path.as_deref().unwrap_or("*");
+            reasons.push(format!(
+                "because `{}` no longer found in `{}`",
+                grep.pattern, path
+            ));
+        }
+
+        if let Some(conditions) = &self.any {
+            // For 'any', all must fail for it to be stale
+            for c in conditions {
+                reasons.extend(c.explain_why_stale());
+            }
+        }
+
+        if let Some(conditions) = &self.all {
+            // For 'all', any one failing makes it stale
+            for c in conditions {
+                let sub_reasons = c.explain_why_stale();
+                if !sub_reasons.is_empty() {
+                    reasons.extend(sub_reasons);
+                    break;
+                }
+            }
+        }
+
+        reasons
     }
 }
 
 /// The recommendations file format
 #[derive(Debug, Clone, Deserialize)]
 struct RecommendationsFile {
-    /// Default agent recommendation
-    #[serde(default)]
-    agent: Option<AgentRecommendation>,
-
-    /// Extension recommendations
-    #[serde(default)]
-    extensions: Vec<ExtensionRecommendation>,
-}
-
-/// Agent recommendation in TOML format
-#[derive(Debug, Clone, Deserialize)]
-struct AgentRecommendation {
-    /// NPX package (shorthand)
-    #[serde(default)]
-    npx: Option<String>,
-
-    /// Full source specification (alternative to shorthand)
-    #[serde(default)]
-    source: Option<ComponentSource>,
-
-    #[serde(default)]
-    name: Option<String>,
-
-    #[serde(default)]
-    description: Option<String>,
-}
-
-/// Extension recommendation in TOML format
-#[derive(Debug, Clone, Deserialize)]
-struct ExtensionRecommendation {
-    /// Builtin name (shorthand for ComponentSource::Builtin)
-    #[serde(default)]
-    builtin: Option<String>,
-
-    /// Cargo crate (shorthand for ComponentSource::Cargo)
-    #[serde(default)]
-    cargo: Option<CargoShorthand>,
-
-    /// Full source specification (alternative to shorthand)
-    #[serde(default)]
-    source: Option<ComponentSource>,
-
-    #[serde(default)]
-    name: Option<String>,
-
-    #[serde(default)]
-    description: Option<String>,
-
-    #[serde(default)]
-    conditions: Vec<Condition>,
-
-    #[serde(default)]
-    priority: i32,
-}
-
-/// Shorthand for cargo crate specification
-#[derive(Debug, Clone, Deserialize)]
-struct CargoShorthand {
-    #[serde(rename = "crate")]
-    crate_name: String,
-    #[serde(default)]
-    args: Vec<String>,
+    /// Recommendations list
+    #[serde(rename = "recommendation")]
+    recommendations: Vec<Recommendation>,
 }
 
 /// Loaded recommendations
 #[derive(Debug, Clone)]
 pub struct Recommendations {
-    /// The recommended agent
-    pub agent: Option<Recommendation>,
-
     /// All extension recommendations
     pub extensions: Vec<Recommendation>,
 }
@@ -212,10 +309,7 @@ pub struct Recommendations {
 impl Recommendations {
     /// Create empty recommendations (for testing)
     pub fn empty() -> Self {
-        Self {
-            agent: None,
-            extensions: vec![],
-        }
+        Self { extensions: vec![] }
     }
 
     /// Load the built-in recommendations
@@ -224,98 +318,31 @@ impl Recommendations {
     }
 
     /// Parse recommendations from TOML string
-    fn from_toml(toml_str: &str) -> Result<Self> {
+    pub fn from_toml(toml_str: &str) -> Result<Self> {
         let file: RecommendationsFile =
             toml::from_str(toml_str).context("Failed to parse recommendations TOML")?;
 
-        // Convert agent recommendation
-        let agent = file.agent.map(|a| {
-            let source = if let Some(npx) = a.npx {
-                ComponentSource::Npx(NpxDistribution {
-                    package: npx,
-                    args: vec![],
-                    env: BTreeMap::new(),
-                })
-            } else if let Some(source) = a.source {
-                source
-            } else {
-                // Default to Claude Code
-                ComponentSource::Npx(NpxDistribution {
-                    package: "@zed-industries/claude-code-acp@latest".to_string(),
-                    args: vec![],
-                    env: BTreeMap::new(),
-                })
-            };
-
-            Recommendation {
-                source,
-                name: a.name,
-                description: a.description,
-                conditions: vec![Condition::Always],
-                priority: 100, // Agent has highest priority
-            }
-        });
-
-        // Convert extension recommendations
-        let extensions = file
-            .extensions
-            .into_iter()
-            .map(|e| {
-                let source = if let Some(builtin) = e.builtin {
-                    ComponentSource::Builtin(builtin)
-                } else if let Some(cargo) = e.cargo {
-                    ComponentSource::Cargo(CargoDistribution {
-                        crate_name: cargo.crate_name,
-                        version: None,
-                        binary: None,
-                        args: cargo.args,
-                    })
-                } else if let Some(source) = e.source {
-                    source
-                } else {
-                    // This shouldn't happen with valid TOML
-                    ComponentSource::Builtin("unknown".to_string())
-                };
-
-                Recommendation {
-                    source,
-                    name: e.name,
-                    description: e.description,
-                    conditions: if e.conditions.is_empty() {
-                        vec![Condition::Always]
-                    } else {
-                        e.conditions
-                    },
-                    priority: e.priority,
-                }
-            })
-            .collect();
-
-        Ok(Self { agent, extensions })
+        Ok(Self {
+            extensions: file.recommendations,
+        })
     }
 
     /// Get recommendations that apply to a specific workspace
     pub fn for_workspace(&self, workspace_path: &Path) -> WorkspaceRecommendations {
-        let agent = self.agent.clone();
-
-        let mut extensions: Vec<Recommendation> = self
+        let extensions: Vec<Recommendation> = self
             .extensions
             .iter()
-            .filter(|r| r.conditions.iter().all(|c| c.is_met(workspace_path)))
+            .filter(|r| r.when.as_ref().map(|w| w.is_met(workspace_path)).unwrap_or(true))
             .cloned()
             .collect();
 
-        // Sort by priority (highest first)
-        extensions.sort_by(|a, b| b.priority.cmp(&a.priority));
-
-        WorkspaceRecommendations { agent, extensions }
+        WorkspaceRecommendations { extensions }
     }
 }
 
 /// Recommendations filtered for a specific workspace
 #[derive(Debug, Clone)]
 pub struct WorkspaceRecommendations {
-    pub agent: Option<Recommendation>,
     pub extensions: Vec<Recommendation>,
 }
 
@@ -360,7 +387,10 @@ impl NewRecommendation {
             if reasons.is_empty() {
                 String::new()
             } else {
-                format!("[even though {}]", reasons.join(", ").trim_start_matches("because "))
+                format!(
+                    "[even though {}]",
+                    reasons.join(", ").trim_start_matches("because ")
+                )
             }
         };
 
@@ -378,7 +408,7 @@ pub struct StaleExtension {
     /// The component source
     pub source: ComponentSource,
     /// The conditions that originally caused this to be recommended
-    pub conditions: Vec<Condition>,
+    pub when: Option<When>,
 }
 
 impl StaleExtension {
@@ -386,10 +416,10 @@ impl StaleExtension {
     pub fn format_display(&self) -> String {
         let name = self.source.display_name();
         let reasons: Vec<String> = self
-            .conditions
-            .iter()
-            .filter_map(|c| c.explain_why_stale())
-            .collect();
+            .when
+            .as_ref()
+            .map(|w| w.explain_why_stale())
+            .unwrap_or_default();
 
         if reasons.is_empty() {
             format!("- {} is stale", name)
@@ -439,8 +469,8 @@ impl RecommendationDiff {
             .filter(|key| !recommended_sources.contains(*key))
             .filter_map(|key| {
                 let source = ComponentSource::from_config_key(key).ok()?;
-                let conditions = config.extension_conditions(&source);
-                Some(StaleExtension { source, conditions })
+                let when = config.extension_when(&source);
+                Some(StaleExtension { source, when })
             })
             .collect();
 
@@ -533,10 +563,10 @@ impl RecommendationDiff {
     pub fn apply_save(&self, config: &mut WorkspaceConfig) {
         // Add new recommendations
         for rec in &self.new {
-            config.add_extension_with_conditions(
+            config.add_extension_with_when(
                 rec.recommendation.source.clone(),
                 rec.accepted, // enabled = accepted
-                rec.recommendation.conditions.clone(),
+                rec.recommendation.when.clone(),
             );
         }
 
@@ -552,10 +582,10 @@ impl RecommendationDiff {
     pub fn apply_ignore(&self, config: &mut WorkspaceConfig) {
         // Add new recommendations as disabled
         for rec in &self.new {
-            config.add_extension_with_conditions(
+            config.add_extension_with_when(
                 rec.recommendation.source.clone(),
                 false, // Always disabled for IGNORE
-                rec.recommendation.conditions.clone(),
+                rec.recommendation.when.clone(),
             );
         }
 
@@ -581,46 +611,30 @@ mod tests {
     fn test_load_builtin_recommendations() {
         let recs = Recommendations::load_builtin().expect("Should load builtin recommendations");
 
-        // Should have an agent recommendation
-        assert!(recs.agent.is_some(), "Should have agent recommendation");
-
         // Should have some extension recommendations
         assert!(
             !recs.extensions.is_empty(),
             "Should have extension recommendations"
         );
-    }
 
-    #[test]
-    fn test_builtin_agent_is_claude_code() {
-        let recs = Recommendations::load_builtin().unwrap();
-        let agent = recs.agent.unwrap();
-
-        // Should recommend Claude Code via NPX
-        match &agent.source {
-            ComponentSource::Npx(npx) => {
-                assert!(
-                    npx.package.contains("claude-code"),
-                    "Default agent should be Claude Code"
-                );
-            }
-            _ => panic!("Expected NPX source for agent"),
-        }
+        // Should have sparkle (always recommended)
+        assert!(
+            recs.extensions
+                .iter()
+                .any(|r| r.source == ComponentSource::Builtin("sparkle".to_string())),
+            "Should have sparkle recommendation"
+        );
     }
 
     #[test]
     fn test_workspace_filtering() {
         let toml = r#"
-[[extensions]]
-builtin = "always-on"
-name = "Always On"
+[[recommendation]]
+source.builtin = "always-on"
 
-[[extensions]]
-builtin = "rust-only"
-name = "Rust Only"
-[[extensions.conditions]]
-type = "file_exists"
-path = "Cargo.toml"
+[[recommendation]]
+source.builtin = "rust-only"
+when.file-exists = "Cargo.toml"
 "#;
 
         let recs = Recommendations::from_toml(toml).unwrap();
@@ -631,7 +645,7 @@ path = "Cargo.toml"
 
         // Should only have the "always-on" extension
         assert_eq!(workspace_recs.extensions.len(), 1);
-        assert_eq!(workspace_recs.extensions[0].display_name(), "Always On");
+        assert_eq!(workspace_recs.extensions[0].display_name(), "always-on");
 
         // Now create Cargo.toml
         std::fs::write(temp_dir.path().join("Cargo.toml"), "[package]").unwrap();
@@ -642,55 +656,74 @@ path = "Cargo.toml"
     }
 
     #[test]
-    fn test_priority_ordering() {
+    fn test_when_any_condition() {
         let toml = r#"
-[[extensions]]
-builtin = "low"
-priority = 10
-
-[[extensions]]
-builtin = "high"
-priority = 100
-
-[[extensions]]
-builtin = "medium"
-priority = 50
+[[recommendation]]
+source.builtin = "multi-lang"
+when.any = [
+    { file-exists = "Cargo.toml" },
+    { file-exists = "package.json" },
+]
 "#;
 
         let recs = Recommendations::from_toml(toml).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace_recs = recs.for_workspace(temp_dir.path());
 
-        // Should be ordered by priority (high, medium, low)
-        assert_eq!(
-            workspace_recs.extensions[0].source,
-            ComponentSource::Builtin("high".to_string())
-        );
-        assert_eq!(
-            workspace_recs.extensions[1].source,
-            ComponentSource::Builtin("medium".to_string())
-        );
-        assert_eq!(
-            workspace_recs.extensions[2].source,
-            ComponentSource::Builtin("low".to_string())
-        );
+        // No matching files
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 0);
+
+        // Create Cargo.toml
+        std::fs::write(temp_dir.path().join("Cargo.toml"), "[package]").unwrap();
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 1);
+
+        // Remove Cargo.toml, create package.json
+        std::fs::remove_file(temp_dir.path().join("Cargo.toml")).unwrap();
+        std::fs::write(temp_dir.path().join("package.json"), "{}").unwrap();
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 1);
+    }
+
+    #[test]
+    fn test_when_multiple_conditions_and() {
+        let toml = r#"
+[[recommendation]]
+source.builtin = "both-required"
+when.file-exists = "Cargo.toml"
+when.files-exist = ["src/lib.rs"]
+"#;
+
+        let recs = Recommendations::from_toml(toml).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Neither file
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 0);
+
+        // Only Cargo.toml
+        std::fs::write(temp_dir.path().join("Cargo.toml"), "[package]").unwrap();
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 0);
+
+        // Both files
+        std::fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+        let workspace_recs = recs.for_workspace(temp_dir.path());
+        assert_eq!(workspace_recs.extensions.len(), 1);
     }
 
     // ========================================================================
     // Diff tests
     // ========================================================================
 
-    fn make_workspace_recs(extensions: Vec<(&str, Vec<Condition>)>) -> WorkspaceRecommendations {
+    fn make_workspace_recs(extensions: Vec<(&str, Option<When>)>) -> WorkspaceRecommendations {
         WorkspaceRecommendations {
-            agent: None,
             extensions: extensions
                 .into_iter()
-                .map(|(name, conditions)| Recommendation {
+                .map(|(name, when)| Recommendation {
                     source: ComponentSource::Builtin(name.to_string()),
-                    name: None,
-                    description: None,
-                    conditions,
-                    priority: 0,
+                    when,
                 })
                 .collect(),
         }
@@ -699,8 +732,14 @@ priority = 50
     #[test]
     fn test_diff_new_recommendations() {
         let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::FileExists { path: "Cargo.toml".to_string() }]),
-            ("bar", vec![Condition::Always]),
+            (
+                "foo",
+                Some(When {
+                    file_exists: Some("Cargo.toml".to_string()),
+                    ..Default::default()
+                }),
+            ),
+            ("bar", None),
         ]);
         let config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
@@ -723,36 +762,36 @@ priority = 50
             vec![],
         );
         // Add an extension that's not recommended
-        config.add_extension_with_conditions(
+        config.add_extension_with_when(
             ComponentSource::Builtin("old-ext".to_string()),
             true,
-            vec![Condition::FileExists { path: "old.txt".to_string() }],
+            Some(When {
+                file_exists: Some("old.txt".to_string()),
+                ..Default::default()
+            }),
         );
 
         let diff = RecommendationDiff::compute(&recs, &config);
 
         assert!(diff.new.is_empty());
         assert_eq!(diff.stale.len(), 1);
-        assert_eq!(diff.stale[0].source, ComponentSource::Builtin("old-ext".to_string()));
+        assert_eq!(
+            diff.stale[0].source,
+            ComponentSource::Builtin("old-ext".to_string())
+        );
         assert!(diff.has_changes());
         assert!(diff.is_stale_only());
     }
 
     #[test]
     fn test_diff_no_changes_when_in_sync() {
-        let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::Always]),
-        ]);
+        let recs = make_workspace_recs(vec![("foo", None)]);
         let mut config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
             vec![],
         );
         // Add the same extension that's recommended
-        config.add_extension_with_conditions(
-            ComponentSource::Builtin("foo".to_string()),
-            true,
-            vec![Condition::Always],
-        );
+        config.add_extension_with_when(ComponentSource::Builtin("foo".to_string()), true, None);
 
         let diff = RecommendationDiff::compute(&recs, &config);
 
@@ -764,17 +803,15 @@ priority = 50
     #[test]
     fn test_diff_disabled_extension_not_new() {
         // If an extension is in config but disabled, it's still "known" - not new
-        let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::Always]),
-        ]);
+        let recs = make_workspace_recs(vec![("foo", None)]);
         let mut config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
             vec![],
         );
-        config.add_extension_with_conditions(
+        config.add_extension_with_when(
             ComponentSource::Builtin("foo".to_string()),
             false, // Disabled
-            vec![Condition::Always],
+            None,
         );
 
         let diff = RecommendationDiff::compute(&recs, &config);
@@ -787,10 +824,7 @@ priority = 50
 
     #[test]
     fn test_diff_toggle() {
-        let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::Always]),
-            ("bar", vec![Condition::Always]),
-        ]);
+        let recs = make_workspace_recs(vec![("foo", None), ("bar", None)]);
         let config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
             vec![],
@@ -818,19 +852,16 @@ priority = 50
 
     #[test]
     fn test_diff_apply_save() {
-        let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::Always]),
-            ("bar", vec![Condition::Always]),
-        ]);
+        let recs = make_workspace_recs(vec![("foo", None), ("bar", None)]);
         let mut config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
             vec![],
         );
         // Add a stale extension
-        config.add_extension_with_conditions(
+        config.add_extension_with_when(
             ComponentSource::Builtin("old".to_string()),
             true,
-            vec![],
+            None,
         );
 
         let mut diff = RecommendationDiff::compute(&recs, &config);
@@ -844,22 +875,22 @@ priority = 50
         // bar should be disabled (toggled)
         assert!(!config.is_extension_enabled(&ComponentSource::Builtin("bar".to_string())));
         // old should be removed
-        assert!(!config.extensions.contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
+        assert!(!config
+            .extensions
+            .contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
     }
 
     #[test]
     fn test_diff_apply_ignore() {
-        let recs = make_workspace_recs(vec![
-            ("foo", vec![Condition::Always]),
-        ]);
+        let recs = make_workspace_recs(vec![("foo", None)]);
         let mut config = WorkspaceConfig::new(
             ComponentSource::Builtin("agent".to_string()),
             vec![],
         );
-        config.add_extension_with_conditions(
+        config.add_extension_with_when(
             ComponentSource::Builtin("old".to_string()),
             true,
-            vec![],
+            None,
         );
 
         let diff = RecommendationDiff::compute(&recs, &config);
@@ -868,23 +899,25 @@ priority = 50
         // foo should be added but disabled
         assert!(!config.is_extension_enabled(&ComponentSource::Builtin("foo".to_string())));
         // But it should be in the config (so we don't ask again)
-        assert!(config.extensions.contains_key(&ComponentSource::Builtin("foo".to_string()).to_config_key()));
+        assert!(config
+            .extensions
+            .contains_key(&ComponentSource::Builtin("foo".to_string()).to_config_key()));
         // old should be removed
-        assert!(!config.extensions.contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
+        assert!(!config
+            .extensions
+            .contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
     }
 
     #[test]
-    fn test_condition_explanations() {
-        let cond = Condition::FileExists { path: "Cargo.toml".to_string() };
-        assert_eq!(cond.explain_why_added(), Some("because a file `Cargo.toml` exists".to_string()));
-        assert_eq!(cond.explain_why_stale(), Some("because no file `Cargo.toml` exists".to_string()));
+    fn test_when_explanations() {
+        let when = When {
+            file_exists: Some("Cargo.toml".to_string()),
+            ..Default::default()
+        };
+        let added = when.explain_why_added();
+        assert_eq!(added, vec!["because `Cargo.toml` exists"]);
 
-        let cond = Condition::GlobMatches { pattern: "*.rs".to_string() };
-        assert_eq!(cond.explain_why_added(), Some("because files matching `*.rs` exist".to_string()));
-        assert_eq!(cond.explain_why_stale(), Some("because no files matching `*.rs` exist".to_string()));
-
-        let cond = Condition::Always;
-        assert_eq!(cond.explain_why_added(), None);
-        assert_eq!(cond.explain_why_stale(), None);
+        let stale = when.explain_why_stale();
+        assert_eq!(stale, vec!["because `Cargo.toml` no longer exists"]);
     }
 }

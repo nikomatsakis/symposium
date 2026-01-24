@@ -1,40 +1,18 @@
 # Built-in recommendations for Symposium
 #
-# This file defines the default agent and extensions that Symposium recommends.
+# This file defines the extensions that Symposium recommends.
 # These recommendations are compiled into the binary.
 
-# Default agent - Claude Code via NPX
-[agent]
-npx = "@zed-industries/claude-code-acp@latest"
-name = "Claude Code"
-description = "Zed's Claude Code agent for AI-assisted development"
-
-# Extension recommendations
-# Extensions are listed in order of priority (higher priority = shown first)
-
 # Sparkle - AI collaboration identity (always recommended)
-[[extensions]]
-cargo = { crate = "sparkle-mcp", args = ["--acp"] }
-name = "Sparkle"
-description = "AI collaboration identity and embodiment"
-priority = 90
+[[recommendation]]
+source.builtin = "sparkle"
 
 # Ferris - Rust development tools (recommended for Rust projects)
-[[extensions]]
-builtin = "ferris"
-name = "Ferris"
-description = "Rust development tools (crate sources)"
-priority = 80
-[[extensions.conditions]]
-type = "file_exists"
-path = "Cargo.toml"
+[[recommendation]]
+source.builtin = "ferris"
+when.file-exists = "Cargo.toml"
 
 # Cargo - Cargo build/test tools (recommended for Rust projects)
-[[extensions]]
-builtin = "cargo"
-name = "Cargo"
-description = "Cargo build and test tools"
-priority = 70
-[[extensions.conditions]]
-type = "file_exists"
-path = "Cargo.toml"
+[[recommendation]]
+source.builtin = "cargo"
+when.file-exists = "Cargo.toml"

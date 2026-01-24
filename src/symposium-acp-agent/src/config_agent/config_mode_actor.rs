@@ -432,20 +432,6 @@ impl ConfigModeActor {
         }
     }
 
-    /// Create initial configuration from recommendations (legacy, now unused).
-    #[allow(dead_code)]
-    fn create_initial_config(&self) -> Option<WorkspaceConfig> {
-        let recs = self.recommendations.as_ref()?;
-
-        // Get the recommended agent
-        let agent = recs.agent.as_ref()?.source.clone();
-
-        // Get recommended extensions
-        let extensions: Vec<ComponentSource> = recs.extension_sources();
-
-        Some(WorkspaceConfig::new(agent, extensions))
-    }
-
     /// Get ordered list of extensions with their sources for display.
     fn get_extension_list(&self, config: &WorkspaceConfig) -> Vec<(ComponentSource, bool)> {
         config

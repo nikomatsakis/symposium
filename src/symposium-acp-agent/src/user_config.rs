@@ -6,7 +6,7 @@
 //! The configuration uses `ComponentSource` as the identity for both
 //! agents and extensions, enabling easy diffing with recommendations.
 
-use crate::recommendations::Condition;
+use crate::recommendations::When;
 use crate::registry::ComponentSource;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -21,24 +21,24 @@ pub struct ExtensionConfig {
 
     /// The conditions that caused this extension to be recommended.
     /// Used to explain why an extension is stale when the conditions no longer apply.
-    #[serde(default)]
-    pub conditions: Vec<Condition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
 }
 
 impl ExtensionConfig {
     /// Create an enabled extension config with the given conditions
-    pub fn enabled_with_conditions(conditions: Vec<Condition>) -> Self {
+    pub fn enabled_with_when(when: Option<When>) -> Self {
         Self {
             enabled: true,
-            conditions,
+            when,
         }
     }
 
     /// Create a disabled extension config with the given conditions
-    pub fn disabled_with_conditions(conditions: Vec<Condition>) -> Self {
+    pub fn disabled_with_when(when: Option<When>) -> Self {
         Self {
             enabled: false,
-            conditions,
+            when,
         }
     }
 }
@@ -47,7 +47,7 @@ impl Default for ExtensionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            conditions: vec![],
+            when: None,
         }
     }
 }
@@ -220,40 +220,26 @@ impl WorkspaceConfig {
         if let Some(config) = self.extensions.get_mut(&key) {
             config.enabled = enabled;
         } else {
-            self.extensions.insert(
-                key,
-                ExtensionConfig {
-                    enabled,
-                    conditions: vec![],
-                },
-            );
+            self.extensions
+                .insert(key, ExtensionConfig { enabled, when: None });
         }
     }
 
     /// Add an extension with specific conditions (from a recommendation)
-    pub fn add_extension_with_conditions(
+    pub fn add_extension_with_when(
         &mut self,
         source: ComponentSource,
         enabled: bool,
-        conditions: Vec<Condition>,
+        when: Option<When>,
     ) {
         let key = source.to_config_key();
-        self.extensions.insert(
-            key,
-            ExtensionConfig {
-                enabled,
-                conditions,
-            },
-        );
+        self.extensions.insert(key, ExtensionConfig { enabled, when });
     }
 
-    /// Get the conditions for an extension (for explaining why it's stale)
-    pub fn extension_conditions(&self, source: &ComponentSource) -> Vec<Condition> {
+    /// Get the when conditions for an extension (for explaining why it's stale)
+    pub fn extension_when(&self, source: &ComponentSource) -> Option<When> {
         let key = source.to_config_key();
-        self.extensions
-            .get(&key)
-            .map(|c| c.conditions.clone())
-            .unwrap_or_default()
+        self.extensions.get(&key).and_then(|c| c.when.clone())
     }
 
     /// Check if an extension is enabled

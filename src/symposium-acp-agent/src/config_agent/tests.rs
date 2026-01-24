@@ -1,7 +1,7 @@
 //! Tests for the ConfigAgent.
 
 use super::*;
-use crate::recommendations::{Condition, Recommendation, Recommendations};
+use crate::recommendations::{Recommendation, Recommendations};
 use crate::registry::{ComponentSource, LocalDistribution};
 use crate::user_config::WorkspaceConfig;
 use sacp::link::ClientToAgent;
@@ -63,21 +63,16 @@ fn elizacp_config() -> WorkspaceConfig {
 /// Create test recommendations for testing initial setup flow.
 fn test_recommendations() -> Recommendations {
     Recommendations {
-        agent: Some(Recommendation {
-            source: ComponentSource::Builtin("eliza".to_string()),
-            name: Some("ElizACP".to_string()),
-            description: Some("Built-in Eliza agent for testing".to_string()),
-            conditions: vec![Condition::Always],
-            priority: 100,
-        }),
         extensions: vec![Recommendation {
             source: ComponentSource::Builtin("ferris".to_string()),
-            name: Some("Ferris".to_string()),
-            description: Some("Rust development tools".to_string()),
-            conditions: vec![Condition::Always],
-            priority: 50,
+            when: None, // Always recommended
         }],
     }
+}
+
+/// Default test agent for initial setup testing.
+fn test_default_agent() -> ComponentSource {
+    ComponentSource::Builtin("eliza".to_string())
 }
 
 // ============================================================================
@@ -97,8 +92,8 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Use test recommendations
     let recommendations = test_recommendations();
 
-    // Get the agent from recommendations to use as default (bypasses GlobalAgentConfig::load())
-    let default_agent = recommendations.agent.as_ref().unwrap().source.clone();
+    // Use a hardcoded default agent for testing (bypasses GlobalAgentConfig::load())
+    let default_agent = test_default_agent();
 
     let agent = ConfigAgent::new()
         .with_recommendations(recommendations)
