@@ -48,7 +48,7 @@ pub enum ConductorMessage {
 }
 
 /// Handle for communicating with a ConductorActor.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConductorHandle {
     tx: mpsc::Sender<ConductorMessage>,
 }
@@ -64,6 +64,8 @@ impl ConductorHandle {
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         client_cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
+        tracing::debug!(?workspace_path, ?config, "ConductorHandle::spawn");
+
         // Create the channel for receiving messages
         let (tx, rx) = mpsc::channel(32);
 
@@ -88,6 +90,8 @@ impl ConductorHandle {
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
+        tracing::debug!(?request, "ConductorHandle::send_new_session");
+        
         self.tx
             .send(ConductorMessage::NewSession {
                 request,
@@ -114,6 +118,8 @@ impl ConductorHandle {
 
     /// Forward an arbitrary message to the conductor.
     pub async fn forward_message(&self, message: MessageCx) -> Result<(), sacp::Error> {
+        tracing::debug!(?message, "ConductorHandle::forward_message");
+
         self.tx
             .send(ConductorMessage::ForwardMessage { message })
             .await
@@ -126,6 +132,8 @@ impl ConductorHandle {
     /// While paused, the conductor will not process any messages from the
     /// downstream agent or accept new requests.
     pub async fn pause(&self) -> Result<oneshot::Sender<()>, sacp::Error> {
+        tracing::debug!("ConductorHandle::pause");
+        
         let (resume_tx_sender, resume_tx_receiver) = oneshot::channel();
 
         self.tx
@@ -145,7 +153,13 @@ async fn build_proxies(
 ) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
     let mut proxies = vec![];
     for source in &extension_sources {
+        tracing::debug!(extension = %source.display_name(), "Resolving extension");
         let server = source.resolve().await.map_err(|e| {
+            tracing::error!(
+                extension = %source.display_name(),
+                error = %e,
+                "Failed to resolve extension"
+            );
             sacp::Error::new(
                 -32603,
                 format!("Failed to resolve {}: {}", source.display_name(), e),

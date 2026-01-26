@@ -145,6 +145,8 @@ impl ConfigAgent {
         cx: JrConnectionCx<AgentToClient>,
     ) -> Result<(), sacp::Error> {
         while let Some(message) = rx.next().await {
+            tracing::debug!(?message, "ConfigAgent::run: received message");
+
             match message {
                 ConfigAgentMessage::MessageFromClient(message) => {
                     self.handle_message_from_client(message, &uberconductor, &cx, &tx)
@@ -339,7 +341,7 @@ impl ConfigAgent {
                     cx.send_notification(SessionNotification::new(
                         session_id,
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                            "Configuration cancelled.".into(),
+                            "Configuration cancelled. Please start a new session.".into(),
                         )),
                     ))?;
                 }
@@ -437,6 +439,8 @@ impl ConfigAgent {
                         return Ok(());
                     }
                 }
+
+                tracing::debug!(?config, "launching new session");
 
                 // No diff changes - proceed directly to uberconductor
                 uberconductor
@@ -704,6 +708,7 @@ impl ConfigAgent {
     }
 }
 
+#[derive(Debug)]
 pub enum ConfigAgentMessage {
     /// Sent when a client sends a message to the agent.
     MessageFromClient(MessageCx),

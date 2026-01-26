@@ -830,7 +830,10 @@ async fn resolve_builtin(name: &str) -> Result<McpServer> {
         "eliza" => Ok(McpServer::Stdio(
             McpServerStdio::new("ElizACP", &exe_str).args(vec!["eliza".to_string()]),
         )),
-        _ => bail!("Unknown built-in component: {}", name),
+        _ => bail!(
+            "Unknown built-in component: '{}'. Available builtins: ferris, cargo, eliza",
+            name
+        ),
     }
 }
 

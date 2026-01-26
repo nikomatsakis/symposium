@@ -35,6 +35,7 @@ pub enum ConfigModeInput {
 }
 
 /// Messages sent from the config mode actor back to ConfigAgent.
+#[derive(Debug)]
 pub enum ConfigModeOutput {
     /// Send this text to the user.
     SendMessage(String),
