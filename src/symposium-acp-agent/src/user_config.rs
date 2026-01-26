@@ -7,7 +7,7 @@
 //! agents and extensions, enabling easy diffing with recommendations.
 
 use crate::recommendations::When;
-use crate::registry::ComponentSource;
+use crate::registry::{ComponentSource, ConfigKey};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -64,7 +64,7 @@ pub struct WorkspaceConfig {
     /// Extensions with their enabled state
     /// The key is the JSON-serialized ComponentSource
     #[serde(default)]
-    pub extensions: BTreeMap<String, ExtensionConfig>,
+    pub extensions: BTreeMap<ConfigKey, ExtensionConfig>,
 }
 
 // ============================================================================

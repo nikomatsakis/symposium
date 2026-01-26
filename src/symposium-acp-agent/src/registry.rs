@@ -142,6 +142,18 @@ pub enum ComponentSource {
     Binary(BTreeMap<String, BinaryDistribution>),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct ConfigKey {
+    value: String,
+}
+
+impl From<String> for ConfigKey {
+    fn from(value: String) -> Self {
+        ConfigKey { value }
+    }
+}
+
 impl ComponentSource {
     /// Get a human-readable display name for this source
     pub fn display_name(&self) -> String {
@@ -179,13 +191,13 @@ impl ComponentSource {
     }
 
     /// Convert to a stable JSON key for use in config files
-    pub fn to_config_key(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| "unknown".to_string())
+    pub fn to_config_key(&self) -> ConfigKey {
+        ConfigKey::from(serde_json::to_string(self).expect("can create JSON"))
     }
 
     /// Parse from a config key
-    pub fn from_config_key(key: &str) -> Result<Self> {
-        serde_json::from_str(key).context("Failed to parse ComponentSource from config key")
+    pub fn from_config_key(key: &ConfigKey) -> Result<Self> {
+        serde_json::from_str(&key.value).context("Failed to parse ComponentSource from config key")
     }
 
     /// Resolve this source to an McpServer that can be spawned
