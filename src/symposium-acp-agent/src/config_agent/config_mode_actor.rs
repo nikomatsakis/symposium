@@ -12,8 +12,8 @@ use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
 use sacp::link::AgentToClient;
-use sacp::schema::{NewSessionRequest, NewSessionResponse, SessionId};
-use sacp::{JrConnectionCx, JrRequestCx};
+use sacp::schema::SessionId;
+use sacp::{JrConnectionCx};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::oneshot;
@@ -70,26 +70,57 @@ impl ConfigModeHandle {
     ///
     /// The `default_agent_override` is used for testing - if Some, it bypasses
     /// the GlobalAgentConfig::load() and uses this agent for initial setup.
-    pub fn spawn(
+    pub fn spawn_reconfig(
         config: Option<WorkspaceConfig>,
         workspace_path: PathBuf,
         recommendations: Option<WorkspaceRecommendations>,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-        resume_tx: Option<oneshot::Sender<()>>,
+        resume_tx: oneshot::Sender<()>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
         Self::spawn_inner(
             config,
             workspace_path,
-            false, // Not diff-only
             recommendations,
             default_agent_override,
             session_id,
             config_agent_tx,
-            resume_tx,
-            None, // No pending request for regular config mode
+            Some(resume_tx),
+            cx,
+        )
+    }
+
+    /// Spawn a new config mode actor.
+    ///
+    /// Returns a handle for sending input to the actor.
+    ///
+    /// If `config` is None, this is initial setup - the actor will use
+    /// recommendations to create the initial configuration.
+    ///
+    /// The `resume_tx` is an optional oneshot sender that, when dropped, will
+    /// signal the conductor to resume processing. If provided, it will be
+    /// dropped when the actor exits (either save or cancel).
+    ///
+    /// The `default_agent_override` is used for testing - if Some, it bypasses
+    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
+    pub fn spawn_initial_config(
+        workspace_path: PathBuf,
+        recommendations: Option<WorkspaceRecommendations>,
+        default_agent_override: Option<ComponentSource>,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        Self::spawn_inner(
+            None,
+            workspace_path,
+            recommendations,
+            default_agent_override,
+            session_id,
+            config_agent_tx,
+            None,
             cx,
         )
     }
@@ -99,29 +130,22 @@ impl ConfigModeHandle {
     /// This is used when starting a new session with an existing config.
     /// The actor will only handle the recommendation diff prompt, then send
     /// `DiffCompleted` or `DiffCancelled` instead of showing the main menu.
-    ///
-    /// The `pending_request` and `pending_request_cx` are passed through the actor
-    /// and sent back via `DiffCompleted` so that the session can be created.
-    pub fn spawn_diff_only(
+    pub fn spawn_with_recommendations(
         config: WorkspaceConfig,
         workspace_path: PathBuf,
         recommendations: WorkspaceRecommendations,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-        pending_request: NewSessionRequest,
-        pending_request_cx: JrRequestCx<NewSessionResponse>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
         Self::spawn_inner(
             Some(config),
             workspace_path,
-            true, // Diff-only
             Some(recommendations),
             None,
             session_id,
             config_agent_tx,
             None, // No resume_tx for diff-only mode
-            Some((pending_request, pending_request_cx)),
             cx,
         )
     }
@@ -129,13 +153,11 @@ impl ConfigModeHandle {
     fn spawn_inner(
         config: Option<WorkspaceConfig>,
         workspace_path: PathBuf,
-        diff_only: bool,
         recommendations: Option<WorkspaceRecommendations>,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
-        pending_request: Option<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
@@ -144,14 +166,12 @@ impl ConfigModeHandle {
         let actor = ConfigModeActor {
             config,
             workspace_path,
-            diff_only,
             recommendations,
             default_agent_override,
             session_id,
             config_agent_tx,
             rx,
             _resume_tx: resume_tx,
-            pending_request,
         };
 
         cx.spawn(actor.run())?;
@@ -172,8 +192,6 @@ impl ConfigModeHandle {
 enum DiffResult {
     /// Continue to main menu (config may have been updated)
     Continue,
-    /// User chose LATER - exit without changes
-    Later,
     /// Actor was cancelled (e.g., channel closed)
     Cancelled,
 }
@@ -184,9 +202,6 @@ struct ConfigModeActor {
     config: Option<WorkspaceConfig>,
     /// The workspace this configuration is for.
     workspace_path: PathBuf,
-    /// If true, only handle recommendation diff then exit (don't show main menu).
-    /// Used when spawned from session creation with existing config.
-    diff_only: bool,
     /// Recommendations for this workspace.
     recommendations: Option<WorkspaceRecommendations>,
     /// Override for the global agent config. If Some, bypasses GlobalAgentConfig::load().
@@ -198,9 +213,6 @@ struct ConfigModeActor {
     /// When dropped, signals the conductor to resume. We never send to this,
     /// just hold it until the actor exits.
     _resume_tx: Option<oneshot::Sender<()>>,
-    /// For diff-only mode: the pending session request that triggered this diff.
-    /// When diff handling completes, we send DiffCompleted with this info.
-    pending_request: Option<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>,
 }
 
 impl ConfigModeActor {
@@ -273,16 +285,7 @@ impl ConfigModeActor {
                 match self.handle_recommendation_diff(diff, &mut config).await {
                     DiffResult::Continue => {
                         // Config was updated, continue
-                    }
-                    DiffResult::Later => {
-                        // User wants to defer
-                        if self.diff_only {
-                            // In diff-only mode, proceed with original config
-                            self.proceed_with_session(&config);
-                        } else {
-                            // In full mode, exit without going to menu
-                            self.done(&config);
-                        }
+                        self.done(&config);
                         return Ok(());
                     }
                     DiffResult::Cancelled => {
@@ -291,12 +294,6 @@ impl ConfigModeActor {
                     }
                 }
             }
-        }
-
-        // In diff-only mode, we're done after handling the diff (or if no diff)
-        if self.diff_only {
-            self.proceed_with_session(&config);
-            return Ok(());
         }
 
         self.main_menu_loop(&mut config).await;
@@ -330,8 +327,6 @@ impl ConfigModeActor {
                         self.send_message(&format!("Warning: Failed to save config: {}\n", e));
                     }
                     return DiffResult::Continue;
-                } else if input_upper == "LATER" {
-                    return DiffResult::Later;
                 } else {
                     self.send_message("Please press ENTER to continue, or say LATER.\n");
                     continue;
@@ -355,10 +350,6 @@ impl ConfigModeActor {
                 }
                 self.send_message("New recommendations ignored. You can enable them later via /symposium:config.\n\n");
                 return DiffResult::Continue;
-            }
-
-            if input_upper == "LATER" {
-                return DiffResult::Later;
             }
 
             // Try to parse as a number for toggling
@@ -478,16 +469,6 @@ impl ConfigModeActor {
 
     /// Signal that configuration was cancelled.
     fn cancelled(&mut self) {
-        // In diff-only mode, send DiffCancelled with the pending request
-        if self.diff_only {
-            if let Some((_, pending_request_cx)) = self.pending_request.take() {
-                self.config_agent_tx
-                    .unbounded_send(ConfigAgentMessage::DiffCancelled { pending_request_cx })
-                    .ok();
-                return;
-            }
-        }
-
         // Regular config mode cancellation
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
@@ -495,28 +476,6 @@ impl ConfigModeActor {
                 ConfigModeOutput::Cancelled,
             ))
             .ok();
-    }
-
-    /// Signal that diff handling is complete and session should proceed.
-    /// Used in diff-only mode.
-    fn proceed_with_session(&mut self, config: &WorkspaceConfig) {
-        if let Some((pending_request, pending_request_cx)) = self.pending_request.take() {
-            self.config_agent_tx
-                .unbounded_send(ConfigAgentMessage::DiffCompleted {
-                    session_id: self.session_id.clone(),
-                    workspace_path: self.workspace_path.clone(),
-                    config: config.clone(),
-                    pending_request,
-                    pending_request_cx,
-                })
-                .ok();
-        } else {
-            // Fallback (shouldn't happen in normal usage)
-            tracing::warn!(
-                "proceed_with_session called without pending_request for session {:?}",
-                self.session_id
-            );
-        }
     }
 
     /// Main menu loop.

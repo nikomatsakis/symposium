@@ -621,6 +621,15 @@ impl RecommendationDiff {
         !self.new.is_empty() && self.stale.is_empty()
     }
 
+    /// Check if there are only new items (no stale)
+    pub fn new_len(&self) -> Option<usize> {
+        if self.new.is_empty() {
+            None
+        } else {
+            Some(self.new.len())
+        }
+    }
+
     /// Toggle the acceptance of a new recommendation by index (1-based)
     pub fn toggle(&mut self, index: usize) -> Result<(), String> {
         if index == 0 || index > self.new.len() {
@@ -664,23 +673,10 @@ impl RecommendationDiff {
         lines.push("How would you like to proceed?".to_string());
         lines.push(String::new());
 
-        if self.is_stale_only() {
-            // Simplified prompt for stale-only case
-            lines.push(
-                "Press ENTER to continue, or say LATER to leave your extensions unchanged until next session."
-                    .to_string(),
-            );
-        } else {
-            lines.push("* SAVE the new recommendations".to_string());
-            lines.push(
-                "* IGNORE the new recommendations, you can always add them later".to_string(),
-            );
-            lines.push("* 1...N toggle the status of a specific recommendation".to_string());
-            lines.push(String::new());
-            lines.push(
-                "Or you can say LATER to leave your extensions unchanged. You will get this prompt at the start of the next session."
-                    .to_string(),
-            );
+        lines.push("* SAVE the new recommendations".to_string());
+        lines.push("* IGNORE all new recommendations (you can add them later)".to_string());
+        if let Some(n) = self.new_len() {
+            lines.push(format!("* 1...{n} toggle the status of a specific recommendation"));
         }
 
         lines.join("\n")

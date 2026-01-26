@@ -77,7 +77,6 @@ enum SessionState {
     PendingDiff { actor: ConfigModeHandle },
 }
 
-
 /// The ConfigAgent manages sessions and configuration.
 ///
 /// It implements `Component<AgentToClient>` and routes sessions to conductors
@@ -200,30 +199,6 @@ impl ConfigAgent {
                 ConfigAgentMessage::ConfigModeOutput(session_id, output) => {
                     self.handle_config_mode_output(session_id, output, &uberconductor, &cx)
                         .await?;
-                }
-
-                ConfigAgentMessage::DiffCompleted {
-                    session_id,
-                    workspace_path,
-                    config,
-                    pending_request,
-                    pending_request_cx,
-                } => {
-                    // Remove the PendingDiff session state
-                    self.sessions.remove(&session_id);
-
-                    // Forward to uberconductor with the (possibly updated) config
-                    uberconductor
-                        .new_session(workspace_path, config, pending_request, pending_request_cx)
-                        .await?;
-                }
-
-                ConfigAgentMessage::DiffCancelled { pending_request_cx } => {
-                    // Diff was cancelled - fail the session creation
-                    pending_request_cx.respond_with_error(sacp::Error::new(
-                        -32000,
-                        "Session creation cancelled",
-                    ))?;
                 }
             }
         }
@@ -374,96 +349,89 @@ impl ConfigAgent {
             .load_config(&workspace_path)
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
-        match config {
-            None => {
-                // No config - enter config mode for initial setup.
-                // ConfigModeActor with None config will show welcome and agent selection.
+        let Some(config) = config else {
+            // No config - enter config mode for initial setup.
+            // ConfigModeActor with None config will show welcome and agent selection.
+            let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
+
+            // Respond with our generated session ID
+            request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
+
+            // Load and evaluate recommendations for this workspace
+            let workspace_recs = self
+                .load_recommendations()
+                .map(|r| r.for_workspace(&workspace_path));
+
+            // Spawn the config mode actor with None config (triggers initial setup)
+            let actor_handle = ConfigModeHandle::spawn_initial_config(
+                workspace_path.clone(),
+                workspace_recs,
+                self.default_agent_override.clone(),
+                session_id.clone(),
+                config_agent_tx.clone(),
+                cx,
+            )?;
+
+            self.sessions.insert(
+                session_id,
+                SessionState::Config {
+                    actor: actor_handle,
+                    workspace_path,
+                    return_to: None,
+                },
+            );
+
+            return Ok(());
+        };
+
+        tracing::debug!(?config, "found existing configuration");
+
+        // Load and evaluate recommendations for this workspace
+        if let Some(recs) = self.load_recommendations() {
+            let workspace_recs = recs.for_workspace(&workspace_path);
+            let diff = RecommendationDiff::compute(&workspace_recs, &config);
+
+            tracing::debug!(
+                ?diff,
+                has_changes = ?diff.has_changes(),
+                "diff computed"
+            );
+
+            if diff.has_changes() {
+                // We have changes to present - spawn diff-only actor
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
 
                 // Respond with our generated session ID
                 request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
-                // Load and evaluate recommendations for this workspace
-                let workspace_recs = self
-                    .load_recommendations()
-                    .map(|r| r.for_workspace(&workspace_path));
-
-                // Spawn the config mode actor with None config (triggers initial setup)
-                let actor_handle = ConfigModeHandle::spawn(
-                    None,
+                // Don't respond yet - wait for diff resolution.
+                // The actor will send DiffCompleted/DiffCancelled with the request info.
+                let actor_handle = ConfigModeHandle::spawn_with_recommendations(
+                    config,
                     workspace_path.clone(),
                     workspace_recs,
-                    self.default_agent_override.clone(),
                     session_id.clone(),
                     config_agent_tx.clone(),
-                    None, // No resume_tx for initial setup
                     cx,
                 )?;
 
                 self.sessions.insert(
                     session_id,
-                    SessionState::Config {
+                    SessionState::PendingDiff {
                         actor: actor_handle,
-                        workspace_path,
-                        return_to: None,
                     },
                 );
 
-                Ok(())
-            }
-            Some(config) => {
-                tracing::debug!(
-                    ?config,
-                    "found existing configuration"
-                );
-
-                // Load and evaluate recommendations for this workspace
-                if let Some(recs) = self.load_recommendations() {
-                    let workspace_recs = recs.for_workspace(&workspace_path);
-                    let diff = RecommendationDiff::compute(&workspace_recs, &config);
-
-                    tracing::debug!(
-                        ?diff,
-                        has_changes = ?diff.has_changes(),
-                        "diff computed"
-                    );
-
-                    if diff.has_changes() {
-                        // We have changes to present - spawn diff-only actor
-                        let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-
-                        // Don't respond yet - wait for diff resolution.
-                        // The actor will send DiffCompleted/DiffCancelled with the request info.
-                        let actor_handle = ConfigModeHandle::spawn_diff_only(
-                            config,
-                            workspace_path.clone(),
-                            workspace_recs,
-                            session_id.clone(),
-                            config_agent_tx.clone(),
-                            request,
-                            request_cx,
-                            cx,
-                        )?;
-
-                        self.sessions.insert(
-                            session_id,
-                            SessionState::PendingDiff {
-                                actor: actor_handle,
-                            },
-                        );
-
-                        return Ok(());
-                    }
-                }
-
-                tracing::debug!(?config, "launching new session");
-
-                // No diff changes - proceed directly to uberconductor
-                uberconductor
-                    .new_session(workspace_path, config, request, request_cx)
-                    .await
+                return Ok(());
             }
         }
+
+        tracing::debug!(?config, "launching new session");
+
+        // No diff changes - proceed directly to uberconductor
+        uberconductor
+            .new_session(workspace_path, config, request, request_cx)
+            .await
     }
 
     /// Enter configuration mode for a session.
@@ -482,26 +450,20 @@ impl ConfigAgent {
             Some(SessionState::Delegating {
                 conductor,
                 workspace_path,
-            }) => (Some(conductor.clone()), workspace_path.clone()),
-            Some(SessionState::Config { workspace_path, .. }) => (None, workspace_path.clone()),
-            Some(SessionState::PendingDiff { .. }) => {
+            }) => (conductor.clone(), workspace_path.clone()),
+            Some(SessionState::Config { .. }) |
+            Some(SessionState::PendingDiff { .. }) |
+            None => {
                 // Can't enter config mode while diff is pending
                 return request_cx.respond_with_error(sacp::Error::new(
                     -32600,
-                    "Cannot enter config mode while recommendation diff is pending",
+                    "Cannot only enter config mode when deleating",
                 ));
-            }
-            None => {
-                return request_cx.respond_with_error(sacp::Error::new(-32600, "Unknown session"));
             }
         };
 
         // Pause the conductor if we have one - it will resume when config mode exits
-        let resume_tx = if let Some(ref conductor) = return_to {
-            Some(conductor.pause().await?)
-        } else {
-            None
-        };
+        let resume_tx = return_to.pause().await?;
 
         // Load current config (None triggers initial setup in the actor)
         let current_config = self
@@ -514,7 +476,7 @@ impl ConfigAgent {
             .map(|r| r.for_workspace(&workspace_path));
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
-        let actor_handle = ConfigModeHandle::spawn(
+        let actor_handle = ConfigModeHandle::spawn_reconfig(
             current_config,
             workspace_path.clone(),
             workspace_recs,
@@ -531,7 +493,7 @@ impl ConfigAgent {
             SessionState::Config {
                 actor: actor_handle,
                 workspace_path,
-                return_to,
+                return_to: Some(return_to),
             },
         );
 
@@ -743,21 +705,6 @@ pub enum ConfigAgentMessage {
 
     /// Output from a config mode actor.
     ConfigModeOutput(SessionId, ConfigModeOutput),
-
-    /// Diff-only mode completed - proceed with session creation.
-    /// The request_cx is passed here rather than stored in session state.
-    DiffCompleted {
-        session_id: SessionId,
-        workspace_path: PathBuf,
-        config: WorkspaceConfig,
-        pending_request: NewSessionRequest,
-        pending_request_cx: JrRequestCx<NewSessionResponse>,
-    },
-
-    /// Diff-only mode was cancelled.
-    DiffCancelled {
-        pending_request_cx: JrRequestCx<NewSessionResponse>,
-    },
 }
 
 impl Default for ConfigAgent {
