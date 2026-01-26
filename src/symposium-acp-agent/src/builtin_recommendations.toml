@@ -5,7 +5,7 @@
 
 # Sparkle - AI collaboration identity (always recommended)
 [[recommendation]]
-source.builtin = "sparkle"
+source.cargo = { crate = "sparkle-mcp", args = ["--acp"] }
 
 # Ferris - Rust development tools (recommended for Rust projects)
 [[recommendation]]
