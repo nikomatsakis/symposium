@@ -89,8 +89,8 @@ pub struct ConfigAgent {
     /// Trace directory for conductors.
     trace_dir: Option<PathBuf>,
 
-    /// Recommendations for initial setup. Loaded once on startup.
-    recommendations: Option<Recommendations>,
+    /// Override for recommendations (for testing). If None, loads builtin recommendations.
+    recommendations_override: Option<Recommendations>,
 
     /// Override for the default agent (for testing). If set, bypasses GlobalAgentConfig::load().
     default_agent_override: Option<ComponentSource>,
@@ -99,15 +99,10 @@ pub struct ConfigAgent {
 impl ConfigAgent {
     /// Create a new ConfigAgent.
     pub fn new() -> Self {
-        // Load recommendations at startup
-        let recommendations = Recommendations::load_builtin()
-            .map_err(|e| tracing::warn!("Failed to load recommendations: {}", e))
-            .ok();
-
         Self {
             sessions: Default::default(),
             trace_dir: None,
-            recommendations,
+            recommendations_override: None,
             default_agent_override: None,
         }
     }
@@ -118,9 +113,10 @@ impl ConfigAgent {
         self
     }
 
-    /// Set recommendations (for testing).
+    /// Set recommendations override (for testing).
+    /// If not set, builtin recommendations are loaded fresh on each new session.
     pub fn with_recommendations(mut self, recommendations: Recommendations) -> Self {
-        self.recommendations = Some(recommendations);
+        self.recommendations_override = Some(recommendations);
         self
     }
 
@@ -134,6 +130,16 @@ impl ConfigAgent {
     /// Load configuration for a workspace from disk.
     fn load_config(&self, workspace_path: &Path) -> anyhow::Result<Option<WorkspaceConfig>> {
         WorkspaceConfig::load(workspace_path)
+    }
+
+    /// Load recommendations, using override if set, otherwise loading builtin.
+    fn load_recommendations(&self) -> Option<Recommendations> {
+        if let Some(ref recs) = self.recommendations_override {
+            return Some(recs.clone());
+        }
+        Recommendations::load_builtin()
+            .map_err(|e| tracing::warn!("Failed to load recommendations: {}", e))
+            .ok()
     }
 
     /// The main "config agent method"
@@ -377,10 +383,9 @@ impl ConfigAgent {
                 // Respond with our generated session ID
                 request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
-                // Get workspace recommendations if available
+                // Load and evaluate recommendations for this workspace
                 let workspace_recs = self
-                    .recommendations
-                    .as_ref()
+                    .load_recommendations()
                     .map(|r| r.for_workspace(&workspace_path));
 
                 // Spawn the config mode actor with None config (triggers initial setup)
@@ -407,10 +412,21 @@ impl ConfigAgent {
                 Ok(())
             }
             Some(config) => {
-                // Check for recommendation diff
-                if let Some(ref recs) = self.recommendations {
+                tracing::debug!(
+                    ?config,
+                    "found existing configuration"
+                );
+
+                // Load and evaluate recommendations for this workspace
+                if let Some(recs) = self.load_recommendations() {
                     let workspace_recs = recs.for_workspace(&workspace_path);
                     let diff = RecommendationDiff::compute(&workspace_recs, &config);
+
+                    tracing::debug!(
+                        ?diff,
+                        has_changes = ?diff.has_changes(),
+                        "diff computed"
+                    );
 
                     if diff.has_changes() {
                         // We have changes to present - spawn diff-only actor
@@ -492,10 +508,9 @@ impl ConfigAgent {
             .load_config(&workspace_path)
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
-        // Get workspace recommendations if available
+        // Load and evaluate recommendations for this workspace
         let workspace_recs = self
-            .recommendations
-            .as_ref()
+            .load_recommendations()
             .map(|r| r.for_workspace(&workspace_path));
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
