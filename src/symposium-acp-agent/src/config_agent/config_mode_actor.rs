@@ -73,7 +73,6 @@ impl ConfigModeHandle {
     pub fn spawn_reconfig(
         config: Option<WorkspaceConfig>,
         workspace_path: PathBuf,
-        recommendations: Option<WorkspaceRecommendations>,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
@@ -83,7 +82,7 @@ impl ConfigModeHandle {
         Self::spawn_inner(
             config,
             workspace_path,
-            recommendations,
+            None,
             default_agent_override,
             session_id,
             config_agent_tx,

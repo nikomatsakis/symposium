@@ -470,16 +470,10 @@ impl ConfigAgent {
             .load_config(&workspace_path)
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
-        // Load and evaluate recommendations for this workspace
-        let workspace_recs = self
-            .load_recommendations()
-            .map(|r| r.for_workspace(&workspace_path));
-
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
         let actor_handle = ConfigModeHandle::spawn_reconfig(
             current_config,
             workspace_path.clone(),
-            workspace_recs,
             self.default_agent_override.clone(),
             session_id.clone(),
             config_agent_tx.clone(),
