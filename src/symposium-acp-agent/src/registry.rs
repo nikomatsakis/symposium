@@ -9,7 +9,7 @@
 use anyhow::{bail, Context, Result};
 use sacp::schema::{EnvVariable, McpServer, McpServerStdio};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 /// Registry URL - same as VSCode extension uses
@@ -56,32 +56,32 @@ pub struct Distribution {
     pub cargo: Option<CargoDistribution>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct LocalDistribution {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub env: HashMap<String, String>,
+    pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct NpxDistribution {
     pub package: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub env: HashMap<String, String>,
+    pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct PipxDistribution {
     pub package: String,
     #[serde(default)]
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct BinaryDistribution {
     pub archive: String,
     pub cmd: String,
@@ -89,7 +89,7 @@ pub struct BinaryDistribution {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct CargoDistribution {
     /// The crate name on crates.io
     #[serde(rename = "crate")]
@@ -103,6 +103,94 @@ pub struct CargoDistribution {
     /// Additional args to pass to the binary
     #[serde(default)]
     pub args: Vec<String>,
+}
+
+// ============================================================================
+// ComponentSource - The identity type for agents and extensions
+// ============================================================================
+
+/// Component source - represents how to obtain and run a component.
+///
+/// This enum IS the identity for components in configuration. Two components
+/// with the same `ComponentSource` are considered the same component.
+/// The enum is designed to be usable as a key in `BTreeMap`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComponentSource {
+    /// Built-in to symposium-acp-agent (e.g., "ferris", "cargo", "eliza")
+    Builtin(String),
+
+    /// From the ACP registry by ID
+    Registry(String),
+
+    /// From a URL to an extension.json
+    Url(String),
+
+    /// Local executable
+    Local(LocalDistribution),
+
+    /// NPX package
+    Npx(NpxDistribution),
+
+    /// Pipx package
+    Pipx(PipxDistribution),
+
+    /// Cargo crate
+    Cargo(CargoDistribution),
+
+    /// Platform-specific binary downloads
+    Binary(BTreeMap<String, BinaryDistribution>),
+}
+
+impl ComponentSource {
+    /// Get a human-readable display name for this source
+    pub fn display_name(&self) -> String {
+        match self {
+            ComponentSource::Builtin(name) => name.clone(),
+            ComponentSource::Registry(id) => id.clone(),
+            ComponentSource::Url(url) => {
+                // Extract filename or last path segment
+                url.rsplit('/').next().unwrap_or(url).to_string()
+            }
+            ComponentSource::Local(local) => {
+                // Use last component of command path
+                local
+                    .command
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&local.command)
+                    .to_string()
+            }
+            ComponentSource::Npx(npx) => {
+                // Extract package name without scope and version
+                npx.package
+                    .split('@')
+                    .find(|s| !s.is_empty() && !s.starts_with('@'))
+                    .unwrap_or(&npx.package)
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&npx.package)
+                    .to_string()
+            }
+            ComponentSource::Pipx(pipx) => pipx.package.clone(),
+            ComponentSource::Cargo(cargo) => cargo.crate_name.clone(),
+            ComponentSource::Binary(_) => "binary".to_string(),
+        }
+    }
+
+    /// Resolve this source to an McpServer that can be spawned
+    pub async fn resolve(&self) -> Result<McpServer> {
+        match self {
+            ComponentSource::Builtin(name) => resolve_builtin(name).await,
+            ComponentSource::Registry(id) => resolve_from_registry(id).await,
+            ComponentSource::Url(url) => resolve_from_url(url).await,
+            ComponentSource::Local(local) => resolve_local(local),
+            ComponentSource::Npx(npx) => resolve_npx(npx),
+            ComponentSource::Pipx(pipx) => resolve_pipx(pipx),
+            ComponentSource::Cargo(cargo) => resolve_cargo(cargo).await,
+            ComponentSource::Binary(binary_map) => resolve_binary(binary_map).await,
+        }
+    }
 }
 
 // ============================================================================
@@ -145,7 +233,7 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
                 npx: Some(NpxDistribution {
                     package: "@zed-industries/claude-code-acp@latest".to_string(),
                     args: Vec::new(),
-                    env: HashMap::new(),
+                    env: BTreeMap::new(),
                 }),
                 pipx: None,
                 binary: None,
@@ -161,7 +249,7 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
                 local: Some(LocalDistribution {
                     command: exe_str.clone(),
                     args: vec!["eliza".to_string()],
-                    env: HashMap::new(),
+                    env: BTreeMap::new(),
                 }),
                 npx: None,
                 pipx: None,
@@ -208,7 +296,7 @@ pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
                         "--proxy".to_string(),
                         "ferris".to_string(),
                     ],
-                    env: HashMap::new(),
+                    env: BTreeMap::new(),
                 }),
                 npx: None,
                 pipx: None,
@@ -229,7 +317,7 @@ pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
                         "--proxy".to_string(),
                         "cargo".to_string(),
                     ],
-                    env: HashMap::new(),
+                    env: BTreeMap::new(),
                 }),
                 npx: None,
                 pipx: None,
@@ -268,41 +356,94 @@ pub async fn fetch_registry() -> Result<RegistryJson> {
 
 /// List all available agents (built-ins + registry)
 pub async fn list_agents() -> Result<Vec<AgentListEntry>> {
-    // Start with built-ins
-    let mut agents: Vec<AgentListEntry> = built_in_agents()?
-        .into_iter()
-        .map(|e| AgentListEntry {
-            id: e.id,
-            name: e.name,
-            version: if e.version.is_empty() {
-                None
-            } else {
-                Some(e.version)
+    let agents_with_sources = list_agents_with_sources().await?;
+    Ok(agents_with_sources.into_iter().map(|(entry, _)| entry).collect())
+}
+
+/// Agent selection entry - agent info paired with its ComponentSource for storage.
+#[derive(Debug, Clone)]
+pub struct AgentSelectionEntry {
+    pub id: String,
+    pub name: String,
+    pub source: ComponentSource,
+}
+
+/// List all available agents with their ComponentSource for selection UI.
+///
+/// Returns pairs of (AgentListEntry, ComponentSource) so the UI can display
+/// the agent info and store the appropriate ComponentSource when selected.
+pub async fn list_agents_with_sources() -> Result<Vec<(AgentListEntry, ComponentSource)>> {
+    let mut agents = Vec::new();
+
+    // Built-in agents - use their specific distribution as the source
+    for entry in built_in_agents()? {
+        let source = entry_to_component_source(&entry);
+        agents.push((
+            AgentListEntry {
+                id: entry.id,
+                name: entry.name,
+                version: if entry.version.is_empty() {
+                    None
+                } else {
+                    Some(entry.version)
+                },
+                description: entry.description,
             },
-            description: e.description,
-        })
-        .collect();
+            source,
+        ));
+    }
 
     // Fetch and merge registry agents
     let registry = fetch_registry().await?;
     for entry in registry.agents {
         // Skip if we already have this agent (built-in takes precedence)
-        if agents.iter().any(|a| a.id == entry.id) {
+        if agents.iter().any(|(a, _)| a.id == entry.id) {
             continue;
         }
-        agents.push(AgentListEntry {
-            id: entry.id,
-            name: entry.name,
-            version: if entry.version.is_empty() {
-                None
-            } else {
-                Some(entry.version)
+        let source = entry_to_component_source(&entry);
+        agents.push((
+            AgentListEntry {
+                id: entry.id,
+                name: entry.name,
+                version: if entry.version.is_empty() {
+                    None
+                } else {
+                    Some(entry.version)
+                },
+                description: entry.description,
             },
-            description: entry.description,
-        });
+            source,
+        ));
     }
 
     Ok(agents)
+}
+
+/// Convert a RegistryEntry to the appropriate ComponentSource.
+///
+/// Uses the entry's distribution to determine the most specific source type.
+fn entry_to_component_source(entry: &RegistryEntry) -> ComponentSource {
+    let dist = &entry.distribution;
+
+    // Use the most specific source based on distribution type
+    if let Some(local) = &dist.local {
+        ComponentSource::Local(local.clone())
+    } else if let Some(npx) = &dist.npx {
+        ComponentSource::Npx(npx.clone())
+    } else if let Some(pipx) = &dist.pipx {
+        ComponentSource::Pipx(pipx.clone())
+    } else if let Some(cargo) = &dist.cargo {
+        ComponentSource::Cargo(cargo.clone())
+    } else if let Some(binary) = &dist.binary {
+        // Convert HashMap to BTreeMap for ComponentSource
+        let btree: BTreeMap<String, BinaryDistribution> = binary.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        ComponentSource::Binary(btree)
+    } else {
+        // Fallback to registry ID if no distribution specified
+        ComponentSource::Registry(entry.id.clone())
+    }
 }
 
 /// Extension listing entry - what `registry list-extensions` outputs
@@ -658,6 +799,211 @@ pub async fn resolve_extension(extension: &str) -> Result<McpServer> {
     );
 }
 
+// ============================================================================
+// ComponentSource Resolution Functions
+// ============================================================================
+
+/// Resolve a built-in component by name
+async fn resolve_builtin(name: &str) -> Result<McpServer> {
+    let exe = current_exe()?;
+    let exe_str = exe.to_string_lossy().to_string();
+
+    // Check if it's a known built-in proxy
+    match name {
+        "ferris" | "cargo" => Ok(McpServer::Stdio(McpServerStdio::new(name, &exe_str).args(
+            vec![
+                "proxy-shim".to_string(),
+                "--proxy".to_string(),
+                name.to_string(),
+            ],
+        ))),
+        "eliza" => Ok(McpServer::Stdio(
+            McpServerStdio::new("ElizACP", &exe_str).args(vec!["eliza".to_string()]),
+        )),
+        _ => bail!(
+            "Unknown built-in component: '{}'. Available builtins: ferris, cargo, eliza",
+            name
+        ),
+    }
+}
+
+/// Resolve a component from the registry by ID
+async fn resolve_from_registry(id: &str) -> Result<McpServer> {
+    // Check built-in agents first
+    for entry in built_in_agents()? {
+        if entry.id == id {
+            let Some(server) = resolve_distribution(&entry).await? else {
+                bail!("Failed to resolve built-in agent: {}", id);
+            };
+            return Ok(server);
+        }
+    }
+
+    // Check built-in proxies
+    for entry in built_in_proxies()? {
+        if entry.id == id {
+            let Some(server) = resolve_distribution(&entry).await? else {
+                bail!("Failed to resolve built-in proxy: {}", id);
+            };
+            return Ok(server);
+        }
+    }
+
+    // Fetch registry
+    let registry = fetch_registry().await?;
+
+    // Check agents
+    if let Some(entry) = registry.agents.iter().find(|a| a.id == id) {
+        if let Some(server) = resolve_distribution(entry).await? {
+            return Ok(server);
+        }
+    }
+
+    // Check extensions
+    if let Some(entry) = registry.extensions.iter().find(|e| e.id == id) {
+        if let Some(server) = resolve_distribution(entry).await? {
+            return Ok(server);
+        }
+    }
+
+    bail!("Component '{}' not found in registry", id)
+}
+
+/// Resolve from a URL to extension.json
+async fn resolve_from_url(url: &str) -> Result<McpServer> {
+    // Fetch extension.json from URL
+    let response = reqwest::get(url)
+        .await
+        .with_context(|| format!("Failed to fetch extension from URL: {}", url))?;
+
+    if !response.status().is_success() {
+        bail!(
+            "Failed to fetch extension from URL: {} {}",
+            response.status().as_u16(),
+            response.status().canonical_reason().unwrap_or("Unknown")
+        );
+    }
+
+    let entry: RegistryEntry = response
+        .json()
+        .await
+        .context("Failed to parse extension.json")?;
+
+    resolve_distribution(&entry).await?.with_context(|| {
+        format!(
+            "No compatible distribution found for extension from {}",
+            url
+        )
+    })
+}
+
+/// Resolve a local distribution
+fn resolve_local(local: &LocalDistribution) -> Result<McpServer> {
+    let env: Vec<EnvVariable> = local
+        .env
+        .iter()
+        .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
+        .collect();
+
+    Ok(McpServer::Stdio(
+        McpServerStdio::new(&local.command, &local.command)
+            .args(local.args.clone())
+            .env(env),
+    ))
+}
+
+/// Resolve an NPX distribution
+fn resolve_npx(npx: &NpxDistribution) -> Result<McpServer> {
+    let mut args = vec!["-y".to_string(), npx.package.clone()];
+    args.extend(npx.args.clone());
+
+    let env: Vec<EnvVariable> = npx
+        .env
+        .iter()
+        .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
+        .collect();
+
+    Ok(McpServer::Stdio(
+        McpServerStdio::new(&npx.package, "npx").args(args).env(env),
+    ))
+}
+
+/// Resolve a Pipx distribution
+fn resolve_pipx(pipx: &PipxDistribution) -> Result<McpServer> {
+    let mut args = vec!["run".to_string(), pipx.package.clone()];
+    args.extend(pipx.args.clone());
+
+    Ok(McpServer::Stdio(
+        McpServerStdio::new(&pipx.package, "pipx").args(args),
+    ))
+}
+
+/// Resolve a Cargo distribution
+async fn resolve_cargo(cargo: &CargoDistribution) -> Result<McpServer> {
+    // Query crates.io for version and binary names
+    let (version, bin_names) =
+        query_crate_binaries(&cargo.crate_name, cargo.version.as_deref()).await?;
+
+    // Determine binary name
+    let binary_name = match &cargo.binary {
+        Some(name) => name.clone(),
+        None => {
+            if bin_names.is_empty() {
+                bail!("Crate '{}' has no binary targets", cargo.crate_name);
+            } else if bin_names.len() == 1 {
+                bin_names[0].clone()
+            } else {
+                bail!(
+                    "Crate '{}' has multiple binaries {:?}, please specify one explicitly",
+                    cargo.crate_name,
+                    bin_names
+                );
+            }
+        }
+    };
+
+    let cache_dir = get_binary_cache_dir(&cargo.crate_name, &version)?;
+    let binary_path = cache_dir.join("bin").join(&binary_name);
+
+    // Check if we need to install
+    if !binary_path.exists() {
+        install_cargo_crate(&cargo.crate_name, &version, &binary_name, &cache_dir).await?;
+    }
+
+    Ok(McpServer::Stdio(
+        McpServerStdio::new(&cargo.crate_name, &binary_path).args(cargo.args.clone()),
+    ))
+}
+
+/// Resolve a binary distribution
+async fn resolve_binary(binary_map: &BTreeMap<String, BinaryDistribution>) -> Result<McpServer> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let platform_key = get_platform_key();
+    let binary = binary_map
+        .get(&platform_key)
+        .with_context(|| format!("No binary available for platform {}", platform_key))?;
+
+    // Use a hash of the archive URL as the version for caching
+    let mut hasher = DefaultHasher::new();
+    binary.archive.hash(&mut hasher);
+    let version = format!("{:016x}", hasher.finish());
+
+    let cache_dir = get_binary_cache_dir("binary", &version)?;
+    let executable = binary.cmd.trim_start_matches("./");
+    let executable_path = cache_dir.join(executable);
+
+    // Check if we need to download
+    if !executable_path.exists() {
+        download_and_cache_binary("binary", &version, binary, &cache_dir).await?;
+    }
+
+    Ok(McpServer::Stdio(
+        McpServerStdio::new(executable, executable_path).args(binary.args.clone()),
+    ))
+}
+
 /// Resolve a registry entry's distribution to an McpServer
 pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpServer>> {
     let dist = &entry.distribution;
@@ -994,5 +1340,72 @@ mod tests {
             let mode = metadata.permissions().mode();
             assert!(mode & 0o111 != 0, "Binary should be executable");
         }
+    }
+
+    #[test]
+    fn test_component_source_serialization() {
+        // Test that ComponentSource serializes to expected JSON format
+        let source = ComponentSource::Builtin("ferris".to_string());
+        let json = serde_json::to_string(&source).unwrap();
+        assert_eq!(json, r#"{"builtin":"ferris"}"#);
+
+        let source = ComponentSource::Cargo(CargoDistribution {
+            crate_name: "sparkle-mcp".to_string(),
+            version: None,
+            binary: None,
+            args: vec!["--acp".to_string()],
+        });
+        let json = serde_json::to_string(&source).unwrap();
+        assert!(json.contains(r#""cargo""#));
+        assert!(json.contains(r#""crate":"sparkle-mcp""#));
+    }
+
+    #[test]
+    fn test_component_source_display_name() {
+        assert_eq!(
+            ComponentSource::Builtin("ferris".to_string()).display_name(),
+            "ferris"
+        );
+        assert_eq!(
+            ComponentSource::Registry("claude-code".to_string()).display_name(),
+            "claude-code"
+        );
+        assert_eq!(
+            ComponentSource::Npx(NpxDistribution {
+                package: "@zed-industries/claude-code-acp@latest".to_string(),
+                args: vec![],
+                env: BTreeMap::new(),
+            })
+            .display_name(),
+            "claude-code-acp"
+        );
+        assert_eq!(
+            ComponentSource::Cargo(CargoDistribution {
+                crate_name: "sparkle-mcp".to_string(),
+                version: None,
+                binary: None,
+                args: vec![],
+            })
+            .display_name(),
+            "sparkle-mcp"
+        );
+    }
+
+    #[test]
+    fn test_component_source_ordering() {
+        // ComponentSource should be orderable for use in BTreeMap
+        let mut sources = vec![
+            ComponentSource::Cargo(CargoDistribution {
+                crate_name: "zebra".to_string(),
+                version: None,
+                binary: None,
+                args: vec![],
+            }),
+            ComponentSource::Builtin("alpha".to_string()),
+            ComponentSource::Registry("beta".to_string()),
+        ];
+        sources.sort();
+        // Builtin comes before Cargo, Registry, etc. due to enum variant order
+        assert!(matches!(sources[0], ComponentSource::Builtin(_)));
     }
 }
