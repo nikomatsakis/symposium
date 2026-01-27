@@ -573,6 +573,14 @@ mod tests {
     use super::*;
     use expect_test::expect;
     use serial_test::serial;
+    use std::io::Write;
+
+    /// Write content to a file and sync to disk to avoid race conditions with cargo metadata
+    fn write_synced(path: &Path, content: &str) {
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+    }
 
     #[test]
     fn test_load_builtin_recommendations() {
@@ -992,9 +1000,9 @@ when.grep = { pattern = "println!", path = "**/*.rs" }
     fn test_using_crate_condition() {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        // Create a minimal Cargo project
-        std::fs::write(
-            temp_dir.path().join("Cargo.toml"),
+        // Create a minimal Cargo project (use write_synced to avoid race with cargo metadata)
+        write_synced(
+            &temp_dir.path().join("Cargo.toml"),
             r#"
 [package]
 name = "test-project"
@@ -1004,11 +1012,10 @@ edition = "2021"
 [dependencies]
 serde = "1"
 "#,
-        )
-        .unwrap();
+        );
 
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
-        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+        write_synced(&temp_dir.path().join("src/lib.rs"), "");
 
         // Test using-crate condition
         let when = When {
@@ -1030,9 +1037,9 @@ serde = "1"
     fn test_using_crates_condition() {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        // Create a minimal Cargo project with multiple deps
-        std::fs::write(
-            temp_dir.path().join("Cargo.toml"),
+        // Create a minimal Cargo project with multiple deps (use write_synced to avoid race with cargo metadata)
+        write_synced(
+            &temp_dir.path().join("Cargo.toml"),
             r#"
 [package]
 name = "test-project"
@@ -1043,11 +1050,10 @@ edition = "2021"
 serde = "1"
 anyhow = "1"
 "#,
-        )
-        .unwrap();
+        );
 
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
-        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+        write_synced(&temp_dir.path().join("src/lib.rs"), "");
 
         // Both crates are dependencies
         let when = When {
@@ -1076,26 +1082,25 @@ when.using-crate = "serde"
         let recs = Recommendations::from_toml(toml).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        // Create a project without serde
-        std::fs::write(
-            temp_dir.path().join("Cargo.toml"),
+        // Create a project without serde (use write_synced to avoid race with cargo metadata)
+        write_synced(
+            &temp_dir.path().join("Cargo.toml"),
             r#"
 [package]
 name = "test-project"
 version = "0.1.0"
 edition = "2021"
 "#,
-        )
-        .unwrap();
+        );
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
-        std::fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+        write_synced(&temp_dir.path().join("src/lib.rs"), "");
 
         let workspace_recs = recs.for_workspace(temp_dir.path());
         assert_eq!(workspace_recs.extensions.len(), 0);
 
         // Add serde dependency
-        std::fs::write(
-            temp_dir.path().join("Cargo.toml"),
+        write_synced(
+            &temp_dir.path().join("Cargo.toml"),
             r#"
 [package]
 name = "test-project"
@@ -1105,8 +1110,7 @@ edition = "2021"
 [dependencies]
 serde = "1"
 "#,
-        )
-        .unwrap();
+        );
 
         let workspace_recs = recs.for_workspace(temp_dir.path());
         assert_eq!(workspace_recs.extensions.len(), 1);
