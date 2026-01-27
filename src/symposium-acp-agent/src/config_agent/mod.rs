@@ -13,7 +13,7 @@ mod uberconductor_actor;
 #[cfg(test)]
 mod tests;
 
-use crate::recommendations::{RecommendationDiff, Recommendations};
+use crate::recommendations::{Recommendations, WorkspaceRecommendations};
 use crate::registry::ComponentSource;
 use crate::user_config::WorkspaceConfig;
 use conductor_actor::ConductorHandle;
@@ -139,6 +139,13 @@ impl ConfigAgent {
         Recommendations::load_builtin()
             .map_err(|e| tracing::warn!("Failed to load recommendations: {}", e))
             .ok()
+    }
+
+    /// Load the recommendations for a particular workspace
+    fn recommendations_for_workspace(&self, workspace_path: &Path) -> WorkspaceRecommendations {
+        self.load_recommendations()
+            .map(|r| r.for_workspace(&workspace_path))
+            .unwrap_or_default()
     }
 
     /// The main "config agent method"
@@ -358,9 +365,7 @@ impl ConfigAgent {
             request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
             // Load and evaluate recommendations for this workspace
-            let workspace_recs = self
-                .load_recommendations()
-                .map(|r| r.for_workspace(&workspace_path));
+            let workspace_recs = self.recommendations_for_workspace(&workspace_path);
 
             // Spawn the config mode actor with None config (triggers initial setup)
             let actor_handle = ConfigModeHandle::spawn_initial_config(
@@ -369,6 +374,7 @@ impl ConfigAgent {
                 self.default_agent_override.clone(),
                 session_id.clone(),
                 config_agent_tx.clone(),
+                None,
                 cx,
             )?;
 
@@ -389,15 +395,9 @@ impl ConfigAgent {
         // Load and evaluate recommendations for this workspace
         if let Some(recs) = self.load_recommendations() {
             let workspace_recs = recs.for_workspace(&workspace_path);
-            let diff = RecommendationDiff::compute(&workspace_recs, &config);
+            if let Some(diff) = workspace_recs.diff_against(&config) {
+                tracing::debug!(?diff, "diff computed",);
 
-            tracing::debug!(
-                ?diff,
-                has_changes = ?diff.has_changes(),
-                "diff computed"
-            );
-
-            if diff.has_changes() {
                 // We have changes to present - spawn diff-only actor
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
 
@@ -409,7 +409,7 @@ impl ConfigAgent {
                 let actor_handle = ConfigModeHandle::spawn_with_recommendations(
                     config,
                     workspace_path.clone(),
-                    workspace_recs,
+                    diff,
                     session_id.clone(),
                     config_agent_tx.clone(),
                     cx,
@@ -451,9 +451,7 @@ impl ConfigAgent {
                 conductor,
                 workspace_path,
             }) => (conductor.clone(), workspace_path.clone()),
-            Some(SessionState::Config { .. }) |
-            Some(SessionState::PendingDiff { .. }) |
-            None => {
+            Some(SessionState::Config { .. }) | Some(SessionState::PendingDiff { .. }) | None => {
                 // Can't enter config mode while diff is pending
                 return request_cx.respond_with_error(sacp::Error::new(
                     -32600,
@@ -471,15 +469,31 @@ impl ConfigAgent {
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
-        let actor_handle = ConfigModeHandle::spawn_reconfig(
-            current_config,
-            workspace_path.clone(),
-            self.default_agent_override.clone(),
-            session_id.clone(),
-            config_agent_tx.clone(),
-            resume_tx,
-            cx,
-        )?;
+        let actor_handle = match current_config {
+            // The normal case: the config still exists, configure it
+            Some(current_config) => ConfigModeHandle::spawn_reconfig(
+                current_config,
+                workspace_path.clone(),
+                self.default_agent_override.clone(),
+                session_id.clone(),
+                config_agent_tx.clone(),
+                resume_tx,
+                cx,
+            )?,
+            // If for some reason the existing configuration has vanished, reinitialize it
+            None => {
+                let workspace_recs = self.recommendations_for_workspace(&workspace_path);
+                ConfigModeHandle::spawn_initial_config(
+                    workspace_path.clone(),
+                    workspace_recs,
+                    self.default_agent_override.clone(),
+                    session_id.clone(),
+                    config_agent_tx.clone(),
+                    Some(resume_tx),
+                    cx,
+                )?
+            }
+        };
 
         // Transition to config state
         self.sessions.insert(
