@@ -306,15 +306,11 @@ impl ConfigModeActor {
         if !self.diff.to_add.is_empty() {
             self.send_message("The following extensions are now recommended:\n");
             for extension in &self.diff.to_remove {
-                if let Some(when) = &extension.when {
-                    self.send_message(&format!(
-                        "- {} [{}]\n",
-                        extension.source.display_name(),
-                        when.explain_why_added().join(", ")
-                    ));
-                } else {
-                    self.send_message(&format!("- {}\n", extension.source.display_name()));
-                }
+                self.send_message(&format!(
+                    "- {} [{}]\n",
+                    extension.source.display_name(),
+                    extension.when.explain_why_added().join(", ")
+                ));
             }
             self.send_message("\n");
         }
@@ -324,15 +320,11 @@ impl ConfigModeActor {
                 "The following extensions were removed as they are no longer recommended:\n",
             );
             for extension in &self.diff.to_remove {
-                if let Some(when) = &extension.when {
-                    self.send_message(&format!(
-                        "- {} [{}]\n",
-                        extension.source.display_name(),
-                        when.explain_why_stale().join(", ")
-                    ));
-                } else {
-                    self.send_message(&format!("- {}\n", extension.source.display_name()));
-                }
+                self.send_message(&format!(
+                    "- {} [{}]\n",
+                    extension.source.display_name(),
+                    extension.when.explain_why_stale().join(", ")
+                ));
             }
             self.send_message("\n");
         }

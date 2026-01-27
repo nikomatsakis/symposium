@@ -23,8 +23,7 @@ pub struct ExtensionConfig {
 
     /// The conditions that caused this extension to be recommended.
     /// Used to explain why an extension is stale when the conditions no longer apply.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<When>,
+    pub when: When,
 }
 
 /// Per-workspace configuration for Symposium.
@@ -109,7 +108,7 @@ impl WorkspaceConfig {
             .map(|source| ExtensionConfig {
                 source,
                 enabled: true,
-                when: None,
+                when: When::default(),
             })
             .collect();
 
@@ -161,39 +160,6 @@ impl WorkspaceConfig {
             .filter(|extension| extension.enabled)
             .map(|extension| extension.source.clone())
             .collect()
-    }
-
-    /// Add an extension (enabled by default)
-    pub fn add_extension(&mut self, source: ComponentSource) {
-        self.extensions.push(ExtensionConfig { source, enabled: false, when: None });
-    }
-
-    /// Remove an extension
-    pub fn remove_extension(&mut self, source: &ComponentSource) {
-        self.extensions.retain(|extension| extension.source != *source);
-    }
-
-    /// Toggle an extension's enabled state
-    pub fn toggle_extension(&mut self, index: usize) {
-        let extension = &mut self.extensions[index];
-        extension.enabled = !extension.enabled;
-    }
-
-    /// Get the when conditions for an extension (for explaining why it's stale)
-    pub fn extension_when(&self, source: &ComponentSource) -> Option<When> {
-        self.extensions
-            .iter()
-            .find(|e| &e.source == source)
-            .and_then(|e| e.when.clone())
-    }
-
-    /// Check if an extension is enabled
-    pub fn is_extension_enabled(&self, source: &ComponentSource) -> bool {
-        self.extensions
-            .iter()
-            .find(|e| &e.source == source)
-            .map(|e| e.enabled)
-            .unwrap_or(false)
     }
 }
 
@@ -331,6 +297,7 @@ impl SymposiumUserConfig {
 mod tests {
     use super::*;
     use crate::registry::{CargoDistribution, NpxDistribution};
+    use expect_test::expect;
     use std::collections::BTreeMap;
 
     #[test]
@@ -350,11 +317,59 @@ mod tests {
             }),
         ];
 
-        let config = WorkspaceConfig::new(agent.clone(), extensions);
+        let config = WorkspaceConfig::new(agent, extensions);
 
-        assert_eq!(config.agent, agent);
-        assert_eq!(config.extensions.len(), 2);
-        assert!(config.is_extension_enabled(&ComponentSource::Builtin("ferris".to_string())));
+        expect![[r#"
+            WorkspaceConfig {
+                agent: Npx(
+                    NpxDistribution {
+                        package: "@zed-industries/claude-code-acp@latest",
+                        args: [],
+                        env: {},
+                    },
+                ),
+                extensions: [
+                    ExtensionConfig {
+                        source: Builtin(
+                            "ferris",
+                        ),
+                        enabled: true,
+                        when: When {
+                            file_exists: None,
+                            files_exist: None,
+                            using_crate: None,
+                            using_crates: None,
+                            grep: None,
+                            any: None,
+                            all: None,
+                        },
+                    },
+                    ExtensionConfig {
+                        source: Cargo(
+                            CargoDistribution {
+                                crate_name: "sparkle-mcp",
+                                version: None,
+                                binary: None,
+                                args: [
+                                    "--acp",
+                                ],
+                            },
+                        ),
+                        enabled: true,
+                        when: When {
+                            file_exists: None,
+                            files_exist: None,
+                            using_crate: None,
+                            using_crates: None,
+                            grep: None,
+                            any: None,
+                            all: None,
+                        },
+                    },
+                ],
+            }
+        "#]]
+        .assert_debug_eq(&config);
     }
 
     #[test]

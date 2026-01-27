@@ -513,7 +513,7 @@ impl WorkspaceRecommendations {
                 to_add.push(ExtensionConfig {
                     source: extension.source.clone(),
                     enabled: true,
-                    when: extension.when.clone(),
+                    when: extension.when.clone().unwrap_or_default(),
                 });
             }
         }
@@ -724,26 +724,32 @@ when.files-exist = ["src/lib.rs"]
                             "foo",
                         ),
                         enabled: true,
-                        when: Some(
-                            When {
-                                file_exists: Some(
-                                    "Cargo.toml",
-                                ),
-                                files_exist: None,
-                                using_crate: None,
-                                using_crates: None,
-                                grep: None,
-                                any: None,
-                                all: None,
-                            },
-                        ),
+                        when: When {
+                            file_exists: Some(
+                                "Cargo.toml",
+                            ),
+                            files_exist: None,
+                            using_crate: None,
+                            using_crates: None,
+                            grep: None,
+                            any: None,
+                            all: None,
+                        },
                     },
                     ExtensionConfig {
                         source: Builtin(
                             "bar",
                         ),
                         enabled: true,
-                        when: None,
+                        when: When {
+                            file_exists: None,
+                            files_exist: None,
+                            using_crate: None,
+                            using_crates: None,
+                            grep: None,
+                            any: None,
+                            all: None,
+                        },
                     },
                 ],
                 to_remove: [],
@@ -762,10 +768,10 @@ when.files-exist = ["src/lib.rs"]
         config.extensions.push(ExtensionConfig {
             source: ComponentSource::Builtin("old-ext".to_string()),
             enabled: true,
-            when: Some(When {
+            when: When {
                 file_exists: Some("old.txt".to_string()),
                 ..Default::default()
-            }),
+            },
         });
 
         let diff = recs.diff_against(&config).expect("should have changes");
@@ -779,19 +785,17 @@ when.files-exist = ["src/lib.rs"]
                             "old-ext",
                         ),
                         enabled: true,
-                        when: Some(
-                            When {
-                                file_exists: Some(
-                                    "old.txt",
-                                ),
-                                files_exist: None,
-                                using_crate: None,
-                                using_crates: None,
-                                grep: None,
-                                any: None,
-                                all: None,
-                            },
-                        ),
+                        when: When {
+                            file_exists: Some(
+                                "old.txt",
+                            ),
+                            files_exist: None,
+                            using_crate: None,
+                            using_crates: None,
+                            grep: None,
+                            any: None,
+                            all: None,
+                        },
                     },
                 ],
             }
@@ -809,7 +813,7 @@ when.files-exist = ["src/lib.rs"]
         config.extensions.push(ExtensionConfig {
             source: ComponentSource::Builtin("foo".to_string()),
             enabled: true,
-            when: None,
+            when: When::default(),
         });
 
         let diff = recs.diff_against(&config);
@@ -825,7 +829,7 @@ when.files-exist = ["src/lib.rs"]
         config.extensions.push(ExtensionConfig {
             source: ComponentSource::Builtin("foo".to_string()),
             enabled: false, // Disabled
-            when: None,
+            when: When::default(),
         });
 
         let diff = recs.diff_against(&config);
@@ -843,7 +847,7 @@ when.files-exist = ["src/lib.rs"]
         config.extensions.push(ExtensionConfig {
             source: ComponentSource::Builtin("old".to_string()),
             enabled: true,
-            when: None,
+            when: When::default(),
         });
 
         let diff = recs.diff_against(&config).expect("should have changes");
