@@ -70,11 +70,6 @@ enum SessionState {
         conductor: ConductorHandle,
         workspace_path: PathBuf,
     },
-
-    /// Session is pending diff resolution before being created.
-    /// The actor is handling the diff prompt; when done, we'll create the real session.
-    /// Note: workspace_path is stored in the actor and passed back via DiffCompleted message.
-    PendingDiff { actor: ConfigModeHandle },
 }
 
 /// The ConfigAgent manages sessions and configuration.
@@ -291,14 +286,7 @@ impl ConfigAgent {
                         return_to,
                         ..
                     }) => (workspace_path.clone(), return_to.clone()),
-                    Some(SessionState::PendingDiff { .. }) => {
-                        // PendingDiff cancellation should come via DiffCancelled message
-                        tracing::warn!(
-                            "Unexpected Cancelled output for PendingDiff session: {:?}",
-                            session_id
-                        );
-                        return Ok(());
-                    }
+
                     _ => {
                         tracing::warn!(
                             "Config mode cancelled for unknown session: {:?}",
@@ -422,9 +410,7 @@ impl ConfigAgent {
 
                 self.sessions.insert(
                     session_id,
-                    SessionState::PendingDiff {
-                        actor: actor_handle,
-                    },
+                    SessionState::Config { actor: actor_handle, workspace_path, return_to: None },
                 );
 
                 return Ok(());
@@ -456,7 +442,7 @@ impl ConfigAgent {
                 conductor,
                 workspace_path,
             }) => (conductor.clone(), workspace_path.clone()),
-            Some(SessionState::Config { .. }) | Some(SessionState::PendingDiff { .. }) | None => {
+            Some(SessionState::Config { .. }) | None => {
                 // Can't enter config mode while diff is pending
                 return request_cx.respond_with_error(sacp::Error::new(
                     -32600,
@@ -557,8 +543,7 @@ impl ConfigAgent {
                     conductor.send_prompt(request, request_cx).await
                 }
             }
-            Some(SessionState::Config { actor, .. })
-            | Some(SessionState::PendingDiff { actor, .. }) => {
+            Some(SessionState::Config { actor, .. }) => {
                 // Forward input to the config mode actor
                 let input = Self::extract_prompt_text(&request);
                 if actor.send_input(input).await.is_err() {
@@ -596,7 +581,7 @@ impl ConfigAgent {
             Some(SessionState::Delegating { conductor, .. }) => {
                 conductor.forward_message(message).await
             }
-            Some(SessionState::Config { .. }) | Some(SessionState::PendingDiff { .. }) => {
+            Some(SessionState::Config { .. }) => {
                 // Config mode and pending diff don't handle arbitrary messages
                 match message {
                     MessageCx::Request(req, request_cx) => {
