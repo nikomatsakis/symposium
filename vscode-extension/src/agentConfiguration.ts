@@ -3,8 +3,8 @@ import * as vscode from "vscode";
 /**
  * AgentConfiguration - Identifies a unique agent setup
  *
- * Now simplified to just the workspace folder since Symposium's ConfigAgent
- * handles agent selection and extensions via its own configuration system.
+ * Currently just the workspace folder. Symposium's ConfigAgent handles
+ * agent selection and extensions via its own configuration system.
  */
 
 export class AgentConfiguration {
