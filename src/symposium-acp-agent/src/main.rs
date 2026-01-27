@@ -307,11 +307,6 @@ async fn main() -> Result<()> {
                     .serve(sacp_tokio::Stdio::new())
                     .await?;
             }
-            "cargo" => {
-                symposium_cargo::CargoProxy
-                    .serve(sacp_tokio::Stdio::new())
-                    .await?;
-            }
             _ => {
                 anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
             }

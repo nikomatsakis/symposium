@@ -14,5 +14,5 @@ when.file-exists = "Cargo.toml"
 
 # Cargo - Cargo build/test tools (recommended for Rust projects)
 [[recommendation]]
-source.builtin = "cargo"
+source.cargo = { crate = "symposium-cargo" }
 when.file-exists = "Cargo.toml"

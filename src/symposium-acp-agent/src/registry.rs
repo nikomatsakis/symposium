@@ -311,19 +311,34 @@ pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
             version: String::new(),
             description: Some("Built-in Cargo component".to_string()),
             distribution: Distribution {
-                local: Some(LocalDistribution {
-                    command: exe_str.clone(),
-                    args: vec![
-                        "proxy-shim".to_string(),
-                        "--proxy".to_string(),
-                        "cargo".to_string(),
-                    ],
-                    env: BTreeMap::new(),
-                }),
+                local: None,
                 npx: None,
                 pipx: None,
                 binary: None,
-                cargo: None,
+                cargo: Some(CargoDistribution {
+                    crate_name: "symposium-cargo".to_string(),
+                    version: None, // Use latest
+                    binary: None,  // Auto-discover from crates.io
+                    args: vec![],
+                }),
+            },
+        },
+        RegistryEntry {
+            id: "rust-analyzer".to_string(),
+            name: "Rust-analyzer".to_string(),
+            version: String::new(),
+            description: Some("Rust-analyzer ACP proxy".to_string()),
+            distribution: Distribution {
+                local: None,
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: Some(CargoDistribution {
+                    crate_name: "symposium-rust-analyzer".to_string(),
+                    version: None, // Use latest
+                    binary: None,  // Auto-discover from crates.io
+                    args: vec![],
+                }),
             },
         },
     ])
