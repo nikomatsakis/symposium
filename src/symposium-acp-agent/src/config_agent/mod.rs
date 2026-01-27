@@ -340,6 +340,7 @@ impl ConfigAgent {
     }
 
     /// Handle a new session request.
+    #[tracing::instrument(skip(self, request_cx, uberconductor, cx, config_agent_tx), ret)]
     async fn handle_new_session(
         &mut self,
         request: NewSessionRequest,
@@ -348,6 +349,8 @@ impl ConfigAgent {
         cx: &JrConnectionCx<AgentToClient>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
+        tracing::debug!(?request, "handle_new_session");
+
         // Clone workspace_path upfront so we can move request later
         let workspace_path = request.cwd.clone();
 
@@ -357,6 +360,8 @@ impl ConfigAgent {
             .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
         let Some(config) = config else {
+            tracing::debug!("handle_new_session: no existing config");
+
             // No config - enter config mode for initial setup.
             // ConfigModeActor with None config will show welcome and agent selection.
             let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
@@ -390,13 +395,13 @@ impl ConfigAgent {
             return Ok(());
         };
 
-        tracing::debug!(?config, "found existing configuration");
+        tracing::debug!(?config, "handle_new_session: found existing configuration");
 
         // Load and evaluate recommendations for this workspace
         if let Some(recs) = self.load_recommendations() {
             let workspace_recs = recs.for_workspace(&workspace_path);
             if let Some(diff) = workspace_recs.diff_against(&config) {
-                tracing::debug!(?diff, "diff computed",);
+                tracing::debug!(?diff, "handle_new_session: diff computed");
 
                 // We have changes to present - spawn diff-only actor
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
@@ -426,7 +431,7 @@ impl ConfigAgent {
             }
         }
 
-        tracing::debug!(?config, "launching new session");
+        tracing::debug!(?config, "handle_new_session: launching new session");
 
         // No diff changes - proceed directly to uberconductor
         uberconductor

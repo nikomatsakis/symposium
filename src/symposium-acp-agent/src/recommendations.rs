@@ -74,34 +74,34 @@ impl Recommendation {
 /// Multiple fields at the same level are combined with AND.
 /// Use `any` for OR logic, `all` for explicit AND grouping.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(default, rename_all = "kebab-case")]
 pub struct When {
     /// Single file must exist in workspace root
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_exists: Option<String>,
 
     /// All files must exist in workspace root (AND)
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub files_exist: Option<Vec<String>>,
 
     /// Single crate must be a dependency
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub using_crate: Option<String>,
 
     /// All crates must be dependencies (AND)
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub using_crates: Option<Vec<String>>,
 
     /// Pattern must match in files
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grep: Option<GrepCondition>,
 
     /// Any of these conditions must match (OR)
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub any: Option<Vec<When>>,
 
     /// All of these conditions must match (explicit AND)
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub all: Option<Vec<When>>,
 }
 
