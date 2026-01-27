@@ -142,18 +142,6 @@ pub enum ComponentSource {
     Binary(BTreeMap<String, BinaryDistribution>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(transparent)]
-pub struct ConfigKey {
-    value: String,
-}
-
-impl From<String> for ConfigKey {
-    fn from(value: String) -> Self {
-        ConfigKey { value }
-    }
-}
-
 impl ComponentSource {
     /// Get a human-readable display name for this source
     pub fn display_name(&self) -> String {
@@ -188,16 +176,6 @@ impl ComponentSource {
             ComponentSource::Cargo(cargo) => cargo.crate_name.clone(),
             ComponentSource::Binary(_) => "binary".to_string(),
         }
-    }
-
-    /// Convert to a stable JSON key for use in config files
-    pub fn to_config_key(&self) -> ConfigKey {
-        ConfigKey::from(serde_json::to_string(self).expect("can create JSON"))
-    }
-
-    /// Parse from a config key
-    pub fn from_config_key(key: &ConfigKey) -> Result<Self> {
-        serde_json::from_str(&key.value).context("Failed to parse ComponentSource from config key")
     }
 
     /// Resolve this source to an McpServer that can be spawned
@@ -1380,31 +1358,6 @@ mod tests {
         let json = serde_json::to_string(&source).unwrap();
         assert!(json.contains(r#""cargo""#));
         assert!(json.contains(r#""crate":"sparkle-mcp""#));
-    }
-
-    #[test]
-    fn test_component_source_config_key_roundtrip() {
-        let sources = vec![
-            ComponentSource::Builtin("ferris".to_string()),
-            ComponentSource::Registry("claude-code".to_string()),
-            ComponentSource::Npx(NpxDistribution {
-                package: "@example/test".to_string(),
-                args: vec![],
-                env: BTreeMap::new(),
-            }),
-            ComponentSource::Cargo(CargoDistribution {
-                crate_name: "sparkle-mcp".to_string(),
-                version: Some("0.1.0".to_string()),
-                binary: None,
-                args: vec!["--acp".to_string()],
-            }),
-        ];
-
-        for source in sources {
-            let key = source.to_config_key();
-            let parsed = ComponentSource::from_config_key(&key).unwrap();
-            assert_eq!(source, parsed, "Roundtrip failed for {:?}", source);
-        }
     }
 
     #[test]

@@ -423,19 +423,6 @@ impl ConfigModeActor {
         }
     }
 
-    /// Get ordered list of extensions with their sources for display.
-    fn get_extension_list(&self, config: &WorkspaceConfig) -> Vec<(ComponentSource, bool)> {
-        config
-            .extensions
-            .iter()
-            .filter_map(|(key, ext_config)| {
-                ComponentSource::from_config_key(key)
-                    .ok()
-                    .map(|source| (source, ext_config.enabled))
-            })
-            .collect()
-    }
-
     /// Wait for the next user input.
     async fn next_input(&mut self) -> Option<String> {
         match self.rx.next().await {
@@ -535,27 +522,24 @@ impl ConfigModeActor {
             return MenuAction::Redisplay;
         }
 
-        let extensions = self.get_extension_list(config);
-
         // Toggle extension by index (1-based)
         if let Ok(display_index) = text.parse::<usize>() {
-            if display_index >= 1 && display_index <= extensions.len() {
-                let (source, _enabled) = &extensions[display_index - 1];
-                let new_enabled = config.toggle_extension(source);
-                let status = if new_enabled { "enabled" } else { "disabled" };
+            if display_index >= 1 && display_index <= config.extensions.len() {
+                let extension = &mut config.extensions[display_index - 1];
+                extension.enabled = !extension.enabled;
                 self.send_message(format!(
                     "Extension `{}` is now {}.",
-                    source.display_name(),
-                    status
+                    extension.source.display_name(),
+                    if extension.enabled { "enabled" } else { "disabled" },
                 ));
                 return MenuAction::Redisplay;
-            } else if extensions.is_empty() {
+            } else if config.extensions.is_empty() {
                 self.send_message("No extensions configured.");
                 return MenuAction::Continue;
             } else {
                 self.send_message(format!(
                     "Invalid index. Please enter 1-{}.",
-                    extensions.len()
+                    config.extensions.len()
                 ));
                 return MenuAction::Continue;
             }
@@ -592,15 +576,13 @@ impl ConfigModeActor {
         msg.push_str(&format!("* **Agent:** {}\n", config.agent.display_name()));
 
         // Extensions
-        let extensions = self.get_extension_list(config);
         msg.push_str("* **Extensions:**\n");
-        if extensions.is_empty() {
+        if config.extensions.is_empty() {
             msg.push_str("    * (none configured)\n");
         } else {
-            for (i, (source, enabled)) in extensions.iter().enumerate() {
-                let display_index = i + 1;
-                let name = source.display_name();
-                if *enabled {
+            for (extension, display_index) in config.extensions.iter().zip(1..) {
+                let name = extension.source.display_name();
+                if extension.enabled {
                     msg.push_str(&format!("    {}. {}\n", display_index, name));
                 } else {
                     msg.push_str(&format!("    {}. ~~{}~~ (disabled)\n", display_index, name));
@@ -612,8 +594,10 @@ impl ConfigModeActor {
         // Commands
         msg.push_str("# Commands\n\n");
         msg.push_str("- `a` - Change agent\n");
-        if !extensions.is_empty() {
-            msg.push_str("- `1`, `2`, ... - Toggle extension enabled/disabled\n");
+        match config.extensions.len() {
+            0 => {}
+            1 => msg.push_str(&format!("- `1` - Toggle extension enabled/disabled\n")),
+            n => msg.push_str(&format!("- `1` through `{n}` - Toggle extension enabled/disabled\n")),
         }
         msg.push_str("- `save` - Save for future sessions\n");
         msg.push_str("- `cancel` - Exit without saving\n");

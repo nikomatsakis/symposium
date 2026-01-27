@@ -7,15 +7,17 @@
 //! agents and extensions, enabling easy diffing with recommendations.
 
 use crate::recommendations::When;
-use crate::registry::{ComponentSource, ConfigKey};
+use crate::registry::ComponentSource;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Extension configuration entry
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExtensionConfig {
+    /// The source of this extension
+    pub source: ComponentSource,
+
     /// Whether this extension is enabled
     pub enabled: bool,
 
@@ -23,33 +25,6 @@ pub struct ExtensionConfig {
     /// Used to explain why an extension is stale when the conditions no longer apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<When>,
-}
-
-impl ExtensionConfig {
-    /// Create an enabled extension config with the given conditions
-    pub fn enabled_with_when(when: Option<When>) -> Self {
-        Self {
-            enabled: true,
-            when,
-        }
-    }
-
-    /// Create a disabled extension config with the given conditions
-    pub fn disabled_with_when(when: Option<When>) -> Self {
-        Self {
-            enabled: false,
-            when,
-        }
-    }
-}
-
-impl Default for ExtensionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            when: None,
-        }
-    }
 }
 
 /// Per-workspace configuration for Symposium.
@@ -64,7 +39,7 @@ pub struct WorkspaceConfig {
     /// Extensions with their enabled state
     /// The key is the JSON-serialized ComponentSource
     #[serde(default)]
-    pub extensions: BTreeMap<ConfigKey, ExtensionConfig>,
+    pub extensions: Vec<ExtensionConfig>,
 }
 
 // ============================================================================
@@ -131,9 +106,10 @@ impl WorkspaceConfig {
     pub fn new(agent: ComponentSource, extensions: Vec<ComponentSource>) -> Self {
         let extensions = extensions
             .into_iter()
-            .map(|source| {
-                let key = source.to_config_key();
-                (key, ExtensionConfig::default())
+            .map(|source| ExtensionConfig {
+                source,
+                enabled: true,
+                when: None,
             })
             .collect();
 
@@ -182,72 +158,41 @@ impl WorkspaceConfig {
     pub fn enabled_extensions(&self) -> Vec<ComponentSource> {
         self.extensions
             .iter()
-            .filter(|(_, config)| config.enabled)
-            .filter_map(|(key, _)| ComponentSource::from_config_key(key).ok())
+            .filter(|extension| extension.enabled)
+            .map(|extension| extension.source.clone())
             .collect()
     }
 
     /// Add an extension (enabled by default)
     pub fn add_extension(&mut self, source: ComponentSource) {
-        let key = source.to_config_key();
-        self.extensions
-            .entry(key)
-            .or_insert(ExtensionConfig::default());
+        self.extensions.push(ExtensionConfig { source, enabled: false, when: None });
     }
 
     /// Remove an extension
     pub fn remove_extension(&mut self, source: &ComponentSource) {
-        let key = source.to_config_key();
-        self.extensions.remove(&key);
+        self.extensions.retain(|extension| extension.source != *source);
     }
 
     /// Toggle an extension's enabled state
-    pub fn toggle_extension(&mut self, source: &ComponentSource) -> bool {
-        let key = source.to_config_key();
-        if let Some(config) = self.extensions.get_mut(&key) {
-            config.enabled = !config.enabled;
-            config.enabled
-        } else {
-            // Add it if it doesn't exist
-            self.extensions.insert(key, ExtensionConfig::default());
-            true
-        }
-    }
-
-    /// Set an extension's enabled state
-    pub fn set_extension_enabled(&mut self, source: &ComponentSource, enabled: bool) {
-        let key = source.to_config_key();
-        if let Some(config) = self.extensions.get_mut(&key) {
-            config.enabled = enabled;
-        } else {
-            self.extensions
-                .insert(key, ExtensionConfig { enabled, when: None });
-        }
-    }
-
-    /// Add an extension with specific conditions (from a recommendation)
-    pub fn add_extension_with_when(
-        &mut self,
-        source: ComponentSource,
-        enabled: bool,
-        when: Option<When>,
-    ) {
-        let key = source.to_config_key();
-        self.extensions.insert(key, ExtensionConfig { enabled, when });
+    pub fn toggle_extension(&mut self, index: usize) {
+        let extension = &mut self.extensions[index];
+        extension.enabled = !extension.enabled;
     }
 
     /// Get the when conditions for an extension (for explaining why it's stale)
     pub fn extension_when(&self, source: &ComponentSource) -> Option<When> {
-        let key = source.to_config_key();
-        self.extensions.get(&key).and_then(|c| c.when.clone())
+        self.extensions
+            .iter()
+            .find(|e| &e.source == source)
+            .and_then(|e| e.when.clone())
     }
 
     /// Check if an extension is enabled
     pub fn is_extension_enabled(&self, source: &ComponentSource) -> bool {
-        let key = source.to_config_key();
         self.extensions
-            .get(&key)
-            .map(|c| c.enabled)
+            .iter()
+            .find(|e| &e.source == source)
+            .map(|e| e.enabled)
             .unwrap_or(false)
     }
 }
@@ -431,25 +376,6 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_config_toggle_extension() {
-        let agent = ComponentSource::Builtin("eliza".to_string());
-        let mut config = WorkspaceConfig::new(agent, vec![]);
-
-        let ext = ComponentSource::Builtin("ferris".to_string());
-
-        // Initially not present
-        assert!(!config.is_extension_enabled(&ext));
-
-        // Toggle on
-        assert!(config.toggle_extension(&ext));
-        assert!(config.is_extension_enabled(&ext));
-
-        // Toggle off
-        assert!(!config.toggle_extension(&ext));
-        assert!(!config.is_extension_enabled(&ext));
-    }
-
-    #[test]
     fn test_encode_path() {
         let path = PathBuf::from("/Users/test/my-project");
         let encoded = encode_path(&path);
@@ -468,21 +394,5 @@ mod tests {
         assert_ne!(encoded, other_encoded);
     }
 
-    #[test]
-    fn test_enabled_extensions_order() {
-        let agent = ComponentSource::Builtin("eliza".to_string());
-        let extensions = vec![
-            ComponentSource::Builtin("a".to_string()),
-            ComponentSource::Builtin("b".to_string()),
-            ComponentSource::Builtin("c".to_string()),
-        ];
-        let mut config = WorkspaceConfig::new(agent, extensions);
 
-        // Disable b
-        config.set_extension_enabled(&ComponentSource::Builtin("b".to_string()), false);
-
-        let enabled = config.enabled_extensions();
-        assert_eq!(enabled.len(), 2);
-        // BTreeMap orders by key, so order is deterministic
-    }
 }

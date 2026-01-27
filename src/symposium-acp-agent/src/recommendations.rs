@@ -192,10 +192,7 @@ fn is_using_crate(workspace_path: &Path, crate_name: &str) -> bool {
     };
 
     // We need the full metadata to resolve battery pack dependencies
-    let full_metadata = match MetadataCommand::new()
-        .current_dir(workspace_path)
-        .exec()
-    {
+    let full_metadata = match MetadataCommand::new().current_dir(workspace_path).exec() {
         Ok(m) => m,
         Err(_) => return false,
     };
@@ -462,7 +459,12 @@ impl Recommendations {
         let extensions: Vec<Recommendation> = self
             .extensions
             .iter()
-            .filter(|r| r.when.as_ref().map(|w| w.is_met(workspace_path)).unwrap_or(true))
+            .filter(|r| {
+                r.when
+                    .as_ref()
+                    .map(|w| w.is_met(workspace_path))
+                    .unwrap_or(true)
+            })
             .cloned()
             .collect();
 
@@ -492,7 +494,7 @@ impl WorkspaceRecommendations {
 // Recommendation Diffing
 // ============================================================================
 
-use crate::user_config::WorkspaceConfig;
+use crate::user_config::{ExtensionConfig, WorkspaceConfig};
 
 /// A new recommendation that isn't in the user's config yet
 #[derive(Debug, Clone)]
@@ -574,17 +576,18 @@ impl RecommendationDiff {
         let recommended_sources: HashSet<_> = recommendations
             .extensions
             .iter()
-            .map(|r| r.source.to_config_key())
+            .map(|r| r.source.clone())
             .collect();
 
         // Get the set of configured sources
-        let configured_sources: HashSet<_> = config.extensions.keys().cloned().collect();
+        let configured_sources: HashSet<_> =
+            config.extensions.iter().map(|e| e.source.clone()).collect();
 
         // New = recommended but not configured
         let new: Vec<NewRecommendation> = recommendations
             .extensions
             .iter()
-            .filter(|r| !configured_sources.contains(&r.source.to_config_key()))
+            .filter(|r| !configured_sources.contains(&r.source))
             .map(|r| NewRecommendation {
                 recommendation: r.clone(),
                 accepted: true, // Default to accepted
@@ -594,12 +597,13 @@ impl RecommendationDiff {
         // Stale = configured but not recommended
         let stale: Vec<StaleExtension> = config
             .extensions
-            .keys()
-            .filter(|key| !recommended_sources.contains(*key))
-            .filter_map(|key| {
-                let source = ComponentSource::from_config_key(key).ok()?;
-                let when = config.extension_when(&source);
-                Some(StaleExtension { source, when })
+            .iter()
+            .filter(|extension| !recommended_sources.contains(&extension.source))
+            .filter_map(|extension| {
+                Some(StaleExtension {
+                    source: extension.source.clone(),
+                    when: extension.when.clone(),
+                })
             })
             .collect();
 
@@ -676,7 +680,9 @@ impl RecommendationDiff {
         lines.push("* SAVE the new recommendations".to_string());
         lines.push("* IGNORE all new recommendations (you can add them later)".to_string());
         if let Some(n) = self.new_len() {
-            lines.push(format!("* 1...{n} toggle the status of a specific recommendation"));
+            lines.push(format!(
+                "* 1...{n} toggle the status of a specific recommendation"
+            ));
         }
 
         lines.join("\n")
@@ -688,11 +694,11 @@ impl RecommendationDiff {
     pub fn apply_save(&self, config: &mut WorkspaceConfig) {
         // Add new recommendations
         for rec in &self.new {
-            config.add_extension_with_when(
-                rec.recommendation.source.clone(),
-                rec.accepted, // enabled = accepted
-                rec.recommendation.when.clone(),
-            );
+            config.extensions.push(ExtensionConfig {
+                source: rec.recommendation.source.clone(),
+                enabled: rec.accepted,
+                when: rec.recommendation.when.clone(),
+            });
         }
 
         // Remove stale extensions
@@ -705,15 +711,6 @@ impl RecommendationDiff {
     /// - Adds new recommendations as disabled (so they won't be asked again)
     /// - Removes stale extensions
     pub fn apply_ignore(&self, config: &mut WorkspaceConfig) {
-        // Add new recommendations as disabled
-        for rec in &self.new {
-            config.add_extension_with_when(
-                rec.recommendation.source.clone(),
-                false, // Always disabled for IGNORE
-                rec.recommendation.when.clone(),
-            );
-        }
-
         // Remove stale extensions
         for stale in &self.stale {
             config.remove_extension(&stale.source);
@@ -743,11 +740,12 @@ mod tests {
             "Should have extension recommendations"
         );
 
-        // Should have sparkle (always recommended)
+        // Should have sparkle (always recommended) - it's a cargo source
         assert!(
-            recs.extensions
-                .iter()
-                .any(|r| r.source == ComponentSource::Builtin("sparkle".to_string())),
+            recs.extensions.iter().any(|r| matches!(
+                &r.source,
+                ComponentSource::Cargo(dist) if dist.crate_name == "sparkle-mcp"
+            )),
             "Should have sparkle recommendation"
         );
     }
@@ -883,19 +881,18 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_stale_extensions() {
         let recs = make_workspace_recs(vec![]); // No recommendations
-        let mut config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
+        let mut config =
+            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+
         // Add an extension that's not recommended
-        config.add_extension_with_when(
-            ComponentSource::Builtin("old-ext".to_string()),
-            true,
-            Some(When {
+        config.extensions.push(ExtensionConfig {
+            source: ComponentSource::Builtin("old-ext".to_string()),
+            enabled: true,
+            when: Some(When {
                 file_exists: Some("old.txt".to_string()),
                 ..Default::default()
             }),
-        );
+        });
 
         let diff = RecommendationDiff::compute(&recs, &config);
 
@@ -912,12 +909,15 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_no_changes_when_in_sync() {
         let recs = make_workspace_recs(vec![("foo", None)]);
-        let mut config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
+        let mut config =
+            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+
         // Add the same extension that's recommended
-        config.add_extension_with_when(ComponentSource::Builtin("foo".to_string()), true, None);
+        config.extensions.push(ExtensionConfig {
+            source: ComponentSource::Builtin("foo".to_string()),
+            enabled: true,
+            when: None,
+        });
 
         let diff = RecommendationDiff::compute(&recs, &config);
 
@@ -930,15 +930,13 @@ when.files-exist = ["src/lib.rs"]
     fn test_diff_disabled_extension_not_new() {
         // If an extension is in config but disabled, it's still "known" - not new
         let recs = make_workspace_recs(vec![("foo", None)]);
-        let mut config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
-        config.add_extension_with_when(
-            ComponentSource::Builtin("foo".to_string()),
-            false, // Disabled
-            None,
-        );
+        let mut config =
+            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        config.extensions.push(ExtensionConfig {
+            source: ComponentSource::Builtin("foo".to_string()),
+            enabled: false, // Disabled
+            when: None,
+        });
 
         let diff = RecommendationDiff::compute(&recs, &config);
 
@@ -951,10 +949,7 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_toggle() {
         let recs = make_workspace_recs(vec![("foo", None), ("bar", None)]);
-        let config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
+        let config = WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
 
         let mut diff = RecommendationDiff::compute(&recs, &config);
 
@@ -979,16 +974,15 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_apply_save() {
         let recs = make_workspace_recs(vec![("foo", None), ("bar", None)]);
-        let mut config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
+        let mut config =
+            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+            
         // Add a stale extension
-        config.add_extension_with_when(
-            ComponentSource::Builtin("old".to_string()),
-            true,
-            None,
-        );
+        config.extensions.push(ExtensionConfig {
+            source: ComponentSource::Builtin("old".to_string()),
+            enabled: true,
+            when: None,
+        });
 
         let mut diff = RecommendationDiff::compute(&recs, &config);
         // Toggle bar to not accept
@@ -997,41 +991,39 @@ when.files-exist = ["src/lib.rs"]
         diff.apply_save(&mut config);
 
         // foo should be enabled
-        assert!(config.is_extension_enabled(&ComponentSource::Builtin("foo".to_string())));
+        let foo_source = ComponentSource::Builtin("foo".to_string());
+        let foo_ext = config.extensions.iter().find(|e| e.source == foo_source);
+        assert!(foo_ext.is_some() && foo_ext.unwrap().enabled);
         // bar should be disabled (toggled)
-        assert!(!config.is_extension_enabled(&ComponentSource::Builtin("bar".to_string())));
+        let bar_source = ComponentSource::Builtin("bar".to_string());
+        let bar_ext = config.extensions.iter().find(|e| e.source == bar_source);
+        assert!(bar_ext.is_some() && !bar_ext.unwrap().enabled);
         // old should be removed
-        assert!(!config
-            .extensions
-            .contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
+        let old_source = ComponentSource::Builtin("old".to_string());
+        assert!(!config.extensions.iter().any(|e| e.source == old_source));
     }
 
     #[test]
     fn test_diff_apply_ignore() {
         let recs = make_workspace_recs(vec![("foo", None)]);
-        let mut config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![],
-        );
-        config.add_extension_with_when(
-            ComponentSource::Builtin("old".to_string()),
-            true,
-            None,
-        );
+        let mut config =
+            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        config.extensions.push(ExtensionConfig {
+            source: ComponentSource::Builtin("old".to_string()),
+            enabled: true,
+            when: None,
+        });
 
         let diff = RecommendationDiff::compute(&recs, &config);
         diff.apply_ignore(&mut config);
 
-        // foo should be added but disabled
-        assert!(!config.is_extension_enabled(&ComponentSource::Builtin("foo".to_string())));
-        // But it should be in the config (so we don't ask again)
-        assert!(config
-            .extensions
-            .contains_key(&ComponentSource::Builtin("foo".to_string()).to_config_key()));
+        // apply_ignore does NOT add new extensions - it only removes stale ones
+        // foo should NOT be in the config (user chose to ignore, we don't track it)
+        let foo_source = ComponentSource::Builtin("foo".to_string());
+        assert!(!config.extensions.iter().any(|e| e.source == foo_source));
         // old should be removed
-        assert!(!config
-            .extensions
-            .contains_key(&ComponentSource::Builtin("old".to_string()).to_config_key()));
+        let old_source = ComponentSource::Builtin("old".to_string());
+        assert!(!config.extensions.iter().any(|e| e.source == old_source));
     }
 
     #[test]
