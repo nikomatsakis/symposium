@@ -14,7 +14,8 @@ mod uberconductor_actor;
 mod tests;
 
 use crate::recommendations::{Recommendations, WorkspaceRecommendations};
-use crate::user_config::{ConfigPaths, WorkspaceConfig};
+use crate::registry::ComponentSource;
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceExtensionsConfig};
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -127,9 +128,19 @@ impl ConfigAgent {
         self
     }
 
-    /// Load configuration for a workspace from disk.
-    fn load_config(&self, workspace_path: &Path) -> Result<Option<WorkspaceConfig>, sacp::Error> {
-        WorkspaceConfig::load(&self.config_paths, workspace_path)
+    /// Load the global agent configuration.
+    fn load_global_agent(&self) -> Result<Option<ComponentSource>, sacp::Error> {
+        GlobalAgentConfig::load(&self.config_paths)
+            .map(|opt| opt.map(|c| c.agent))
+            .map_err(|e| sacp::util::internal_error(e.to_string()))
+    }
+
+    /// Load workspace extensions configuration from disk.
+    fn load_extensions(
+        &self,
+        workspace_path: &Path,
+    ) -> Result<Option<WorkspaceExtensionsConfig>, sacp::Error> {
+        WorkspaceExtensionsConfig::load(&self.config_paths, workspace_path)
             .map_err(|e| sacp::util::internal_error(e.to_string()))
     }
 
@@ -230,7 +241,7 @@ impl ConfigAgent {
                 ))?;
             }
 
-            ConfigModeOutput::Done { config } => {
+            ConfigModeOutput::Done { agent, extensions } => {
                 // Get session info (workspace_path and return_to)
                 let (workspace_path, return_to) = match self.sessions.get(&session_id) {
                     Some(SessionState::Config {
@@ -244,12 +255,23 @@ impl ConfigAgent {
                     }
                 };
 
-                // Save the configuration
-                if let Err(e) = config.save(&self.config_paths, &workspace_path) {
+                // Save the global agent configuration
+                let global_agent_config = GlobalAgentConfig::new(agent);
+                if let Err(e) = global_agent_config.save(&self.config_paths) {
                     cx.send_notification(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                            format!("Error saving configuration: {}", e).into(),
+                            format!("Error saving agent configuration: {}", e).into(),
+                        )),
+                    ))?;
+                }
+
+                // Save the workspace extensions configuration
+                if let Err(e) = extensions.save(&self.config_paths, &workspace_path) {
+                    cx.send_notification(SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                            format!("Error saving extensions configuration: {}", e).into(),
                         )),
                     ))?;
                 }
@@ -349,23 +371,18 @@ impl ConfigAgent {
         // Clone workspace_path upfront so we can move request later
         let workspace_path = request.cwd.clone();
 
-        // Load configuration for this workspace
-        let config = self.load_config(&workspace_path)?;
+        // Load global agent configuration
+        let agent = self.load_global_agent()?;
 
-        let Some(config) = config else {
-            tracing::debug!("handle_new_session: no existing config");
+        // If no global agent, enter initial setup
+        let Some(agent) = agent else {
+            tracing::debug!("handle_new_session: no global agent configured");
 
-            // No config - enter config mode for initial setup.
-            // ConfigModeActor with None config will show welcome and agent selection.
             let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-
-            // Respond with our generated session ID
             request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
-            // Load and evaluate recommendations for this workspace
             let workspace_recs = self.recommendations_for_workspace(&workspace_path);
 
-            // Spawn the config mode actor with None config (triggers initial setup)
             let actor_handle = ConfigModeHandle::spawn_initial_config(
                 workspace_path.clone(),
                 self.config_paths.clone(),
@@ -388,24 +405,40 @@ impl ConfigAgent {
             return Ok(());
         };
 
-        tracing::debug!(?config, "handle_new_session: found existing configuration");
+        // Load workspace extensions configuration
+        let extensions_config = self.load_extensions(&workspace_path)?;
 
-        // Load and evaluate recommendations for this workspace
+        // If no extensions config, create one from recommendations and proceed
+        let extensions_config = match extensions_config {
+            Some(config) => config,
+            None => {
+                tracing::debug!("handle_new_session: no workspace extensions, applying recommendations");
+                let workspace_recs = self.recommendations_for_workspace(&workspace_path);
+                let config = WorkspaceExtensionsConfig::from_sources(workspace_recs.extension_sources());
+
+                // Save the new extensions config
+                if let Err(e) = config.save(&self.config_paths, &workspace_path) {
+                    tracing::warn!("Failed to save initial extensions config: {}", e);
+                }
+
+                config
+            }
+        };
+
+        tracing::debug!(?agent, ?extensions_config, "handle_new_session: found configuration");
+
+        // Check for recommendation diff on extensions
         if let Some(recs) = self.load_recommendations() {
             let workspace_recs = recs.for_workspace(&workspace_path);
-            if let Some(diff) = workspace_recs.diff_against(&config) {
+            if let Some(diff) = workspace_recs.diff_against(&extensions_config) {
                 tracing::debug!(?diff, "handle_new_session: diff computed");
 
-                // We have changes to present - spawn diff-only actor
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-
-                // Respond with our generated session ID
                 request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
-                // Don't respond yet - wait for diff resolution.
-                // The actor will send DiffCompleted/DiffCancelled with the request info.
                 let actor_handle = ConfigModeHandle::spawn_with_recommendations(
-                    config,
+                    agent,
+                    extensions_config,
                     workspace_path.clone(),
                     self.config_paths.clone(),
                     diff,
@@ -427,11 +460,17 @@ impl ConfigAgent {
             }
         }
 
-        tracing::debug!(?config, "handle_new_session: launching new session");
+        tracing::debug!(?agent, ?extensions_config, "handle_new_session: launching new session");
 
         // No diff changes - proceed directly to uberconductor
         uberconductor
-            .new_session(workspace_path, config, request, request_cx)
+            .new_session(
+                workspace_path,
+                agent,
+                extensions_config.extensions,
+                request,
+                request_cx,
+            )
             .await
     }
 
@@ -464,14 +503,16 @@ impl ConfigAgent {
         // Pause the conductor if we have one - it will resume when config mode exits
         let resume_tx = return_to.pause().await?;
 
-        // Load current config (None triggers initial setup in the actor)
-        let current_config = self.load_config(&workspace_path)?;
+        // Load current agent and extensions
+        let agent = self.load_global_agent()?;
+        let extensions = self.load_extensions(&workspace_path)?;
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
-        let actor_handle = match current_config {
-            // The normal case: the config still exists, configure it
-            Some(current_config) => ConfigModeHandle::spawn_reconfig(
-                current_config,
+        let actor_handle = match (agent, extensions) {
+            // The normal case: both exist, configure them
+            (Some(agent), Some(extensions)) => ConfigModeHandle::spawn_reconfig(
+                agent,
+                extensions,
                 workspace_path.clone(),
                 self.config_paths.clone(),
                 session_id.clone(),
@@ -479,8 +520,8 @@ impl ConfigAgent {
                 resume_tx,
                 cx,
             )?,
-            // If for some reason the existing configuration has vanished, reinitialize it
-            None => {
+            // If for some reason the configuration has vanished, reinitialize
+            _ => {
                 let workspace_recs = self.recommendations_for_workspace(&workspace_path);
                 ConfigModeHandle::spawn_initial_config(
                     workspace_path.clone(),

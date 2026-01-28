@@ -8,7 +8,8 @@
 
 use super::conductor_actor::ConductorHandle;
 use super::ConfigAgentMessage;
-use crate::user_config::WorkspaceConfig;
+use crate::registry::ComponentSource;
+use crate::user_config::ExtensionConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;
 use sacp::link::AgentToClient;
@@ -22,7 +23,8 @@ pub enum UberconductorMessage {
     /// Create/get a conductor for this config and forward the session request to it.
     NewSession {
         workspace_path: PathBuf,
-        config: WorkspaceConfig,
+        agent: ComponentSource,
+        extensions: Vec<ExtensionConfig>,
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     },
@@ -48,18 +50,20 @@ impl UberconductorHandle {
         Ok(Self { tx })
     }
 
-    /// Request a new session with the given configuration.
+    /// Request a new session with the given agent and extensions.
     pub async fn new_session(
         &self,
         workspace_path: PathBuf,
-        config: WorkspaceConfig,
+        agent: ComponentSource,
+        extensions: Vec<ExtensionConfig>,
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         self.tx
             .send(UberconductorMessage::NewSession {
                 workspace_path,
-                config,
+                agent,
+                extensions,
                 request,
                 request_cx,
             })
@@ -82,7 +86,8 @@ async fn run_actor(
         match message {
             UberconductorMessage::NewSession {
                 workspace_path,
-                config,
+                agent,
+                extensions,
                 request,
                 request_cx,
             } => {
@@ -92,7 +97,8 @@ async fn run_actor(
                     None => {
                         let handle = ConductorHandle::spawn(
                             workspace_path.clone(),
-                            &config,
+                            agent,
+                            extensions,
                             trace_dir.as_ref(),
                             config_agent_tx.clone(),
                             &client_cx,

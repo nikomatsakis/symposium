@@ -41,7 +41,7 @@ use std::str::FromStr;
 use symposium_acp_agent::recommendations::Recommendations;
 use symposium_acp_agent::registry;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
-use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceConfig};
+use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceExtensionsConfig};
 use symposium_acp_agent::vscodelm;
 use symposium_acp_agent::ConfigAgent;
 
@@ -333,10 +333,11 @@ async fn main() -> Result<()> {
                     .unwrap_or_default()
             };
 
-            let config = WorkspaceConfig::new(agent.clone(), extensions);
-            config.save(&config_paths, &workspace)?;
+            // Save workspace extensions
+            let extensions_config = WorkspaceExtensionsConfig::from_sources(extensions);
+            extensions_config.save(&config_paths, &workspace)?;
 
-            // Also save as global default
+            // Save global agent
             let global_config = GlobalAgentConfig::new(agent);
             global_config.save(&config_paths)?;
 

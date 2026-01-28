@@ -1,10 +1,11 @@
 //! User configuration types for Symposium.
 //!
-//! Configuration is stored per-workspace at:
-//! `~/.symposium/config/<encoded-workspace-path>/config.json`
+//! Configuration is split between:
+//! - Global agent config: `~/.symposium/config/agent.json` - the selected agent for all workspaces
+//! - Per-workspace extensions: `~/.symposium/config/<encoded-workspace-path>/config.json`
 //!
-//! The configuration uses `ComponentSource` as the identity for both
-//! agents and extensions, enabling easy diffing with recommendations.
+//! The configuration uses `ComponentSource` as the identity for extensions,
+//! enabling easy diffing with recommendations.
 
 use crate::recommendations::When;
 use crate::registry::ComponentSource;
@@ -159,17 +160,15 @@ pub struct ExtensionConfig {
     pub when: When,
 }
 
-/// Per-workspace configuration for Symposium.
+/// Per-workspace extension configuration for Symposium.
 ///
-/// Uses `ComponentSource` as identity for both agent and extensions.
+/// Uses `ComponentSource` as identity for extensions.
 /// This makes it easy to compare with recommendations and detect changes.
+///
+/// Note: The agent is stored globally in `GlobalAgentConfig`, not per-workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct WorkspaceConfig {
-    /// The agent to use for this workspace
-    pub agent: ComponentSource,
-
+pub struct WorkspaceExtensionsConfig {
     /// Extensions with their enabled state
-    /// The key is the JSON-serialized ComponentSource
     #[serde(default)]
     pub extensions: Vec<ExtensionConfig>,
 }
@@ -180,13 +179,12 @@ pub struct WorkspaceConfig {
 
 /// Global agent configuration.
 ///
-/// Stores the user's default agent choice. This is used to populate the initial
-/// agent for new workspaces. Each workspace can override this independently.
+/// Stores the user's selected agent. This agent is used for all workspaces.
 ///
 /// Stored at `~/.symposium/config/agent.json`
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GlobalAgentConfig {
-    /// The default agent to use for new workspaces
+    /// The selected agent for all workspaces
     pub agent: ComponentSource,
 }
 
@@ -228,13 +226,19 @@ impl GlobalAgentConfig {
 }
 
 // ============================================================================
-// Workspace Config
+// Workspace Extensions Config
 // ============================================================================
 
-impl WorkspaceConfig {
-    /// Create a new workspace config with the given agent and extensions
-    pub fn new(agent: ComponentSource, extensions: Vec<ComponentSource>) -> Self {
-        let extensions = extensions
+impl WorkspaceExtensionsConfig {
+    /// Create a new workspace extensions config
+    pub fn new(extensions: Vec<ExtensionConfig>) -> Self {
+        Self { extensions }
+    }
+
+    /// Create a workspace extensions config from a list of extension sources.
+    /// All extensions are enabled by default.
+    pub fn from_sources(sources: Vec<ComponentSource>) -> Self {
+        let extensions = sources
             .into_iter()
             .map(|source| ExtensionConfig {
                 source,
@@ -243,11 +247,13 @@ impl WorkspaceConfig {
             })
             .collect();
 
-        Self { agent, extensions }
+        Self { extensions }
     }
 
-    /// Load the workspace config for the given workspace.
+    /// Load the workspace extensions config for the given workspace.
     /// Returns None if the file doesn't exist.
+    ///
+    /// Handles migration from old format that included an `agent` field.
     pub fn load(config_paths: &ConfigPaths, workspace_path: &Path) -> Result<Option<Self>> {
         let path = config_paths.workspace_config_path(workspace_path);
         if !path.exists() {
@@ -255,12 +261,14 @@ impl WorkspaceConfig {
         }
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read workspace config from {}", path.display()))?;
+
+        // Try to parse - serde will ignore unknown fields like `agent` from old format
         let config: Self = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse workspace config from {}", path.display()))?;
         Ok(Some(config))
     }
 
-    /// Save the workspace config for the given workspace.
+    /// Save the workspace extensions config for the given workspace.
     /// Creates the parent directory if it doesn't exist.
     pub fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
         let path = config_paths.ensure_workspace_config_dir(workspace_path)?;
@@ -306,17 +314,11 @@ fn encode_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{CargoDistribution, NpxDistribution};
+    use crate::registry::CargoDistribution;
     use expect_test::expect;
-    use std::collections::BTreeMap;
 
     #[test]
-    fn test_workspace_config_new() {
-        let agent = ComponentSource::Npx(NpxDistribution {
-            package: "@zed-industries/claude-code-acp@latest".to_string(),
-            args: vec![],
-            env: BTreeMap::new(),
-        });
+    fn test_workspace_extensions_config_from_sources() {
         let extensions = vec![
             ComponentSource::Builtin("ferris".to_string()),
             ComponentSource::Cargo(CargoDistribution {
@@ -327,17 +329,10 @@ mod tests {
             }),
         ];
 
-        let config = WorkspaceConfig::new(agent, extensions);
+        let config = WorkspaceExtensionsConfig::from_sources(extensions);
 
         expect![[r#"
-            WorkspaceConfig {
-                agent: Npx(
-                    NpxDistribution {
-                        package: "@zed-industries/claude-code-acp@latest",
-                        args: [],
-                        env: {},
-                    },
-                ),
+            WorkspaceExtensionsConfig {
                 extensions: [
                     ExtensionConfig {
                         source: Builtin(
@@ -383,24 +378,52 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_config_save_load_roundtrip() {
+    fn test_workspace_extensions_config_save_load_roundtrip() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_paths = ConfigPaths::with_root(temp_dir.path());
         let workspace_path = PathBuf::from("/some/workspace");
 
-        let agent = ComponentSource::Builtin("eliza".to_string());
         let extensions = vec![ComponentSource::Builtin("ferris".to_string())];
-        let config = WorkspaceConfig::new(agent.clone(), extensions);
+        let config = WorkspaceExtensionsConfig::from_sources(extensions);
 
         // Save
         config.save(&config_paths, &workspace_path).unwrap();
 
         // Load
-        let loaded = WorkspaceConfig::load(&config_paths, &workspace_path)
+        let loaded = WorkspaceExtensionsConfig::load(&config_paths, &workspace_path)
             .unwrap()
             .unwrap();
 
         assert_eq!(config, loaded);
+    }
+
+    #[test]
+    fn test_workspace_extensions_config_migrates_from_old_format() {
+        // Old format included an `agent` field - verify we can still load it
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_paths = ConfigPaths::with_root(temp_dir.path());
+        let workspace_path = PathBuf::from("/some/workspace");
+
+        // Create directory and write old format config
+        let config_path = config_paths.ensure_workspace_config_dir(&workspace_path).unwrap();
+        let old_format = r#"{
+            "agent": {"builtin": "eliza"},
+            "extensions": [
+                {"source": {"builtin": "ferris"}, "enabled": true, "when": {}}
+            ]
+        }"#;
+        std::fs::write(&config_path, old_format).unwrap();
+
+        // Load should succeed, ignoring the agent field
+        let loaded = WorkspaceExtensionsConfig::load(&config_paths, &workspace_path)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded.extensions.len(), 1);
+        assert_eq!(
+            loaded.extensions[0].source,
+            ComponentSource::Builtin("ferris".to_string())
+        );
     }
 
     #[test]

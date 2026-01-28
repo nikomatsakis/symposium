@@ -7,7 +7,7 @@
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::{list_agents_with_sources, ComponentSource};
-use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceConfig};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceExtensionsConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -42,8 +42,10 @@ pub enum ConfigModeOutput {
 
     /// Configuration is complete - save and exit.
     Done {
-        /// The final configuration to save.
-        config: WorkspaceConfig,
+        /// The agent to save globally.
+        agent: ComponentSource,
+        /// The extensions to save per-workspace.
+        extensions: WorkspaceExtensionsConfig,
     },
 
     /// User cancelled - exit without saving.
@@ -58,10 +60,13 @@ pub struct ConfigModeHandle {
 
 /// The starting configuration
 enum StartingConfiguration {
-    /// An existing workspace configuration
-    ExistingConfig(WorkspaceConfig),
+    /// An existing configuration with agent and extensions
+    ExistingConfig {
+        agent: ComponentSource,
+        extensions: WorkspaceExtensionsConfig,
+    },
 
-    /// A new workspace
+    /// A new workspace - needs agent selection
     NewWorkspace(WorkspaceRecommendations),
 }
 
@@ -74,7 +79,8 @@ impl ConfigModeHandle {
     /// signal the conductor to resume processing. It will be dropped
     /// when the actor exits (either save or cancel).
     pub fn spawn_reconfig(
-        config: WorkspaceConfig,
+        agent: ComponentSource,
+        extensions: WorkspaceExtensionsConfig,
         workspace_path: PathBuf,
         config_paths: ConfigPaths,
         session_id: SessionId,
@@ -83,7 +89,7 @@ impl ConfigModeHandle {
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
         Self::spawn_inner(
-            StartingConfiguration::ExistingConfig(config),
+            StartingConfiguration::ExistingConfig { agent, extensions },
             workspace_path,
             config_paths,
             None,
@@ -131,7 +137,8 @@ impl ConfigModeHandle {
     /// The actor will only handle the recommendation diff prompt, then send
     /// `DiffCompleted` or `DiffCancelled` instead of showing the main menu.
     pub fn spawn_with_recommendations(
-        mut config: WorkspaceConfig,
+        agent: ComponentSource,
+        mut extensions: WorkspaceExtensionsConfig,
         workspace_path: PathBuf,
         config_paths: ConfigPaths,
         diff: RecommendationDiff,
@@ -139,9 +146,9 @@ impl ConfigModeHandle {
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
-        diff.apply(&mut config);
+        diff.apply(&mut extensions);
         Self::spawn_inner(
-            StartingConfiguration::ExistingConfig(config),
+            StartingConfiguration::ExistingConfig { agent, extensions },
             workspace_path,
             config_paths,
             Some(diff),
@@ -216,9 +223,9 @@ struct ConfigModeActor {
 impl ConfigModeActor {
     /// Main entry point - runs the actor.
     async fn run(mut self, config: StartingConfiguration) -> Result<(), sacp::Error> {
-        // If no config exists (initial setup), we need to set up
-        let mut config = match config {
-            StartingConfiguration::ExistingConfig(config) => config,
+        // Extract or create agent and extensions
+        let (mut agent, mut extensions) = match config {
+            StartingConfiguration::ExistingConfig { agent, extensions } => (agent, extensions),
             StartingConfiguration::NewWorkspace(recommendations) => {
                 self.send_message("Welcome to Symposium!\n\n");
 
@@ -235,17 +242,17 @@ impl ConfigModeActor {
                 let agent = match global_agent {
                     Some(agent) => {
                         self.send_message(&format!(
-                            "Using your default agent: **{}**\n\n",
+                            "Using your selected agent: **{}**\n\n",
                             agent.display_name()
                         ));
                         agent
                     }
                     None => {
                         // No global agent - need to select one
-                        self.send_message("No default agent configured. Let's choose one.\n\n");
+                        self.send_message("No agent configured. Let's choose one.\n\n");
                         match self.select_agent().await {
                             Some(agent) => {
-                                // Save as global default
+                                // Save as global agent
                                 let global_config = GlobalAgentConfig::new(agent.clone());
                                 if let Err(e) = global_config.save(&self.config_paths) {
                                     tracing::warn!("Failed to save global agent config: {}", e);
@@ -261,19 +268,20 @@ impl ConfigModeActor {
                     }
                 };
 
-                // Create config with selected agent and recommended extensions
-                let extensions = recommendations.extension_sources();
+                // Create extensions from recommendations
+                let extensions =
+                    WorkspaceExtensionsConfig::from_sources(recommendations.extension_sources());
 
                 self.send_message("Configuration created with recommended extensions.\n\n");
-                WorkspaceConfig::new(agent, extensions)
+                (agent, extensions)
             }
         };
 
         // If there is an active diff, present it first
         if !self.diff.is_empty() {
-            match self.present_diff(&mut config).await {
+            match self.present_diff(&mut extensions).await {
                 DiffResult::Save => {
-                    self.done(&config);
+                    self.done(&agent, &extensions);
                     return Ok(());
                 }
                 DiffResult::Config => { /* continue to main menu */ }
@@ -281,19 +289,19 @@ impl ConfigModeActor {
         }
 
         // Enter main menu loop
-        self.main_menu_loop(&mut config).await;
+        self.main_menu_loop(&mut agent, &mut extensions).await;
 
         Ok(())
     }
 
     /// Handle the recommendation diff prompt.
     /// Returns the result of the interaction.
-    async fn present_diff(&mut self, config: &mut WorkspaceConfig) -> DiffResult {
+    async fn present_diff(&mut self, extensions: &mut WorkspaceExtensionsConfig) -> DiffResult {
         self.send_message("# Recommendations have changed\n\n");
 
         if !self.diff.to_add.is_empty() {
             self.send_message("The following extensions are now recommended:\n");
-            for extension in &self.diff.to_remove {
+            for extension in &self.diff.to_add {
                 self.send_message(&format!(
                     "- {} [{}]\n",
                     extension.source.display_name(),
@@ -338,7 +346,7 @@ impl ConfigModeActor {
                 "IGNORE" => {
                     // Disable all the new recommended extensions
                     for to_add in &self.diff.to_add {
-                        for extension in &mut config.extensions {
+                        for extension in &mut extensions.extensions {
                             if extension.source == to_add.source {
                                 extension.enabled = false;
                                 break;
@@ -434,12 +442,13 @@ impl ConfigModeActor {
     }
 
     /// Signal that configuration is done (save and exit).
-    fn done(&self, config: &WorkspaceConfig) {
+    fn done(&self, agent: &ComponentSource, extensions: &WorkspaceExtensionsConfig) {
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
                 self.session_id.clone(),
                 ConfigModeOutput::Done {
-                    config: config.clone(),
+                    agent: agent.clone(),
+                    extensions: extensions.clone(),
                 },
             ))
             .ok();
@@ -457,17 +466,21 @@ impl ConfigModeActor {
     }
 
     /// Main menu loop.
-    async fn main_menu_loop(&mut self, config: &mut WorkspaceConfig) {
-        self.show_main_menu(config);
+    async fn main_menu_loop(
+        &mut self,
+        agent: &mut ComponentSource,
+        extensions: &mut WorkspaceExtensionsConfig,
+    ) {
+        self.show_main_menu(agent, extensions);
 
         loop {
             let Some(input) = self.next_input().await else {
                 return;
             };
 
-            match self.handle_main_menu_input(&input, config).await {
+            match self.handle_main_menu_input(&input, agent, extensions).await {
                 MenuAction::Done => return,
-                MenuAction::Redisplay => self.show_main_menu(config),
+                MenuAction::Redisplay => self.show_main_menu(agent, extensions),
                 MenuAction::Continue => {}
             }
         }
@@ -477,14 +490,15 @@ impl ConfigModeActor {
     async fn handle_main_menu_input(
         &mut self,
         text: &str,
-        config: &mut WorkspaceConfig,
+        agent: &mut ComponentSource,
+        extensions: &mut WorkspaceExtensionsConfig,
     ) -> MenuAction {
         let text = text.trim();
         let text_upper = text.to_uppercase();
 
         // Save and exit
         if text_upper == "SAVE" {
-            self.done(config);
+            self.done(agent, extensions);
             return MenuAction::Done;
         }
 
@@ -497,14 +511,14 @@ impl ConfigModeActor {
         // Change agent
         if text_upper == "A" || text_upper == "AGENT" {
             if let Some(new_agent) = self.select_agent().await {
-                config.agent = new_agent.clone();
-                // Also update global agent config
-                let global_config = GlobalAgentConfig::new(new_agent.clone());
+                *agent = new_agent.clone();
+                // Also update global agent config immediately
+                let global_config = GlobalAgentConfig::new(new_agent);
                 if let Err(e) = global_config.save(&self.config_paths) {
                     tracing::warn!("Failed to save global agent config: {}", e);
-                    self.send_message(&format!("Note: Could not save as default agent: {}\n", e));
+                    self.send_message(&format!("Note: Could not save agent: {}\n", e));
                 } else {
-                    self.send_message("Updated default agent for future workspaces.\n");
+                    self.send_message("Agent updated (applies to all workspaces).\n");
                 }
                 return MenuAction::Redisplay;
             }
@@ -514,8 +528,8 @@ impl ConfigModeActor {
 
         // Toggle extension by index (1-based)
         if let Ok(display_index) = text.parse::<usize>() {
-            if display_index >= 1 && display_index <= config.extensions.len() {
-                let extension = &mut config.extensions[display_index - 1];
+            if display_index >= 1 && display_index <= extensions.extensions.len() {
+                let extension = &mut extensions.extensions[display_index - 1];
                 extension.enabled = !extension.enabled;
                 self.send_message(format!(
                     "Extension `{}` is now {}.",
@@ -527,13 +541,13 @@ impl ConfigModeActor {
                     },
                 ));
                 return MenuAction::Redisplay;
-            } else if config.extensions.is_empty() {
+            } else if extensions.extensions.is_empty() {
                 self.send_message("No extensions configured.");
                 return MenuAction::Continue;
             } else {
                 self.send_message(format!(
                     "Invalid index. Please enter 1-{}.",
-                    config.extensions.len()
+                    extensions.extensions.len()
                 ));
                 return MenuAction::Continue;
             }
@@ -558,7 +572,7 @@ impl ConfigModeActor {
     }
 
     /// Show the main menu.
-    fn show_main_menu(&self, config: &WorkspaceConfig) {
+    fn show_main_menu(&self, agent: &ComponentSource, extensions: &WorkspaceExtensionsConfig) {
         let mut msg = String::new();
         msg.push_str("# Configuration\n\n");
         msg.push_str(&format!(
@@ -566,15 +580,18 @@ impl ConfigModeActor {
             self.workspace_path.display()
         ));
 
-        // Current agent
-        msg.push_str(&format!("* **Agent:** {}\n", config.agent.display_name()));
+        // Current agent (global)
+        msg.push_str(&format!(
+            "* **Agent:** {} (global)\n",
+            agent.display_name()
+        ));
 
-        // Extensions
-        msg.push_str("* **Extensions:**\n");
-        if config.extensions.is_empty() {
+        // Extensions (per-workspace)
+        msg.push_str("* **Extensions:** (per-workspace)\n");
+        if extensions.extensions.is_empty() {
             msg.push_str("    * (none configured)\n");
         } else {
-            for (extension, display_index) in config.extensions.iter().zip(1..) {
+            for (extension, display_index) in extensions.extensions.iter().zip(1..) {
                 let name = extension.source.display_name();
                 if extension.enabled {
                     msg.push_str(&format!("    {}. {}\n", display_index, name));
@@ -587,10 +604,10 @@ impl ConfigModeActor {
 
         // Commands
         msg.push_str("# Commands\n\n");
-        msg.push_str("- `a` - Change agent\n");
-        match config.extensions.len() {
+        msg.push_str("- `a` - Change agent (affects all workspaces)\n");
+        match extensions.extensions.len() {
             0 => {}
-            1 => msg.push_str(&format!("- `1` - Toggle extension enabled/disabled\n")),
+            1 => msg.push_str("- `1` - Toggle extension enabled/disabled\n"),
             n => msg.push_str(&format!(
                 "- `1` through `{n}` - Toggle extension enabled/disabled\n"
             )),

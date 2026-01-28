@@ -5,7 +5,7 @@
 //! is embedded in the binary.
 
 use crate::registry::ComponentSource;
-use crate::user_config::{ExtensionConfig, WorkspaceConfig};
+use crate::user_config::{ExtensionConfig, WorkspaceExtensionsConfig};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use serde::{Deserialize, Serialize};
@@ -477,13 +477,12 @@ impl WorkspaceRecommendations {
         self.extensions.iter().find(|r| &r.source == source)
     }
 
-    /// Apply these recommendations to the workspace config.
+    /// Compare these recommendations against the workspace extensions config.
     ///
     /// If the config already matches the recommendations, returns None.
     ///
-    /// Otherwise, adds new recommendations as enabled and removes stale recommendations,
-    /// returing `Some`.
-    pub fn diff_against(&self, config: &WorkspaceConfig) -> Option<RecommendationDiff> {
+    /// Otherwise, returns the diff showing what to add and remove.
+    pub fn diff_against(&self, config: &WorkspaceExtensionsConfig) -> Option<RecommendationDiff> {
         // Get the set of recommended sources
         let recommended_sources: HashSet<_> =
             self.extensions.iter().map(|r| r.source.clone()).collect();
@@ -537,8 +536,8 @@ impl RecommendationDiff {
         self.to_add.is_empty() && self.to_remove.is_empty()
     }
 
-    /// Apply this diff to the given workspace config
-    pub fn apply(&self, config: &mut WorkspaceConfig) {
+    /// Apply this diff to the given workspace extensions config
+    pub fn apply(&self, config: &mut WorkspaceExtensionsConfig) {
         if self.is_empty() {
             return;
         }
@@ -704,10 +703,7 @@ when.files-exist = ["src/lib.rs"]
             ),
             ("bar", None),
         ]);
-        let config = WorkspaceConfig::new(
-            ComponentSource::Builtin("agent".to_string()),
-            vec![], // Empty config
-        );
+        let config = WorkspaceExtensionsConfig::new(vec![]); // Empty config
 
         let diff = recs.diff_against(&config).expect("should have changes");
 
@@ -756,8 +752,7 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_stale_extensions() {
         let recs = make_workspace_recs(vec![]); // No recommendations
-        let mut config =
-            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        let mut config = WorkspaceExtensionsConfig::new(vec![]);
 
         // Add an extension that's not recommended
         config.extensions.push(ExtensionConfig {
@@ -801,8 +796,7 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_no_changes_when_in_sync() {
         let recs = make_workspace_recs(vec![("foo", None)]);
-        let mut config =
-            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        let mut config = WorkspaceExtensionsConfig::new(vec![]);
 
         // Add the same extension that's recommended
         config.extensions.push(ExtensionConfig {
@@ -819,8 +813,7 @@ when.files-exist = ["src/lib.rs"]
     fn test_diff_disabled_extension_not_new() {
         // If an extension is in config but disabled, it's still "known" - not new
         let recs = make_workspace_recs(vec![("foo", None)]);
-        let mut config =
-            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        let mut config = WorkspaceExtensionsConfig::new(vec![]);
         config.extensions.push(ExtensionConfig {
             source: ComponentSource::Builtin("foo".to_string()),
             enabled: false, // Disabled
@@ -835,8 +828,7 @@ when.files-exist = ["src/lib.rs"]
     #[test]
     fn test_diff_apply() {
         let recs = make_workspace_recs(vec![("foo", None), ("bar", None)]);
-        let mut config =
-            WorkspaceConfig::new(ComponentSource::Builtin("agent".to_string()), vec![]);
+        let mut config = WorkspaceExtensionsConfig::new(vec![]);
 
         // Add a stale extension
         config.extensions.push(ExtensionConfig {

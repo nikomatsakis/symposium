@@ -8,7 +8,7 @@
 
 use super::ConfigAgentMessage;
 use crate::registry::ComponentSource;
-use crate::user_config::WorkspaceConfig;
+use crate::user_config::ExtensionConfig;
 use futures::channel::mpsc::UnboundedSender;
 use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
 use sacp::schema::{
@@ -54,17 +54,18 @@ pub struct ConductorHandle {
 }
 
 impl ConductorHandle {
-    /// Spawn a new conductor actor for the given configuration.
+    /// Spawn a new conductor actor for the given agent and extensions.
     ///
     /// Returns a handle for sending messages to the actor.
     pub async fn spawn(
         workspace_path: PathBuf,
-        config: &WorkspaceConfig,
+        agent: ComponentSource,
+        extensions: Vec<ExtensionConfig>,
         trace_dir: Option<&PathBuf>,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         client_cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
-        tracing::debug!(?workspace_path, ?config, "ConductorHandle::spawn");
+        tracing::debug!(?workspace_path, ?agent, ?extensions, "ConductorHandle::spawn");
 
         // Create the channel for receiving messages
         let (tx, rx) = mpsc::channel(32);
@@ -73,7 +74,8 @@ impl ConductorHandle {
 
         client_cx.spawn(run_actor(
             workspace_path,
-            config.clone(),
+            agent,
+            extensions,
             trace_dir.cloned(),
             config_agent_tx,
             handle.clone(),
@@ -172,21 +174,30 @@ async fn build_proxies(
     Ok(proxies)
 }
 
+/// Get enabled extension sources from the list
+fn enabled_extension_sources(extensions: &[ExtensionConfig]) -> Vec<ComponentSource> {
+    extensions
+        .iter()
+        .filter(|ext| ext.enabled)
+        .map(|ext| ext.source.clone())
+        .collect()
+}
+
 /// The main actor loop.
 async fn run_actor(
     workspace_path: PathBuf,
-    config: WorkspaceConfig,
+    agent: ComponentSource,
+    extensions: Vec<ExtensionConfig>,
     _trace_dir: Option<PathBuf>,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     self_handle: ConductorHandle,
     mut rx: mpsc::Receiver<ConductorMessage>,
 ) -> Result<(), sacp::Error> {
     // Get enabled extensions
-    let extension_sources = config.enabled_extensions();
+    let extension_sources = enabled_extension_sources(&extensions);
 
     // Resolve the agent
-    let agent_server = config
-        .agent
+    let agent_server = agent
         .resolve()
         .await
         .map_err(|e| sacp::util::internal_error(format!("Failed to resolve agent: {}", e)))?;

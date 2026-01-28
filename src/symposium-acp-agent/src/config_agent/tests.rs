@@ -3,7 +3,7 @@
 use super::*;
 use crate::recommendations::{Recommendation, Recommendations};
 use crate::registry::{ComponentSource, LocalDistribution};
-use crate::user_config::{ConfigPaths, WorkspaceConfig};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceExtensionsConfig};
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;
 use sacp::schema::{ContentChunk, ProtocolVersion, TextContent};
@@ -43,26 +43,33 @@ impl CollectedNotifications {
     }
 }
 
-/// Helper to write a workspace config using the given ConfigPaths.
+/// Helper to write workspace config using the given ConfigPaths.
+/// Now writes both agent (global) and extensions (per-workspace).
 fn write_workspace_config(
     config_paths: &ConfigPaths,
     workspace_path: &std::path::Path,
-    config: &WorkspaceConfig,
+    agent: &ComponentSource,
+    extensions: &WorkspaceExtensionsConfig,
 ) {
-    config.save(config_paths, workspace_path).unwrap();
+    GlobalAgentConfig::new(agent.clone())
+        .save(config_paths)
+        .unwrap();
+    extensions.save(config_paths, workspace_path).unwrap();
 }
 
 /// Create a config that uses elizacp as the backend agent.
 /// Uses the external elizacp binary (must be installed via `cargo install elizacp`).
-fn elizacp_config() -> WorkspaceConfig {
-    WorkspaceConfig::new(
-        ComponentSource::Local(LocalDistribution {
-            command: "elizacp".to_string(),
-            args: vec!["--deterministic".to_string(), "acp".to_string()],
-            env: BTreeMap::new(),
-        }),
-        vec![], // No extensions for simpler testing
-    )
+fn elizacp_agent() -> ComponentSource {
+    ComponentSource::Local(LocalDistribution {
+        command: "elizacp".to_string(),
+        args: vec!["--deterministic".to_string(), "acp".to_string()],
+        env: BTreeMap::new(),
+    })
+}
+
+/// Create empty extensions config for testing.
+fn empty_extensions() -> WorkspaceExtensionsConfig {
+    WorkspaceExtensionsConfig::new(vec![])
 }
 
 /// Create test recommendations for testing initial setup flow.
@@ -200,8 +207,14 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             tokio::time::sleep(Duration::from_millis(250)).await;
 
             // Verify config was written
-            let loaded = WorkspaceConfig::load(&config_paths, &workspace_path).unwrap();
-            assert!(loaded.is_some(), "Config should have been saved");
+            let loaded_agent = GlobalAgentConfig::load(&config_paths).unwrap();
+            assert!(loaded_agent.is_some(), "Agent config should have been saved");
+            let loaded_extensions =
+                WorkspaceExtensionsConfig::load(&config_paths, &workspace_path).unwrap();
+            assert!(
+                loaded_extensions.is_some(),
+                "Extensions config should have been saved"
+            );
 
             Ok(())
         })
@@ -220,14 +233,15 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
 
     // Use a fake workspace path
     let workspace_path = PathBuf::from("/fake/workspace");
-    let config = elizacp_config();
-    write_workspace_config(&config_paths, &workspace_path, &config);
+    let agent_source = elizacp_agent();
+    let extensions = empty_extensions();
+    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent =
+    let config_agent =
         ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
@@ -252,7 +266,7 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(agent)?
+        .connect_to(config_agent)?
         .run_until(async |cx| {
             // Initialize
             cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
@@ -311,14 +325,15 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
 
     // Use a fake workspace path
     let workspace_path = PathBuf::from("/fake/workspace");
-    let config = elizacp_config();
-    write_workspace_config(&config_paths, &workspace_path, &config);
+    let agent_source = elizacp_agent();
+    let extensions = empty_extensions();
+    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent =
+    let config_agent =
         ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
@@ -334,7 +349,7 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(agent)?
+        .connect_to(config_agent)?
         .run_until(async |cx| {
             // Initialize
             cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
