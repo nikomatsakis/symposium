@@ -38,8 +38,10 @@ use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use symposium_acp_agent::recommendations::Recommendations;
 use symposium_acp_agent::registry;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
+use symposium_acp_agent::user_config::{GlobalAgentConfig, WorkspaceConfig};
 use symposium_acp_agent::vscodelm;
 use symposium_acp_agent::ConfigAgent;
 
@@ -127,6 +129,22 @@ enum Command {
     ProxyShim {
         #[arg(long)]
         proxy: String,
+    },
+
+    /// Initialize workspace configuration (useful for CI/testing)
+    ///
+    /// Creates both workspace-specific config and global agent default.
+    Init {
+        /// Workspace directory to initialize
+        workspace: PathBuf,
+
+        /// Agent ID (e.g., "elizacp", "zed-claude-code") - same format as `registry resolve-agent`
+        #[arg(long, default_value = "elizacp")]
+        agent: String,
+
+        /// Skip extension recommendations (create config with no extensions)
+        #[arg(long)]
+        no_extensions: bool,
     },
 }
 
@@ -298,6 +316,30 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
             }
         },
+
+        Command::Init {
+            workspace,
+            agent,
+            no_extensions,
+        } => {
+            let agent = registry::lookup_agent_source(&agent).await?;
+
+            let extensions = if no_extensions {
+                vec![]
+            } else {
+                Recommendations::load_builtin()
+                    .map(|r| r.for_workspace(&workspace).extension_sources())
+                    .unwrap_or_default()
+            };
+
+            let config = WorkspaceConfig::new(agent.clone(), extensions);
+            config.save(&workspace)?;
+
+            // Also save as global default
+            GlobalAgentConfig::new(agent).save()?;
+
+            eprintln!("Initialized config for {}", workspace.display());
+        }
     }
 
     Ok(())

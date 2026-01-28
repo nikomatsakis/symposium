@@ -311,6 +311,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
+    "pretest": "symposium-acp-agent init \"$PWD/test-workspace\" --agent elizacp",
     "test": "npm run compile && vscode-test"
   },
   "devDependencies": {

@@ -419,6 +419,19 @@ pub async fn list_agents_with_sources() -> Result<Vec<(AgentListEntry, Component
     Ok(agents)
 }
 
+/// Look up an agent by ID and return its ComponentSource.
+///
+/// This checks built-in agents first, then fetches the registry.
+/// The agent ID is the same format used by `registry resolve-agent`.
+pub async fn lookup_agent_source(agent_id: &str) -> Result<ComponentSource> {
+    let agents = list_agents_with_sources().await?;
+    agents
+        .into_iter()
+        .find(|(entry, _)| entry.id == agent_id)
+        .map(|(_, source)| source)
+        .with_context(|| format!("Agent '{}' not found", agent_id))
+}
+
 /// Convert a RegistryEntry to the appropriate ComponentSource.
 ///
 /// Uses the entry's distribution to determine the most specific source type.

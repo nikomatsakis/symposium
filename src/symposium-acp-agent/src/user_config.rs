@@ -409,5 +409,15 @@ mod tests {
         assert_ne!(encoded, other_encoded);
     }
 
+    #[test]
+    fn test_global_agent_config_json_roundtrip() {
+        // Test the JSON format used in CI setup
+        let json = r#"{"agent":{"builtin":"eliza"}}"#;
+        let config: GlobalAgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.agent, ComponentSource::Builtin("eliza".to_string()));
 
+        // Verify serialization matches
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert_eq!(serialized, json);
+    }
 }
