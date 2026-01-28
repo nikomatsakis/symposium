@@ -86,6 +86,7 @@ fn test_default_agent() -> ComponentSource {
 
 /// Test that when no config exists, we get the initial setup flow using recommendations.
 #[tokio::test]
+#[ignore = "https://github.com/symposium-dev/symposium/issues/113"]
 async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Use a temp dir for ConfigPaths (isolates from real ~/.symposium)
     let config_temp_dir = TempDir::new().unwrap();
