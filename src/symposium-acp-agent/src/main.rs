@@ -334,10 +334,11 @@ async fn main() -> Result<()> {
             };
 
             let config = WorkspaceConfig::new(agent.clone(), extensions);
-            config_paths.save_workspace_config(&workspace, &config)?;
+            config.save(&config_paths, &workspace)?;
 
             // Also save as global default
-            config_paths.save_global_agent_config(&GlobalAgentConfig::new(agent))?;
+            let global_config = GlobalAgentConfig::new(agent);
+            global_config.save(&config_paths)?;
 
             eprintln!("Initialized config for {}", workspace.display());
         }

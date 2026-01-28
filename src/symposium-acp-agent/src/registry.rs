@@ -6,6 +6,7 @@
 //! - Resolve agent distributions to executable commands
 //! - Download and cache binary distributions
 
+use crate::user_config::ConfigPaths;
 use anyhow::{bail, Context, Result};
 use sacp::schema::{EnvVariable, McpServer, McpServerStdio};
 use serde::{Deserialize, Serialize};
@@ -716,14 +717,12 @@ pub fn get_platform_key() -> String {
     }
 }
 
-/// Get the cache directory for binary agents
+/// Get the cache directory for binary agents.
+///
+/// This uses the default ConfigPaths location (`~/.symposium/bin/<agent_id>/<version>`).
 pub fn get_binary_cache_dir(agent_id: &str, version: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home
-        .join(".symposium")
-        .join("bin")
-        .join(agent_id)
-        .join(version))
+    let config_paths = ConfigPaths::default_location()?;
+    Ok(config_paths.binary_cache_dir(agent_id, version))
 }
 
 /// Resolve an agent JSON or ID to an McpServer configuration

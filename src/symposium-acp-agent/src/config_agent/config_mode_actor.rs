@@ -223,7 +223,7 @@ impl ConfigModeActor {
                 self.send_message("Welcome to Symposium!\n\n");
 
                 // Check for global agent config
-                let global_agent = match self.config_paths.load_global_agent_config() {
+                let global_agent = match GlobalAgentConfig::load(&self.config_paths) {
                     Ok(Some(global)) => Some(global.agent),
                     Ok(None) => None,
                     Err(e) => {
@@ -247,9 +247,7 @@ impl ConfigModeActor {
                             Some(agent) => {
                                 // Save as global default
                                 let global_config = GlobalAgentConfig::new(agent.clone());
-                                if let Err(e) =
-                                    self.config_paths.save_global_agent_config(&global_config)
-                                {
+                                if let Err(e) = global_config.save(&self.config_paths) {
                                     tracing::warn!("Failed to save global agent config: {}", e);
                                 }
                                 agent
@@ -502,7 +500,7 @@ impl ConfigModeActor {
                 config.agent = new_agent.clone();
                 // Also update global agent config
                 let global_config = GlobalAgentConfig::new(new_agent.clone());
-                if let Err(e) = self.config_paths.save_global_agent_config(&global_config) {
+                if let Err(e) = global_config.save(&self.config_paths) {
                     tracing::warn!("Failed to save global agent config: {}", e);
                     self.send_message(&format!("Note: Could not save as default agent: {}\n", e));
                 } else {

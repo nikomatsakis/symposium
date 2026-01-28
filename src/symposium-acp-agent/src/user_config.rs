@@ -16,10 +16,15 @@ use std::path::{Path, PathBuf};
 // ConfigPaths - the root configuration directory
 // ============================================================================
 
-/// Manages paths to Symposium configuration files.
+/// Manages paths to Symposium configuration files and directories.
 ///
-/// By default, configuration is stored under `~/.symposium/`. Tests can
-/// provide a custom root directory to avoid modifying the user's home.
+/// This struct provides paths to various configuration locations and ensures
+/// directories exist when needed. By default, configuration is stored under
+/// `~/.symposium/`. Tests can provide a custom root directory to avoid
+/// modifying the user's home.
+///
+/// The struct only provides paths and directory creation - callers are
+/// responsible for their own reads and writes.
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
     /// Root directory for all Symposium configuration (e.g., `~/.symposium`).
@@ -47,8 +52,14 @@ impl ConfigPaths {
         &self.root
     }
 
+    /// Ensure a directory exists (like `mkdir -p`).
+    fn ensure_dir(&self, path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create directory {}", path.display()))
+    }
+
     // ------------------------------------------------------------------------
-    // Global agent config paths
+    // Global agent config
     // ------------------------------------------------------------------------
 
     /// Get the path to the global agent config file.
@@ -58,34 +69,19 @@ impl ConfigPaths {
         self.root.join("config").join("agent.json")
     }
 
-    /// Load the global agent config. Returns None if it doesn't exist.
-    pub fn load_global_agent_config(&self) -> Result<Option<GlobalAgentConfig>> {
-        let path = self.global_agent_config_path();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
-        let config: GlobalAgentConfig = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
-        Ok(Some(config))
-    }
-
-    /// Save the global agent config.
-    pub fn save_global_agent_config(&self, config: &GlobalAgentConfig) -> Result<()> {
+    /// Ensure the global agent config directory exists and return the config path.
+    ///
+    /// Use this before writing to the global agent config file.
+    pub fn ensure_global_agent_config_dir(&self) -> Result<PathBuf> {
         let path = self.global_agent_config_path();
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
+            self.ensure_dir(dir)?;
         }
-        let content = serde_json::to_string_pretty(config)?;
-        std::fs::write(&path, content)
-            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
-        Ok(())
+        Ok(path)
     }
 
     // ------------------------------------------------------------------------
-    // Workspace config paths
+    // Workspace config
     // ------------------------------------------------------------------------
 
     /// Get the config directory for a workspace.
@@ -103,55 +99,37 @@ impl ConfigPaths {
         self.workspace_config_dir(workspace_path).join("config.json")
     }
 
-    /// Load config for a workspace. Returns None if config doesn't exist.
-    pub fn load_workspace_config(&self, workspace_path: &Path) -> Result<Option<WorkspaceConfig>> {
-        let path = self.workspace_config_path(workspace_path);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: WorkspaceConfig = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse config from {}", path.display()))?;
-        Ok(Some(config))
-    }
-
-    /// Save config for a workspace.
-    pub fn save_workspace_config(
-        &self,
-        workspace_path: &Path,
-        config: &WorkspaceConfig,
-    ) -> Result<()> {
+    /// Ensure the workspace config directory exists and return the config path.
+    ///
+    /// Use this before writing to the workspace config file.
+    pub fn ensure_workspace_config_dir(&self, workspace_path: &Path) -> Result<PathBuf> {
         let path = self.workspace_config_path(workspace_path);
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
+            self.ensure_dir(dir)?;
         }
-        let content = serde_json::to_string_pretty(config)?;
-        std::fs::write(&path, content)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
-        Ok(())
+        Ok(path)
     }
 
     // ------------------------------------------------------------------------
-    // Legacy config paths
+    // Binary cache (for downloaded agents)
     // ------------------------------------------------------------------------
 
-    /// Get the legacy config file path: `<root>/config.jsonc`
-    pub fn legacy_config_path(&self) -> PathBuf {
-        self.root.join("config.jsonc")
+    /// Get the cache directory for a binary agent.
+    ///
+    /// Location: `<root>/bin/<agent_id>/<version>/`
+    pub fn binary_cache_dir(&self, agent_id: &str, version: &str) -> PathBuf {
+        self.root.join("bin").join(agent_id).join(version)
     }
 
-    /// Load legacy config. Returns None if the config file doesn't exist.
-    pub fn load_legacy_config(&self) -> Result<Option<SymposiumUserConfig>> {
-        let path = self.legacy_config_path();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
-        let config: SymposiumUserConfig = serde_jsonc::from_str(&content)?;
-        Ok(Some(config))
+    /// Ensure the binary cache directory exists and return the path.
+    ///
+    /// Use this before downloading agent binaries.
+    pub fn ensure_binary_cache_dir(&self, agent_id: &str, version: &str) -> Result<PathBuf> {
+        let path = self.binary_cache_dir(agent_id, version);
+        self.ensure_dir(&path)?;
+        Ok(path)
     }
+
 }
 
 /// Extension configuration entry
@@ -204,6 +182,30 @@ impl GlobalAgentConfig {
     pub fn new(agent: ComponentSource) -> Self {
         Self { agent }
     }
+
+    /// Load the global agent config.
+    /// Returns None if the file doesn't exist.
+    pub fn load(config_paths: &ConfigPaths) -> Result<Option<Self>> {
+        let path = config_paths.global_agent_config_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
+        let config: Self = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
+        Ok(Some(config))
+    }
+
+    /// Save the global agent config.
+    /// Creates the parent directory if it doesn't exist.
+    pub fn save(&self, config_paths: &ConfigPaths) -> Result<()> {
+        let path = config_paths.ensure_global_agent_config_dir()?;
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, &content)
+            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -223,6 +225,30 @@ impl WorkspaceConfig {
             .collect();
 
         Self { agent, extensions }
+    }
+
+    /// Load the workspace config for the given workspace.
+    /// Returns None if the file doesn't exist.
+    pub fn load(config_paths: &ConfigPaths, workspace_path: &Path) -> Result<Option<Self>> {
+        let path = config_paths.workspace_config_path(workspace_path);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read workspace config from {}", path.display()))?;
+        let config: Self = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse workspace config from {}", path.display()))?;
+        Ok(Some(config))
+    }
+
+    /// Save the workspace config for the given workspace.
+    /// Creates the parent directory if it doesn't exist.
+    pub fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
+        let path = config_paths.ensure_workspace_config_dir(workspace_path)?;
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, &content)
+            .with_context(|| format!("Failed to write workspace config to {}", path.display()))?;
+        Ok(())
     }
 
     /// Get enabled extension sources in order
@@ -259,110 +285,6 @@ fn encode_path(path: &Path) -> String {
     let hash_hex: String = hash.iter().take(8).map(|b| format!("{:02x}", b)).collect();
 
     format!("{}-{}", last_component, hash_hex)
-}
-
-// ============================================================================
-// Legacy types for backwards compatibility
-// ============================================================================
-
-/// Legacy user configuration for Symposium.
-/// Used for migration from old config format.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-pub struct SymposiumUserConfig {
-    /// Downstream agent command (shell words, e.g., "npx -y @anthropic-ai/claude-code-acp")
-    pub agent: String,
-
-    /// Proxy extensions to enable
-    pub proxies: Vec<ProxyEntry>,
-}
-
-/// A proxy extension entry in the legacy configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-pub struct ProxyEntry {
-    /// Proxy name (e.g., "sparkle", "ferris", "cargo")
-    pub name: String,
-
-    /// Whether this proxy is enabled
-    pub enabled: bool,
-}
-
-impl SymposiumUserConfig {
-    /// Get the legacy config directory path: ~/.symposium/
-    pub fn dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(".symposium"))
-    }
-
-    /// Get the legacy config file path: ~/.symposium/config.jsonc
-    pub fn path() -> Result<PathBuf> {
-        Ok(Self::dir()?.join("config.jsonc"))
-    }
-
-    /// Load legacy config from the given path, or the default path if None.
-    /// Returns None if the config file doesn't exist.
-    pub fn load(path: Option<impl AsRef<std::path::Path>>) -> Result<Option<Self>> {
-        let path = match path {
-            Some(p) => p.as_ref().to_path_buf(),
-            None => Self::path()?,
-        };
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
-        let config: Self = serde_jsonc::from_str(&content)?;
-        Ok(Some(config))
-    }
-
-    /// Save config to the default path.
-    pub fn save(&self) -> Result<()> {
-        self.save_to(&Self::path()?)
-    }
-
-    /// Save config to a specific path.
-    pub fn save_to(&self, path: &PathBuf) -> Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
-    }
-
-    /// Get the list of enabled proxy names.
-    pub fn enabled_proxies(&self) -> Vec<String> {
-        self.proxies
-            .iter()
-            .filter(|p| p.enabled)
-            .map(|p| p.name.clone())
-            .collect()
-    }
-
-    /// Parse the agent string into command arguments (shell words).
-    pub fn agent_args(&self) -> Result<Vec<String>> {
-        shell_words::split(&self.agent)
-            .map_err(|e| anyhow::anyhow!("Failed to parse agent command: {}", e))
-    }
-
-    /// Create a default config with all proxies enabled.
-    pub fn with_agent(agent: impl Into<String>) -> Self {
-        Self {
-            agent: agent.into(),
-            proxies: vec![
-                ProxyEntry {
-                    name: "sparkle".to_string(),
-                    enabled: true,
-                },
-                ProxyEntry {
-                    name: "ferris".to_string(),
-                    enabled: true,
-                },
-                ProxyEntry {
-                    name: "cargo".to_string(),
-                    enabled: true,
-                },
-            ],
-        }
-    }
 }
 
 #[cfg(test)]
@@ -455,13 +377,10 @@ mod tests {
         let config = WorkspaceConfig::new(agent.clone(), extensions);
 
         // Save
-        config_paths
-            .save_workspace_config(&workspace_path, &config)
-            .unwrap();
+        config.save(&config_paths, &workspace_path).unwrap();
 
         // Load
-        let loaded = config_paths
-            .load_workspace_config(&workspace_path)
+        let loaded = WorkspaceConfig::load(&config_paths, &workspace_path)
             .unwrap()
             .unwrap();
 
@@ -476,10 +395,10 @@ mod tests {
         let config = GlobalAgentConfig::new(ComponentSource::Builtin("eliza".to_string()));
 
         // Save
-        config_paths.save_global_agent_config(&config).unwrap();
+        config.save(&config_paths).unwrap();
 
         // Load
-        let loaded = config_paths.load_global_agent_config().unwrap().unwrap();
+        let loaded = GlobalAgentConfig::load(&config_paths).unwrap().unwrap();
 
         assert_eq!(config, loaded);
     }

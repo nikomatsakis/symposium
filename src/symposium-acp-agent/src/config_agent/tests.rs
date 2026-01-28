@@ -49,9 +49,7 @@ fn write_workspace_config(
     workspace_path: &std::path::Path,
     config: &WorkspaceConfig,
 ) {
-    config_paths
-        .save_workspace_config(workspace_path, config)
-        .unwrap();
+    config.save(config_paths, workspace_path).unwrap();
 }
 
 /// Create a config that uses elizacp as the backend agent.
@@ -99,11 +97,8 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
 
     // Pre-populate the global agent config so we skip agent selection
     let default_agent = test_default_agent();
-    config_paths
-        .save_global_agent_config(&crate::user_config::GlobalAgentConfig::new(
-            default_agent.clone(),
-        ))
-        .unwrap();
+    let global_config = crate::user_config::GlobalAgentConfig::new(default_agent.clone());
+    global_config.save(&config_paths).unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
@@ -201,7 +196,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             );
 
             // Verify config was written
-            let loaded = config_paths.load_workspace_config(&workspace_path).unwrap();
+            let loaded = WorkspaceConfig::load(&config_paths, &workspace_path).unwrap();
             assert!(loaded.is_some(), "Config should have been saved");
 
             Ok(())

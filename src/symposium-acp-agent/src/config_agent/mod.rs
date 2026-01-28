@@ -129,7 +129,7 @@ impl ConfigAgent {
 
     /// Load configuration for a workspace from disk.
     fn load_config(&self, workspace_path: &Path) -> anyhow::Result<Option<WorkspaceConfig>> {
-        self.config_paths.load_workspace_config(workspace_path)
+        WorkspaceConfig::load(&self.config_paths, workspace_path)
     }
 
     /// Load recommendations, using override if set, otherwise loading builtin.
@@ -244,7 +244,7 @@ impl ConfigAgent {
                 };
 
                 // Save the configuration
-                if let Err(e) = self.config_paths.save_workspace_config(&workspace_path, &config) {
+                if let Err(e) = config.save(&self.config_paths, &workspace_path) {
                     cx.send_notification(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
