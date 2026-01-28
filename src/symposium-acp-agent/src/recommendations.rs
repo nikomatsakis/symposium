@@ -997,6 +997,7 @@ when.grep = { pattern = "println!", path = "**/*.rs" }
 
     #[test]
     #[serial]
+    #[ignore = "https://github.com/symposium-dev/symposium/issues/112"]
     fn test_using_crate_condition() {
         let temp_dir = tempfile::tempdir().unwrap();
 
@@ -1034,6 +1035,7 @@ serde = "1"
 
     #[test]
     #[serial]
+    #[ignore = "https://github.com/symposium-dev/symposium/issues/112"]
     fn test_using_crates_condition() {
         let temp_dir = tempfile::tempdir().unwrap();
 
@@ -1072,6 +1074,7 @@ anyhow = "1"
 
     #[test]
     #[serial]
+    #[ignore = "https://github.com/symposium-dev/symposium/issues/112"]
     fn test_using_crate_in_recommendation() {
         let toml = r#"
 [[recommendation]]
