@@ -31,9 +31,22 @@ pub struct ConfigPaths {
     root: PathBuf,
 }
 
+/// Environment variable to override the default config directory.
+/// When set, this takes precedence over `~/.symposium`.
+/// Useful for testing to avoid modifying the user's real configuration.
+pub const SYMPOSIUM_CONFIG_DIR_ENV: &str = "SYMPOSIUM_CONFIG_DIR";
+
 impl ConfigPaths {
-    /// Create a ConfigPaths using the default location (`~/.symposium`).
+    /// Create a ConfigPaths using the default location.
+    ///
+    /// Checks `SYMPOSIUM_CONFIG_DIR` environment variable first,
+    /// falling back to `~/.symposium` if not set.
     pub fn default_location() -> Result<Self> {
+        if let Ok(dir) = std::env::var(SYMPOSIUM_CONFIG_DIR_ENV) {
+            return Ok(Self {
+                root: PathBuf::from(dir),
+            });
+        }
         let home = dirs::home_dir().context("Could not determine home directory")?;
         Ok(Self {
             root: home.join(".symposium"),
@@ -432,5 +445,20 @@ mod tests {
         // Verify serialization matches
         let serialized = serde_json::to_string(&config).unwrap();
         assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_config_paths_env_override() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let custom_path = temp_dir.path().to_str().unwrap();
+
+        // Set the environment variable
+        std::env::set_var(SYMPOSIUM_CONFIG_DIR_ENV, custom_path);
+
+        let config_paths = ConfigPaths::default_location().unwrap();
+        assert_eq!(config_paths.root(), temp_dir.path());
+
+        // Clean up
+        std::env::remove_var(SYMPOSIUM_CONFIG_DIR_ENV);
     }
 }
