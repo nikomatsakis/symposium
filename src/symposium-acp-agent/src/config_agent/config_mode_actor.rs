@@ -327,10 +327,10 @@ impl ConfigModeActor {
 
         loop {
             self.send_message("Options:\n");
-            self.send_message("* SAVE to accept the new recommendations\n");
-            self.send_message("* IGNORE to disable all new recommendations\n");
+            self.send_message("* `SAVE` - Accept the new recommendations\n");
+            self.send_message("* `IGNORE` - Disable all new recommendations\n");
             self.send_message(
-                "* CONFIG to select which extensions to enable or make other changes\n",
+                "* `CONFIG` - Select which extensions to enable or make other changes\n",
             );
 
             let Some(input) = self.next_input().await else {
@@ -512,14 +512,6 @@ impl ConfigModeActor {
         if text_upper == "A" || text_upper == "AGENT" {
             if let Some(new_agent) = self.select_agent().await {
                 *agent = new_agent.clone();
-                // Also update global agent config immediately
-                let global_config = GlobalAgentConfig::new(new_agent);
-                if let Err(e) = global_config.save(&self.config_paths) {
-                    tracing::warn!("Failed to save global agent config: {}", e);
-                    self.send_message(&format!("Note: Could not save agent: {}\n", e));
-                } else {
-                    self.send_message("Agent updated (applies to all workspaces).\n");
-                }
                 return MenuAction::Redisplay;
             }
             // Selection was cancelled, just redisplay menu
@@ -575,28 +567,24 @@ impl ConfigModeActor {
     fn show_main_menu(&self, agent: &ComponentSource, extensions: &WorkspaceExtensionsConfig) {
         let mut msg = String::new();
         msg.push_str("# Configuration\n\n");
-        msg.push_str(&format!(
-            "Workspace: `{}`\n\n",
-            self.workspace_path.display()
-        ));
 
         // Current agent (global)
-        msg.push_str(&format!(
-            "* **Agent:** {} (global)\n",
-            agent.display_name()
-        ));
+        msg.push_str(&format!("**Agent:** {}\n\n", agent.display_name()));
 
         // Extensions (per-workspace)
-        msg.push_str("* **Extensions:** (per-workspace)\n");
+        msg.push_str(&format!(
+            "**Extensions for workspace `{}`:**\n",
+            self.workspace_path.display()
+        ));
         if extensions.extensions.is_empty() {
-            msg.push_str("    * (none configured)\n");
+            msg.push_str("  * (none configured)\n");
         } else {
             for (extension, display_index) in extensions.extensions.iter().zip(1..) {
                 let name = extension.source.display_name();
                 if extension.enabled {
-                    msg.push_str(&format!("    {}. {}\n", display_index, name));
+                    msg.push_str(&format!("  {}. {}\n", display_index, name));
                 } else {
-                    msg.push_str(&format!("    {}. ~~{}~~ (disabled)\n", display_index, name));
+                    msg.push_str(&format!("  {}. ~~{}~~ (disabled)\n", display_index, name));
                 }
             }
         }
@@ -604,16 +592,16 @@ impl ConfigModeActor {
 
         // Commands
         msg.push_str("# Commands\n\n");
-        msg.push_str("- `a` - Change agent (affects all workspaces)\n");
+        msg.push_str("- `AGENT` - Change agent (affects all workspaces)\n");
         match extensions.extensions.len() {
             0 => {}
-            1 => msg.push_str("- `1` - Toggle extension enabled/disabled\n"),
+            1 => msg.push_str("- `1` - Toggle extension enabled/disabled in this workspace\n"),
             n => msg.push_str(&format!(
-                "- `1` through `{n}` - Toggle extension enabled/disabled\n"
+                "- `1` through `{n}` - Toggle extension enabled/disabled in this workspace\n"
             )),
         }
-        msg.push_str("- `save` - Save for future sessions\n");
-        msg.push_str("- `cancel` - Exit without saving\n");
+        msg.push_str("- `SAVE` - Save for future sessions\n");
+        msg.push_str("- `CANCEL` - Exit without saving\n");
 
         self.send_message(msg);
     }
