@@ -8,7 +8,8 @@
 
 use super::conductor_actor::ConductorHandle;
 use super::ConfigAgentMessage;
-use crate::user_config::SymposiumUserConfig;
+use crate::registry::ComponentSource;
+use crate::user_config::ExtensionConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;
 use sacp::link::AgentToClient;
@@ -21,7 +22,9 @@ use tokio::sync::mpsc;
 pub enum UberconductorMessage {
     /// Create/get a conductor for this config and forward the session request to it.
     NewSession {
-        config: SymposiumUserConfig,
+        workspace_path: PathBuf,
+        agent: ComponentSource,
+        extensions: Vec<ExtensionConfig>,
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     },
@@ -47,16 +50,20 @@ impl UberconductorHandle {
         Ok(Self { tx })
     }
 
-    /// Request a new session with the given configuration.
+    /// Request a new session with the given agent and extensions.
     pub async fn new_session(
         &self,
-        config: SymposiumUserConfig,
+        workspace_path: PathBuf,
+        agent: ComponentSource,
+        extensions: Vec<ExtensionConfig>,
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         self.tx
             .send(UberconductorMessage::NewSession {
-                config,
+                workspace_path,
+                agent,
+                extensions,
                 request,
                 request_cx,
             })
@@ -72,27 +79,32 @@ async fn run_actor(
     client_cx: JrConnectionCx<AgentToClient>,
     mut rx: mpsc::Receiver<UberconductorMessage>,
 ) -> Result<(), sacp::Error> {
-    let mut conductors: FxHashMap<SymposiumUserConfig, ConductorHandle> = FxHashMap::default();
+    // Key conductors by workspace path - each workspace gets its own conductor
+    let mut conductors: FxHashMap<PathBuf, ConductorHandle> = FxHashMap::default();
 
     while let Some(message) = rx.recv().await {
         match message {
             UberconductorMessage::NewSession {
-                config,
+                workspace_path,
+                agent,
+                extensions,
                 request,
                 request_cx,
             } => {
-                // Get or create conductor for this config
-                let handle = match conductors.get(&config) {
+                // Get or create conductor for this workspace
+                let handle = match conductors.get(&workspace_path) {
                     Some(handle) => handle.clone(),
                     None => {
                         let handle = ConductorHandle::spawn(
-                            &config,
+                            workspace_path.clone(),
+                            agent,
+                            extensions,
                             trace_dir.as_ref(),
                             config_agent_tx.clone(),
                             &client_cx,
                         )
                         .await?;
-                        conductors.insert(config.clone(), handle.clone());
+                        conductors.insert(workspace_path.clone(), handle.clone());
                         handle
                     }
                 };
