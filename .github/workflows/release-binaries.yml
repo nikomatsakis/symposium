@@ -16,9 +16,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-13
-            artifact: symposium-darwin-x64
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: symposium-darwin-arm64
@@ -94,9 +91,6 @@ jobs:
         include:
           - vscode-target: darwin-arm64
             artifact: symposium-darwin-arm64
-            binary: symposium-acp-agent
-          - vscode-target: darwin-x64
-            artifact: symposium-darwin-x64
             binary: symposium-acp-agent
           - vscode-target: linux-x64
             artifact: symposium-linux-x64
