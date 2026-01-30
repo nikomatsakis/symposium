@@ -77,13 +77,21 @@ impl ComponentSource {
     }
 }
 
+fn is_empty_vec<T>(v: &Vec<T>) -> bool {
+    v.is_empty()
+}
+
+fn is_empty_map<K, V>(m: &BTreeMap<K, V>) -> bool {
+    m.is_empty()
+}
+
 /// Local executable distribution
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct LocalDistribution {
     pub command: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub args: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_map")]
     pub env: BTreeMap<String, String>,
 }
 
@@ -91,9 +99,9 @@ pub struct LocalDistribution {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct NpxDistribution {
     pub package: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub args: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_map")]
     pub env: BTreeMap<String, String>,
 }
 
@@ -101,7 +109,7 @@ pub struct NpxDistribution {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct PipxDistribution {
     pub package: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub args: Vec<String>,
 }
 
@@ -112,13 +120,13 @@ pub struct CargoDistribution {
     #[serde(rename = "crate")]
     pub crate_name: String,
     /// Optional version (defaults to latest)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// Optional explicit binary name (if not specified, queried from crates.io)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary: Option<String>,
     /// Additional args to pass to the binary
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub args: Vec<String>,
 }
 
@@ -127,7 +135,7 @@ pub struct CargoDistribution {
 pub struct BinaryDistribution {
     pub archive: String,
     pub cmd: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub args: Vec<String>,
 }
 
