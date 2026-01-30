@@ -38,7 +38,7 @@ use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use symposium_acp_agent::recommendations::Recommendations;
+use symposium_acp_agent::recommendations::{Recommendations, RecommendationsExt};
 use symposium_acp_agent::registry;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
 use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};

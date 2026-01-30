@@ -8,7 +8,7 @@
 
 use super::conductor_actor::ConductorHandle;
 use super::ConfigAgentMessage;
-use crate::registry::ComponentSource;
+use symposium_recommendations::ComponentSource;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;

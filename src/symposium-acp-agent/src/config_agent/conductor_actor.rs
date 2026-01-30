@@ -7,7 +7,8 @@
 //! - Forwards notifications from the conductor back to the client
 
 use super::ConfigAgentMessage;
-use crate::registry::ComponentSource;
+use crate::registry::ComponentSourceExt;
+use symposium_recommendations::ComponentSource;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};

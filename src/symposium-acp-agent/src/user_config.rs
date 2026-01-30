@@ -8,7 +8,7 @@
 //! enabling easy diffing with recommendations.
 
 use crate::recommendations::When;
-use crate::registry::ComponentSource;
+use symposium_recommendations::ComponentSource;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -314,7 +314,7 @@ fn encode_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::CargoDistribution;
+    use symposium_recommendations::CargoDistribution;
     use expect_test::expect;
 
     #[test]

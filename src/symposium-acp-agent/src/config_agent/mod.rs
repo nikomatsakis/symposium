@@ -13,8 +13,8 @@ mod uberconductor_actor;
 #[cfg(test)]
 mod tests;
 
-use crate::recommendations::{Recommendations, WorkspaceRecommendations};
-use crate::registry::ComponentSource;
+use crate::recommendations::{Recommendations, RecommendationsExt, WorkspaceRecommendations};
+use symposium_recommendations::ComponentSource;
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};

@@ -4,52 +4,54 @@
 //! characteristics. Recommendations are loaded from a built-in TOML file that
 //! is embedded in the binary.
 
-use crate::registry::ComponentSource;
 use crate::user_config::{ModConfig, WorkspaceModsConfig};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
+use symposium_recommendations::ComponentSource;
+
+// Re-export types from symposium-recommendations
+pub use symposium_recommendations::{Recommendation, Recommendations, When};
 
 /// Built-in recommendations TOML, embedded at compile time
 const BUILTIN_RECOMMENDATIONS_TOML: &str = include_str!("builtin_recommendations.toml");
 
-/// A recommendation for a component
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Recommendation {
-    /// The source of the component (this IS the identity)
-    pub source: ComponentSource,
+// ============================================================================
+// Extension traits for workspace evaluation
+// ============================================================================
 
-    /// Conditions that must be met for this recommendation to apply
-    #[serde(default)]
-    pub when: Option<When>,
+/// Extension trait for Recommendation with formatting helpers
+pub trait RecommendationExt {
+    /// Explain why this recommendation should be added (for new recommendations)
+    fn explain_why_added(&self) -> Vec<String>;
+
+    /// Explain why this recommendation is stale (for removed recommendations)
+    fn explain_why_stale(&self) -> Vec<String>;
+
+    /// Format explanation for display (joins all reasons)
+    fn format_added_explanation(&self) -> String;
+
+    /// Format stale explanation for display (joins all reasons)
+    fn format_stale_explanation(&self) -> String;
 }
 
-impl Recommendation {
-    /// Get the display name for this recommendation
-    pub fn display_name(&self) -> String {
-        self.source.display_name()
-    }
-
-    /// Explain why this recommendation should be added (for new recommendations)
-    pub fn explain_why_added(&self) -> Vec<String> {
+impl RecommendationExt for Recommendation {
+    fn explain_why_added(&self) -> Vec<String> {
         self.when
             .as_ref()
             .map(|w| w.explain_why_added())
             .unwrap_or_default()
     }
 
-    /// Explain why this recommendation is stale (for removed recommendations)
-    pub fn explain_why_stale(&self) -> Vec<String> {
+    fn explain_why_stale(&self) -> Vec<String> {
         self.when
             .as_ref()
             .map(|w| w.explain_why_stale())
             .unwrap_or_default()
     }
 
-    /// Format explanation for display (joins all reasons)
-    pub fn format_added_explanation(&self) -> String {
+    fn format_added_explanation(&self) -> String {
         let reasons = self.explain_why_added();
         if reasons.is_empty() {
             String::new()
@@ -58,8 +60,7 @@ impl Recommendation {
         }
     }
 
-    /// Format stale explanation for display (joins all reasons)
-    pub fn format_stale_explanation(&self) -> String {
+    fn format_stale_explanation(&self) -> String {
         let reasons = self.explain_why_stale();
         if reasons.is_empty() {
             String::new()
@@ -69,36 +70,62 @@ impl Recommendation {
     }
 }
 
-/// Conditions for when a recommendation applies
-///
-/// Multiple fields at the same level are combined with AND.
-/// Use `any` for OR logic, `all` for explicit AND grouping.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "kebab-case")]
-pub struct When {
-    /// Single file must exist in workspace root
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_exists: Option<String>,
+/// Extension trait for When to evaluate conditions against a workspace
+pub trait WhenExt {
+    /// Check if this condition is met for the given workspace.
+    fn is_met(&self, workspace_path: &Path) -> bool;
+}
 
-    /// All files must exist in workspace root (AND)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub files_exist: Option<Vec<String>>,
+impl WhenExt for When {
+    fn is_met(&self, workspace_path: &Path) -> bool {
+        // file-exists
+        if let Some(path) = &self.file_exists {
+            if !workspace_path.join(path).exists() {
+                return false;
+            }
+        }
 
-    /// Single crate must be a dependency
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub using_crate: Option<String>,
+        // files-exist (all must exist)
+        if let Some(paths) = &self.files_exist {
+            for path in paths {
+                if !workspace_path.join(path).exists() {
+                    return false;
+                }
+            }
+        }
 
-    /// All crates must be dependencies (AND)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub using_crates: Option<Vec<String>>,
+        // using-crate
+        if let Some(crate_name) = &self.using_crate {
+            if !is_using_crate(workspace_path, crate_name) {
+                return false;
+            }
+        }
 
-    /// Any of these conditions must match (OR)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub any: Option<Vec<When>>,
+        // using-crates (all must be dependencies)
+        if let Some(crate_names) = &self.using_crates {
+            for crate_name in crate_names {
+                if !is_using_crate(workspace_path, crate_name) {
+                    return false;
+                }
+            }
+        }
 
-    /// All of these conditions must match (explicit AND)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub all: Option<Vec<When>>,
+        // any (OR - at least one must match)
+        if let Some(conditions) = &self.any {
+            if !conditions.iter().any(|c| c.is_met(workspace_path)) {
+                return false;
+            }
+        }
+
+        // all (explicit AND - all must match)
+        if let Some(conditions) = &self.all {
+            if !conditions.iter().all(|c| c.is_met(workspace_path)) {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 /// Check if a crate is a direct dependency of the workspace.
@@ -166,188 +193,25 @@ fn has_dependency_recursive(
     false
 }
 
-impl When {
-    /// Check if this condition is met for the given workspace.
-    /// All specified conditions must be true (AND semantics).
-    /// If no conditions are specified, returns true.
-    pub fn is_met(&self, workspace_path: &Path) -> bool {
-        // file-exists
-        if let Some(path) = &self.file_exists {
-            if !workspace_path.join(path).exists() {
-                return false;
-            }
-        }
+// ============================================================================
+// Extension trait for Recommendations
+// ============================================================================
 
-        // files-exist (all must exist)
-        if let Some(paths) = &self.files_exist {
-            for path in paths {
-                if !workspace_path.join(path).exists() {
-                    return false;
-                }
-            }
-        }
-
-        // using-crate
-        if let Some(crate_name) = &self.using_crate {
-            if !is_using_crate(workspace_path, crate_name) {
-                return false;
-            }
-        }
-
-        // using-crates (all must be dependencies)
-        if let Some(crate_names) = &self.using_crates {
-            for crate_name in crate_names {
-                if !is_using_crate(workspace_path, crate_name) {
-                    return false;
-                }
-            }
-        }
-
-        // any (OR - at least one must match)
-        if let Some(conditions) = &self.any {
-            if !conditions.iter().any(|c| c.is_met(workspace_path)) {
-                return false;
-            }
-        }
-
-        // all (explicit AND - all must match)
-        if let Some(conditions) = &self.all {
-            if !conditions.iter().all(|c| c.is_met(workspace_path)) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Explain why this condition causes a recommendation to be added
-    pub fn explain_why_added(&self) -> Vec<String> {
-        let mut reasons = Vec::new();
-
-        if let Some(path) = &self.file_exists {
-            reasons.push(format!("because `{path}` exists"));
-        }
-
-        if let Some(paths) = &self.files_exist {
-            for path in paths {
-                reasons.push(format!("because `{path}` exists"));
-            }
-        }
-
-        if let Some(crate_name) = &self.using_crate {
-            reasons.push(format!("because using crate `{crate_name}`"));
-        }
-
-        if let Some(crate_names) = &self.using_crates {
-            for name in crate_names {
-                reasons.push(format!("because using crate `{name}`"));
-            }
-        }
-
-        if let Some(conditions) = &self.any {
-            // For 'any', just list one that matches
-            for c in conditions {
-                let sub_reasons = c.explain_why_added();
-                if !sub_reasons.is_empty() {
-                    reasons.extend(sub_reasons);
-                    break; // Only need to explain one matching condition
-                }
-            }
-        }
-
-        if let Some(conditions) = &self.all {
-            for c in conditions {
-                reasons.extend(c.explain_why_added());
-            }
-        }
-
-        reasons
-    }
-
-    /// Explain why this condition causes a recommendation to be stale
-    pub fn explain_why_stale(&self) -> Vec<String> {
-        let mut reasons = Vec::new();
-
-        if let Some(path) = &self.file_exists {
-            reasons.push(format!("because `{path}` no longer exists"));
-        }
-
-        if let Some(paths) = &self.files_exist {
-            for path in paths {
-                reasons.push(format!("because `{path}` no longer exists"));
-            }
-        }
-
-        if let Some(crate_name) = &self.using_crate {
-            reasons.push(format!("because no longer using crate `{crate_name}`"));
-        }
-
-        if let Some(crate_names) = &self.using_crates {
-            for name in crate_names {
-                reasons.push(format!("because no longer using crate `{name}`"));
-            }
-        }
-
-        if let Some(conditions) = &self.any {
-            // For 'any', all must fail for it to be stale
-            for c in conditions {
-                reasons.extend(c.explain_why_stale());
-            }
-        }
-
-        if let Some(conditions) = &self.all {
-            // For 'all', any one failing makes it stale
-            for c in conditions {
-                let sub_reasons = c.explain_why_stale();
-                if !sub_reasons.is_empty() {
-                    reasons.extend(sub_reasons);
-                    break;
-                }
-            }
-        }
-
-        reasons
-    }
-}
-
-/// The recommendations file format
-#[derive(Debug, Clone, Deserialize)]
-struct RecommendationsFile {
-    /// Recommendations list
-    #[serde(rename = "recommendation")]
-    recommendations: Vec<Recommendation>,
-}
-
-/// Loaded recommendations
-#[derive(Debug, Clone)]
-pub struct Recommendations {
-    /// All mod recommendations
-    pub mods: Vec<Recommendation>,
-}
-
-impl Recommendations {
-    /// Create empty recommendations (for testing)
-    pub fn empty() -> Self {
-        Self { mods: vec![] }
-    }
-
+/// Extension trait for Recommendations with workspace filtering
+pub trait RecommendationsExt {
     /// Load the built-in recommendations
-    pub fn load_builtin() -> Result<Self> {
-        Self::from_toml(BUILTIN_RECOMMENDATIONS_TOML)
-    }
-
-    /// Parse recommendations from TOML string
-    pub fn from_toml(toml_str: &str) -> Result<Self> {
-        let file: RecommendationsFile =
-            toml::from_str(toml_str).context("Failed to parse recommendations TOML")?;
-
-        Ok(Self {
-            mods: file.recommendations,
-        })
-    }
+    fn load_builtin() -> Result<Recommendations>;
 
     /// Get recommendations that apply to a specific workspace
-    pub fn for_workspace(&self, workspace_path: &Path) -> WorkspaceRecommendations {
+    fn for_workspace(&self, workspace_path: &Path) -> WorkspaceRecommendations;
+}
+
+impl RecommendationsExt for Recommendations {
+    fn load_builtin() -> Result<Recommendations> {
+        Recommendations::from_toml(BUILTIN_RECOMMENDATIONS_TOML)
+    }
+
+    fn for_workspace(&self, workspace_path: &Path) -> WorkspaceRecommendations {
         let mods: Vec<Recommendation> = self
             .mods
             .iter()
@@ -363,6 +227,10 @@ impl Recommendations {
         WorkspaceRecommendations { mods }
     }
 }
+
+// ============================================================================
+// Workspace-specific recommendations
+// ============================================================================
 
 /// Recommendations filtered for a specific workspace
 #[derive(Debug, Clone, Default)]
@@ -474,13 +342,11 @@ mod tests {
 
     #[test]
     fn test_load_builtin_recommendations() {
-        let recs = Recommendations::load_builtin().expect("Should load builtin recommendations");
+        let recs =
+            Recommendations::load_builtin().expect("Should load builtin recommendations");
 
         // Should have some mod recommendations
-        assert!(
-            !recs.mods.is_empty(),
-            "Should have mod recommendations"
-        );
+        assert!(!recs.mods.is_empty(), "Should have mod recommendations");
 
         // Should have sparkle (always recommended) - it's a cargo source
         assert!(

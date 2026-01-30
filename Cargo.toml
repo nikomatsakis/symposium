@@ -6,6 +6,7 @@ members = [
     "src/symposium-acp-agent",
     "src/symposium-ferris",
     "src/symposium-math",
+    "src/symposium-recommendations",
     "src/cli-agent-util",
     "src/symposium-benchmark",
 ]
