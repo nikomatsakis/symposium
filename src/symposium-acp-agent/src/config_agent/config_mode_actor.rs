@@ -6,7 +6,8 @@
 
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
-use crate::registry::{list_agents_with_sources, ComponentSource};
+use crate::registry::list_agents_with_sources;
+use symposium_recommendations::ComponentSource;
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;

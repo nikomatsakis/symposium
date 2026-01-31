@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::recommendations::{Recommendation, Recommendations};
-use crate::registry::{ComponentSource, LocalDistribution};
+use symposium_recommendations::{ComponentSource, LocalDistribution};
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;

@@ -8,6 +8,7 @@ publish = false
 # Symposium components
 symposium-acp-agent = { path = "../symposium-acp-agent" }
 symposium-ferris = { path = "../symposium-ferris" }
+symposium-recommendations = { path = "../symposium-recommendations" }
 
 # ACP framework
 sacp.workspace = true

@@ -13,6 +13,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
+use symposium_recommendations::{
+    BinaryDistribution, CargoDistribution, ComponentSource, LocalDistribution, NpxDistribution,
+    PipxDistribution,
+};
+
 /// Registry URL - same as VSCode extension uses
 const REGISTRY_URL: &str =
     "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
@@ -57,130 +62,18 @@ pub struct Distribution {
     pub cargo: Option<CargoDistribution>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct LocalDistribution {
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct NpxDistribution {
-    pub package: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct PipxDistribution {
-    pub package: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct BinaryDistribution {
-    pub archive: String,
-    pub cmd: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct CargoDistribution {
-    /// The crate name on crates.io
-    #[serde(rename = "crate")]
-    pub crate_name: String,
-    /// Optional version (defaults to latest)
-    #[serde(default)]
-    pub version: Option<String>,
-    /// Optional explicit binary name (if not specified, queried from crates.io)
-    #[serde(default)]
-    pub binary: Option<String>,
-    /// Additional args to pass to the binary
-    #[serde(default)]
-    pub args: Vec<String>,
-}
-
 // ============================================================================
-// ComponentSource - The identity type for agents and extensions
+// ComponentSource Resolution Extension
 // ============================================================================
 
-/// Component source - represents how to obtain and run a component.
-///
-/// This enum IS the identity for components in configuration. Two components
-/// with the same `ComponentSource` are considered the same component.
-/// The enum is designed to be usable as a key in `BTreeMap`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ComponentSource {
-    /// Built-in to symposium-acp-agent (e.g., "ferris", "cargo", "eliza")
-    Builtin(String),
-
-    /// From the ACP registry by ID
-    Registry(String),
-
-    /// From a URL to an extension.json
-    Url(String),
-
-    /// Local executable
-    Local(LocalDistribution),
-
-    /// NPX package
-    Npx(NpxDistribution),
-
-    /// Pipx package
-    Pipx(PipxDistribution),
-
-    /// Cargo crate
-    Cargo(CargoDistribution),
-
-    /// Platform-specific binary downloads
-    Binary(BTreeMap<String, BinaryDistribution>),
-}
-
-impl ComponentSource {
-    /// Get a human-readable display name for this source
-    pub fn display_name(&self) -> String {
-        match self {
-            ComponentSource::Builtin(name) => name.clone(),
-            ComponentSource::Registry(id) => id.clone(),
-            ComponentSource::Url(url) => {
-                // Extract filename or last path segment
-                url.rsplit('/').next().unwrap_or(url).to_string()
-            }
-            ComponentSource::Local(local) => {
-                // Use last component of command path
-                local
-                    .command
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&local.command)
-                    .to_string()
-            }
-            ComponentSource::Npx(npx) => {
-                // Extract package name without scope and version
-                npx.package
-                    .split('@')
-                    .find(|s| !s.is_empty() && !s.starts_with('@'))
-                    .unwrap_or(&npx.package)
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&npx.package)
-                    .to_string()
-            }
-            ComponentSource::Pipx(pipx) => pipx.package.clone(),
-            ComponentSource::Cargo(cargo) => cargo.crate_name.clone(),
-            ComponentSource::Binary(_) => "binary".to_string(),
-        }
-    }
-
+/// Extension trait to add resolution capabilities to ComponentSource
+pub trait ComponentSourceExt {
     /// Resolve this source to an McpServer that can be spawned
-    pub async fn resolve(&self) -> Result<McpServer> {
+    fn resolve(&self) -> impl std::future::Future<Output = Result<McpServer>> + Send;
+}
+
+impl ComponentSourceExt for ComponentSource {
+    async fn resolve(&self) -> Result<McpServer> {
         match self {
             ComponentSource::Builtin(name) => resolve_builtin(name).await,
             ComponentSource::Registry(id) => resolve_from_registry(id).await,
@@ -260,7 +153,6 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
         },
     ])
 }
-
 
 // ============================================================================
 // Registry Fetching

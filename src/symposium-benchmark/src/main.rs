@@ -9,7 +9,8 @@ use sacp::DynComponent;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
-use symposium_acp_agent::registry::{CargoDistribution, ComponentSource};
+use symposium_acp_agent::registry::ComponentSourceExt;
+use symposium_recommendations::{CargoDistribution, ComponentSource};
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-benchmark")]
