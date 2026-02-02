@@ -16,6 +16,7 @@
 use crate::recommendations::When;
 use symposium_recommendations::ComponentSource;
 use anyhow::{Context, Result};
+use sacp::schema::HttpHeader;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -208,6 +209,50 @@ pub struct WorkspaceModsConfig {
     /// Mods with their enabled state
     #[serde(default)]
     pub mods: Vec<ModConfig>,
+    /// MCP servers configured for this workspace
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+/// MCP server configuration for a workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct McpServerConfig {
+    /// MCP server identifier used for tool name prefixes.
+    pub id: String,
+    /// Transport-specific configuration.
+    #[serde(flatten)]
+    pub transport: McpServerTransport,
+}
+
+/// Supported MCP server transports for workspace configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpServerTransport {
+    Stdio { stdio: McpServerStdioConfig },
+    Http { http: McpServerHttpConfig },
+    Sse { sse: McpServerSseConfig },
+}
+
+/// Stdio MCP server config references a ComponentSource.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct McpServerStdioConfig {
+    pub source: ComponentSource,
+}
+
+/// HTTP MCP server config.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct McpServerHttpConfig {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<HttpHeader>,
+}
+
+/// SSE MCP server config.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct McpServerSseConfig {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<HttpHeader>,
 }
 
 // ============================================================================
@@ -269,7 +314,10 @@ impl GlobalAgentConfig {
 impl WorkspaceModsConfig {
     /// Create a new workspace mods config
     pub fn new(mods: Vec<ModConfig>) -> Self {
-        Self { mods }
+        Self {
+            mods,
+            mcp_servers: Vec::new(),
+        }
     }
 
     /// Create a workspace mods config from a list of mod sources.
@@ -284,7 +332,10 @@ impl WorkspaceModsConfig {
             })
             .collect();
 
-        Self { mods }
+        Self {
+            mods,
+            mcp_servers: Vec::new(),
+        }
     }
 
     /// Load the workspace mods config for the given workspace.
@@ -407,6 +458,7 @@ mod tests {
                         },
                     },
                 ],
+                mcp_servers: [],
             }
         "#]]
         .assert_debug_eq(&config);
@@ -430,6 +482,41 @@ mod tests {
             .unwrap();
 
         assert_eq!(config, loaded);
+    }
+
+    #[test]
+    fn test_workspace_mods_config_mcp_servers_roundtrip() {
+        let config = WorkspaceModsConfig {
+            mods: Vec::new(),
+            mcp_servers: vec![
+                McpServerConfig {
+                    id: "github".to_string(),
+                    transport: McpServerTransport::Stdio {
+                        stdio: McpServerStdioConfig {
+                            source: ComponentSource::Cargo(CargoDistribution {
+                                crate_name: "github-mcp".to_string(),
+                                version: None,
+                                binary: None,
+                                args: vec!["--acp".to_string()],
+                            }),
+                        },
+                    },
+                },
+                McpServerConfig {
+                    id: "db".to_string(),
+                    transport: McpServerTransport::Sse {
+                        sse: McpServerSseConfig {
+                            url: "https://example.com/mcp".to_string(),
+                            headers: vec![HttpHeader::new("Authorization", "Bearer token")],
+                        },
+                    },
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: WorkspaceModsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, parsed);
     }
 
     #[test]
