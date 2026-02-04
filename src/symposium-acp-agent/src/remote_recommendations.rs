@@ -44,10 +44,15 @@ pub async fn load_recommendations(config_paths: &ConfigPaths) -> Result<Recommen
     // 1. Try to load remote recommendations (with caching fallback)
     let mut combined = load_remote_with_cache(config_paths).await?;
 
+    tracing::debug!(?combined);
+
     // 2. Load user's local recommendations if present and merge
     if let Some(local_recs) = load_local_recommendations(config_paths)? {
+        tracing::debug!(?local_recs);
         combined.mods.extend(local_recs.mods);
     }
+
+    tracing::debug!(?combined);
 
     Ok(combined)
 }
@@ -221,6 +226,18 @@ pub fn load_workspace_recommendations(workspace_path: &Path) -> Result<Option<Re
 mod tests {
     use super::*;
 
+    fn init_tracing() {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .compact()
+            .with_ansi(false)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::DEBUG.into()),
+            )
+            .try_init();
+    }
+
     /// Get the path where local recommendations should be placed.
     ///
     /// This is useful for error messages telling users where to put their file.
@@ -242,20 +259,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_recommendations_merges_local() {
+        init_tracing();
+
         let temp_dir = tempfile::tempdir().unwrap();
         let config_paths = ConfigPaths::with_root(temp_dir.path());
 
         // Create local recommendations with a unique mod
         let local_dir = config_paths.root().join("config");
-        std::fs::create_dir_all(&local_dir).unwrap();
-        std::fs::write(
+        tokio::fs::create_dir_all(&local_dir).await.unwrap();
+        tokio::fs::write(
             local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME),
             r#"
 [[recommendation]]
 source.builtin = "test-local-mod"
 "#,
-        )
-        .unwrap();
+        ).await.unwrap();
 
         // Load should succeed (fetches from remote) and include local mod
         let recs = load_recommendations(&config_paths).await.unwrap();
