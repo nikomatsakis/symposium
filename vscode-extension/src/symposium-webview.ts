@@ -30,7 +30,12 @@ const tabCurrentStreamType: { [tabId: string]: "text" | "tool" } = {};
 const tabToolCalls: { [tabId: string]: { [toolCallId: string]: string } } = {};
 
 // Tool call status type (matches ACP)
-type ToolCallStatus = "pending" | "running" | "completed" | "failed";
+type ToolCallStatus =
+  | "pending"
+  | "running"
+  | "in_progress"
+  | "completed"
+  | "failed";
 
 // Tool call info from extension
 interface ToolCallInfo {
@@ -166,6 +171,7 @@ function getToolStatusIcon(status: ToolCallStatus): string {
     case "pending":
       return "⏳";
     case "running":
+    case "in_progress":
       return "⚙️";
     case "completed":
       return "✓";
@@ -186,6 +192,7 @@ function getToolStatus(
     case "failed":
       return "error";
     case "running":
+    case "in_progress":
       return "info";
     default:
       return undefined;
@@ -279,7 +286,9 @@ function updateToolCallCard(
 ) {
   const icon = getToolStatusIcon(toolCall.status);
   const shimmer =
-    toolCall.status === "running" || toolCall.status === "pending";
+    toolCall.status === "running" ||
+    toolCall.status === "in_progress" ||
+    toolCall.status === "pending";
   const details = buildToolDetails(toolCall);
 
   // Replace backticks with single quotes for display

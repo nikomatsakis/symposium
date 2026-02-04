@@ -50,13 +50,13 @@ This chapter tracks what's been implemented, what's in progress, and what's plan
 The client receives `sessionUpdate` notifications from the agent. Current support:
 
 - [x] `agent_message_chunk` - Display streaming text in chat UI
-- [x] `tool_call` - Logged to console (not displayed in UI)
-- [x] `tool_call_update` - Logged to console (not displayed in UI)
+- [x] `tool_call` - Display as a tool card in the chat UI
+- [x] `tool_call_update` - Update the existing tool card in the chat UI
 - [ ] Execution plans - Not implemented
 - [ ] Thinking steps - Not implemented
 - [ ] Custom update types - Not implemented
 
-**Gap:** Tool calls are logged but not visually displayed. Users don't see which tools are being executed or their progress.
+**Known limitation:** The webview currently renders tool cards using `title` plus `rawInput`/`rawOutput`. Other fields like `content` and `locations` are not yet surfaced in the UI.
 
 ### File System Capabilities
 
