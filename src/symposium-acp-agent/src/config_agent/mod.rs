@@ -381,8 +381,6 @@ impl ConfigAgent {
         cx: &JrConnectionCx<AgentToClient>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
-        tracing::debug!(?request, "handle_new_session");
-
         // Clone workspace_path upfront so we can move request later
         let workspace_path = request.cwd.clone();
 

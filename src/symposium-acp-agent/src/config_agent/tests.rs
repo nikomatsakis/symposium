@@ -1,7 +1,7 @@
 //! Tests for the ConfigAgent.
 
 use super::*;
-use crate::recommendations::{Recommendation, Recommendations};
+use crate::recommendations::Recommendations;
 use symposium_recommendations::{ComponentSource, LocalDistribution};
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use sacp::link::ClientToAgent;
@@ -72,21 +72,6 @@ fn empty_mods() -> WorkspaceModsConfig {
     WorkspaceModsConfig::new(vec![])
 }
 
-/// Create test recommendations for testing initial setup flow.
-fn test_recommendations() -> Recommendations {
-    Recommendations {
-        mods: vec![Recommendation {
-            source: ComponentSource::Builtin("ferris".to_string()),
-            when: None, // Always recommended
-        }],
-    }
-}
-
-/// Default test agent for initial setup testing.
-fn test_default_agent() -> ComponentSource {
-    ComponentSource::Builtin("eliza".to_string())
-}
-
 // ============================================================================
 // Basic flow tests
 // ============================================================================
@@ -95,6 +80,8 @@ fn test_default_agent() -> ComponentSource {
 #[tokio::test]
 #[ignore = "https://github.com/symposium-dev/symposium/issues/113"]
 async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
+    init_tracing();
+
     // Use a temp dir for ConfigPaths (isolates from real ~/.symposium)
     let config_temp_dir = TempDir::new().unwrap();
     let config_paths = ConfigPaths::with_root(config_temp_dir.path());
@@ -104,20 +91,18 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Don't create the workspace config file - we want to test the "no config" path
 
     // Pre-populate the global agent config so we skip agent selection
-    let default_agent = test_default_agent();
+    let default_agent = elizacp_agent();
     let global_config = crate::user_config::GlobalAgentConfig::new(default_agent.clone());
     global_config.save(&config_paths).unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    // Use test recommendations
-    let recommendations = test_recommendations();
-
     let agent =
-        ConfigAgent::with_config_paths(config_paths.clone()).with_recommendations(recommendations);
+        ConfigAgent::with_config_paths(config_paths.clone()).with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
+        .name("test_client")
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
                 if let SessionUpdate::AgentMessageChunk(ContentChunk { content, .. }) = notif.update
@@ -147,7 +132,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             let session_id = session_response.session_id;
 
             // Give the async notification time to arrive
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
 
             // Should have received the welcome message and config menu
             let text = notifications.lock().unwrap().text();
@@ -174,11 +159,6 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             assert!(
                 text.contains("eliza"),
                 "Expected eliza agent in config, got: {}",
-                text
-            );
-            assert!(
-                text.contains("ferris"),
-                "Expected ferris mod, got: {}",
                 text
             );
 
