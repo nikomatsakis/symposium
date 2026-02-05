@@ -32,6 +32,7 @@ Configuration
 | `1`, `2`, etc. | Toggle a mod on or off. Disabled mods stay in the list but aren't loaded. |
 | `SAVE` | Write changes to disk. They persist across sessions. |
 | `CANCEL` | Discard changes and exit. |
+| `MCPS` | Manage workspace MCP servers (add/remove stdio, http, sse servers). |
 
 Changes take effect immediately for the current session. Use `SAVE` to keep them for future sessions.
 
