@@ -633,6 +633,8 @@ pub async fn resolve_mod(mod_spec: &str) -> Result<McpServer> {
 // ============================================================================
 
 /// Resolve a built-in component by name
+/// **BE CAREFUL**: Tests should *not* use `ComponentSource::Builtin`, because
+/// this finds the *current_exe`, which for tests is *not* `symposium-acp-agent`.
 async fn resolve_builtin(name: &str) -> Result<McpServer> {
     let exe = current_exe()?;
     let exe_str = exe.to_string_lossy().to_string();

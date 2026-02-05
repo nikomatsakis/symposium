@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComponentSource {
-    /// Built-in to symposium-acp-agent (e.g., "ferris", "cargo", "eliza")
+    /// Built-in to symposium-acp-agent (i.e. "ferris" and"eliza")
     Builtin(String),
 
     /// From the ACP registry by ID
