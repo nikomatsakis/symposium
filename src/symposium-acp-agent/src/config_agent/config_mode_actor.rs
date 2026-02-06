@@ -9,15 +9,17 @@ use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::list_agents_with_sources;
 use crate::remote_recommendations::{self, save_local_recommendations};
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
-use symposium_recommendations::{HttpDistribution, LocalDistribution, ModKind, Recommendation, ComponentSource};
-use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
+use futures::channel::mpsc::{self, UnboundedSender};
 use regex::Regex;
+use sacp::JrConnectionCx;
 use sacp::link::AgentToClient;
 use sacp::schema::SessionId;
-use sacp::JrConnectionCx;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use symposium_recommendations::{
+    ComponentSource, HttpDistribution, LocalDistribution, ModKind, Recommendation,
+};
 use tokio::sync::oneshot;
 
 /// Result of handling menu input.
@@ -573,10 +575,18 @@ impl ConfigModeActor {
             msg.push_str("# Local Recommendations\n\n");
 
             let local_path = self.config_paths.local_reccomendations_path();
-            let local_recs = match remote_recommendations::load_local_recommendations(&self.config_paths).await {
+            let local_recs = match remote_recommendations::load_local_recommendations(
+                &self.config_paths,
+            )
+            .await
+            {
                 Ok(recs) => recs,
                 Err(e) => {
-                    msg.push_str(&format!("Failed to read {}: {}\n\n", local_path.display(), e));
+                    msg.push_str(&format!(
+                        "Failed to read {}: {}\n\n",
+                        local_path.display(),
+                        e
+                    ));
                     return MenuAction::Redisplay;
                 }
             };
@@ -584,9 +594,14 @@ impl ConfigModeActor {
                 Some(recs) if !recs.mods.is_empty() => {
                     for (m, display_index) in recs.mods.iter().zip(1..) {
                         let name = m.display_name();
-                        let mcp = matches!(m.kind, ModKind::MCP).then_some(" (MCP)").unwrap_or("");
+                        let mcp = matches!(m.kind, ModKind::MCP)
+                            .then_some(" (MCP)")
+                            .unwrap_or("");
                         let condition = m.when.is_some().then_some(" (conditional)").unwrap_or("");
-                        msg.push_str(&format!("  {}. {}{}{}\n", display_index, name, mcp, condition));
+                        msg.push_str(&format!(
+                            "  {}. {}{}{}\n",
+                            display_index, name, mcp, condition
+                        ));
                     }
                     recs.mods
                 }
@@ -602,7 +617,9 @@ impl ConfigModeActor {
             msg.push_str("- `BACK` - Return to main menu\n");
             self.send_message(msg);
 
-            let Some(input) = self.next_input().await else { return MenuAction::Redisplay };
+            let Some(input) = self.next_input().await else {
+                return MenuAction::Redisplay;
+            };
             let input = input.trim();
             let input_upper = input.to_uppercase();
 
@@ -620,7 +637,10 @@ impl ConfigModeActor {
                         "proxy" => ModKind::Proxy,
                         "mcp" => ModKind::MCP,
                         _ => {
-                            self.send_message(&format!("Invalid kind {}. Expected one of `proxy` or `mcp`:", kind));
+                            self.send_message(&format!(
+                                "Invalid kind {}. Expected one of `proxy` or `mcp`:",
+                                kind
+                            ));
                             continue;
                         }
                     };
@@ -628,16 +648,24 @@ impl ConfigModeActor {
 
                 // Ask for source type and details and build a ComponentSource directly
                 let source = loop {
-                    self.send_message("Enter source type (`local`, `cargo`, `registry`, `http`, `sse`):");
-                    let Some(src) = self.next_input().await else { return MenuAction::Redisplay };
+                    self.send_message(
+                        "Enter source type (`local`, `cargo`, `registry`, `http`, `sse`):",
+                    );
+                    let Some(src) = self.next_input().await else {
+                        return MenuAction::Redisplay;
+                    };
                     let src = src.trim().to_lowercase();
 
                     match src.as_str() {
                         "local" => {
                             self.send_message("Enter binary path:");
-                            let Some(command) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(command) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             self.send_message("Enter args (space-delimited, or leave blank):");
-                            let Some(args_line) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(args_line) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             let args: Vec<String> = args_line
                                 .split_ascii_whitespace()
                                 .map(|s| s.to_string())
@@ -652,7 +680,9 @@ impl ConfigModeActor {
 
                         "cargo" => {
                             self.send_message("Crate name:");
-                            let Some(crate_name) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(crate_name) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             self.send_message("Version (optional, or blank):");
                             let version = match self.next_input().await {
                                 Some(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
@@ -672,25 +702,33 @@ impl ConfigModeActor {
                                 _ => Vec::new(),
                             };
 
-                            break ComponentSource::Cargo(symposium_recommendations::CargoDistribution {
-                                crate_name: crate_name.trim().to_string(),
-                                version,
-                                binary,
-                                args,
-                            });
+                            break ComponentSource::Cargo(
+                                symposium_recommendations::CargoDistribution {
+                                    crate_name: crate_name.trim().to_string(),
+                                    version,
+                                    binary,
+                                    args,
+                                },
+                            );
                         }
 
                         "registry" => {
                             self.send_message("Registry mod id:");
-                            let Some(id) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(id) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             break ComponentSource::Registry(id.trim().to_string());
                         }
 
                         "http" | "sse" => {
                             self.send_message("Name for server:");
-                            let Some(name) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(name) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             self.send_message("URL:");
-                            let Some(url) = self.next_input().await else { return MenuAction::Redisplay };
+                            let Some(url) = self.next_input().await else {
+                                return MenuAction::Redisplay;
+                            };
                             let dist = HttpDistribution {
                                 name: name.trim().to_string(),
                                 url: url.trim().to_string(),
@@ -725,7 +763,7 @@ impl ConfigModeActor {
                     }
                     Err(e) => {
                         self.send_message(&format!("Failed to save recommendations ({}).\n", e));
-                    }    
+                    }
                 }
 
                 return MenuAction::Redisplay;
@@ -734,16 +772,25 @@ impl ConfigModeActor {
             if input_upper.starts_with("REMOVE") {
                 let parts: Vec<_> = input.split_whitespace().collect();
                 if parts.len() >= 2 {
-                    if let Ok(idx) = parts[1].parse::<usize>() && idx >= 1 && idx <= recs.len() {
+                    if let Ok(idx) = parts[1].parse::<usize>()
+                        && idx >= 1
+                        && idx <= recs.len()
+                    {
                         let removed = recs.remove(idx);
 
-                            match save_local_recommendations(&self.config_paths, recs).await {
+                        match save_local_recommendations(&self.config_paths, recs).await {
                             Ok(()) => {
-                                self.send_message(&format!("Removed MCP server `{}`.", removed.source.display_name()));
+                                self.send_message(&format!(
+                                    "Removed MCP server `{}`.",
+                                    removed.source.display_name()
+                                ));
                             }
                             Err(e) => {
-                                self.send_message(&format!("Failed to remove recommendation ({}).\n", e));
-                            }    
+                                self.send_message(&format!(
+                                    "Failed to remove recommendation ({}).\n",
+                                    e
+                                ));
+                            }
                         }
                     } else {
                         self.send_message("Invalid index for REMOVE.");
@@ -778,11 +825,16 @@ impl ConfigModeActor {
         } else {
             for (m, display_index) in mods.mods.iter().zip(1..) {
                 let name = m.source.display_name();
-                let mcp = matches!(m.kind, ModKind::MCP).then_some(" (MCP)").unwrap_or("");
+                let mcp = matches!(m.kind, ModKind::MCP)
+                    .then_some(" (MCP)")
+                    .unwrap_or("");
                 if m.enabled {
                     msg.push_str(&format!("  {}. {}{}\n", display_index, name, mcp));
                 } else {
-                    msg.push_str(&format!("  {}. ~~{}{}~~ (disabled)\n", display_index, name, mcp));
+                    msg.push_str(&format!(
+                        "  {}. ~~{}{}~~ (disabled)\n",
+                        display_index, name, mcp
+                    ));
                 }
             }
         }

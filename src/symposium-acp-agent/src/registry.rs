@@ -7,14 +7,15 @@
 //! - Download and cache binary distributions
 
 use crate::user_config::ConfigPaths;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use sacp::schema::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use symposium_recommendations::{
-    BinaryDistribution, CargoDistribution, ComponentSource, HttpDistribution, LocalDistribution, NpxDistribution, PipxDistribution
+    BinaryDistribution, CargoDistribution, ComponentSource, HttpDistribution, LocalDistribution,
+    NpxDistribution, PipxDistribution,
 };
 
 /// Registry URL - same as VSCode extension uses
@@ -724,7 +725,10 @@ fn resolve_local(local: &LocalDistribution) -> Result<McpServer> {
         .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
         .collect();
 
-    let file_name = Path::new(&local.command).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| local.command.clone());
+    let file_name = Path::new(&local.command)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| local.command.clone());
     Ok(McpServer::Stdio(
         McpServerStdio::new(file_name, &local.command)
             .args(local.args.clone())
@@ -931,12 +935,20 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpSer
 }
 
 async fn resolve_http(dist: &HttpDistribution) -> McpServer {
-    let headers = dist.headers.iter().map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone())).collect();
+    let headers = dist
+        .headers
+        .iter()
+        .map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone()))
+        .collect();
     McpServer::Http(McpServerHttp::new(dist.name.clone(), dist.url.clone()).headers(headers))
 }
 
 async fn resolve_sse(dist: &HttpDistribution) -> McpServer {
-    let headers = dist.headers.iter().map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone())).collect();
+    let headers = dist
+        .headers
+        .iter()
+        .map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone()))
+        .collect();
     McpServer::Sse(McpServerSse::new(dist.name.clone(), dist.url.clone()).headers(headers))
 }
 

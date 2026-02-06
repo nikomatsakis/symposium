@@ -1,9 +1,9 @@
 use rmcp::{
+    ErrorData as McpError, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
     transport::stdio,
-    ErrorData as McpError, ServiceExt,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

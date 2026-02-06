@@ -141,8 +141,8 @@ fn test_agent_definition_mcp_server_serialization() {
 // ============================================================================
 
 use super::session_actor::AgentDefinition;
-use futures::channel::mpsc;
 use futures::StreamExt;
+use futures::channel::mpsc;
 use sacp::on_receive_notification;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

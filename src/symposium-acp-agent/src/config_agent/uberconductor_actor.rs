@@ -6,8 +6,8 @@
 //! - Spawns new conductors as needed
 //! - Forwards new session requests to the appropriate conductor
 
-use super::conductor_actor::ConductorHandle;
 use super::ConfigAgentMessage;
+use super::conductor_actor::ConductorHandle;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;

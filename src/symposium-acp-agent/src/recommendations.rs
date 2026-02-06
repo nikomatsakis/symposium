@@ -345,8 +345,8 @@ mod tests {
     use super::*;
     use expect_test::expect;
     use serial_test::serial;
-    use symposium_recommendations::{ComponentSource, ModKind};
     use std::io::Write;
+    use symposium_recommendations::{ComponentSource, ModKind};
 
     /// Write content to a file and sync to disk to avoid race conditions with cargo metadata
     fn write_synced(path: &Path, content: &str) {

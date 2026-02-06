@@ -279,9 +279,7 @@ impl GlobalAgentConfig {
 impl WorkspaceModsConfig {
     /// Create a new workspace mods config
     pub fn new(mods: Vec<ModConfig>) -> Self {
-        Self {
-            mods,
-        }
+        Self { mods }
     }
 
     /// Create a workspace mods config from a list of mod sources.
@@ -294,13 +292,10 @@ impl WorkspaceModsConfig {
                 source: rec.source,
                 when: rec.when.unwrap_or(When::default()),
                 enabled: true,
-                
             })
             .collect();
 
-        Self {
-            mods,
-        }
+        Self { mods }
     }
 
     /// Load the workspace mods config for the given workspace.
@@ -324,7 +319,9 @@ impl WorkspaceModsConfig {
     /// Save the workspace mods config for the given workspace.
     /// Creates the parent directory if it doesn't exist.
     pub async fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
-        let path = config_paths.ensure_workspace_config_dir(workspace_path).await?;
+        let path = config_paths
+            .ensure_workspace_config_dir(workspace_path)
+            .await?;
         let content = serde_json::to_string_pretty(self)?;
         tokio::fs::write(&path, &content)
             .await
@@ -475,7 +472,10 @@ mod tests {
                     source: ComponentSource::Sse(symposium_recommendations::HttpDistribution {
                         name: "db".to_string(),
                         url: "https://example.com/mcp".to_string(),
-                        headers: vec![symposium_recommendations::HttpHeader { name: "Authorization".to_string(), value: "Bearer token".to_string() }],
+                        headers: vec![symposium_recommendations::HttpHeader {
+                            name: "Authorization".to_string(),
+                            value: "Bearer token".to_string(),
+                        }],
                     }),
                     enabled: true,
                     when: When::default(),

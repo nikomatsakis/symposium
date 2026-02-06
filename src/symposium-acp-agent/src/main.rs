@@ -38,13 +38,13 @@ use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use symposium_acp_agent::ConfigAgent;
 use symposium_acp_agent::recommendations::RecommendationsExt;
 use symposium_acp_agent::registry;
 use symposium_acp_agent::remote_recommendations;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
 use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use symposium_acp_agent::vscodelm;
-use symposium_acp_agent::ConfigAgent;
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-acp-agent")]

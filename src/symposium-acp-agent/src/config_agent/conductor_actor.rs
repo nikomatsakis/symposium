@@ -12,7 +12,8 @@ use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
 use sacp::schema::{
-    InitializeRequest, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse
+    InitializeRequest, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse,
 };
 use sacp::{DynComponent, JrConnectionCx, JrRequestCx, MessageCx};
 use sacp_conductor::{Conductor, McpBridgeMode};
@@ -237,7 +238,6 @@ async fn run_actor(
         .await
         .map_err(|e| sacp::util::internal_error(format!("Failed to resolve agent: {}", e)))?;
 
-
     // MCP servers are represented as mods with `ModKind::MCP` in `mods`.
     // Build MCP servers from enabled MCP-type mods so they can be attached to sessions.
     let mcp_sources = enabled_mcp_servers(&mods);
@@ -254,10 +254,7 @@ async fn run_actor(
             async move |init_req| {
                 tracing::info!(
                     "Building proxy chain with mods: {:?}",
-                    proxies
-                        .iter()
-                        .map(|s| s.display_name())
-                        .collect::<Vec<_>>()
+                    proxies.iter().map(|s| s.display_name()).collect::<Vec<_>>()
                 );
                 let proxies = build_proxies(proxies).await?;
                 Ok((init_req, proxies, DynComponent::new(agent)))

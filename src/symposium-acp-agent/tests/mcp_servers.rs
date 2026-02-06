@@ -12,13 +12,13 @@ use sacp::schema::{
     ProtocolVersion, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 
-use symposium_acp_agent::recommendations::Recommendations;
-use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
-use symposium_acp_agent::user_config::ModConfig;
-use symposium_acp_agent::recommendations::When;
-use symposium_recommendations::{ModKind, Recommendation};
 use symposium_acp_agent::ConfigAgent;
+use symposium_acp_agent::recommendations::Recommendations;
+use symposium_acp_agent::recommendations::When;
+use symposium_acp_agent::user_config::ModConfig;
+use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use symposium_recommendations::{ComponentSource, LocalDistribution};
+use symposium_recommendations::{ModKind, Recommendation};
 
 #[derive(Debug, Default, Clone)]
 struct CollectedNotifications {
@@ -89,13 +89,22 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         when: When::default(),
     });
 
-    mods_config.save(&config_paths, &workspace_path).await.unwrap();
+    mods_config
+        .save(&config_paths, &workspace_path)
+        .await
+        .unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
     let agent =
-        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations { mods: vec![Recommendation {kind: ModKind::MCP, source, when: None }] });
+        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations {
+            mods: vec![Recommendation {
+                kind: ModKind::MCP,
+                source,
+                when: None,
+            }],
+        });
 
     ClientToAgent::builder()
         .name("test_client")
@@ -136,7 +145,9 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
             let prompt_response = cx
                 .send_request(PromptRequest::new(
                     session_id.clone(),
-                    vec![ContentBlock::Text(TextContent::new("list tools from mcp-test-server"))],
+                    vec![ContentBlock::Text(TextContent::new(
+                        "list tools from mcp-test-server",
+                    ))],
                 ))
                 .block_task()
                 .await?;

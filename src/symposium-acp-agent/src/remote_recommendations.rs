@@ -8,7 +8,7 @@
 //! - Merging all recommendation sources
 
 use crate::user_config::ConfigPaths;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::time::Duration;
 use symposium_recommendations::{Recommendation, Recommendations};
@@ -154,7 +154,9 @@ async fn cache_recommendations(config_paths: &ConfigPaths, content: &str) -> Res
 /// Load user's local recommendations file if it exists.
 ///
 /// Location: `<config_dir>/config/recommendations.toml`
-pub async fn load_local_recommendations(config_paths: &ConfigPaths) -> Result<Option<Recommendations>> {
+pub async fn load_local_recommendations(
+    config_paths: &ConfigPaths,
+) -> Result<Option<Recommendations>> {
     let local_path = config_paths
         .root()
         .join("config")
@@ -189,14 +191,14 @@ pub async fn load_local_recommendations(config_paths: &ConfigPaths) -> Result<Op
     Ok(Some(recommendations))
 }
 
-
 /// Save recommendations to user's local recommendations file.
 ///
 /// Location: `<config_dir>/config/recommendations.toml`
-pub async fn save_local_recommendations(config_paths: &ConfigPaths, mods: Vec<Recommendation>) -> Result<()> {
-    let config_dir = config_paths
-        .root()
-        .join("config");
+pub async fn save_local_recommendations(
+    config_paths: &ConfigPaths,
+    mods: Vec<Recommendation>,
+) -> Result<()> {
+    let config_dir = config_paths.root().join("config");
     let local_path = config_dir.join(LOCAL_RECOMMENDATIONS_FILENAME);
 
     tracing::debug!(?local_path);
@@ -204,7 +206,7 @@ pub async fn save_local_recommendations(config_paths: &ConfigPaths, mods: Vec<Re
 
     if !mods.is_empty() {
         tokio::fs::create_dir_all(&config_dir).await?;
-    
+
         let recs = Recommendations { mods };
         tokio::fs::write(local_path, recs.to_toml()?).await?;
     } else {
