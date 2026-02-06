@@ -199,6 +199,7 @@ mod tests {
         assert!(ComponentSource::Local(LocalDistribution {
             command: "/usr/bin/foo".to_string(),
             args: vec![],
+            name: None,
             env: BTreeMap::new(),
         })
         .is_local());
