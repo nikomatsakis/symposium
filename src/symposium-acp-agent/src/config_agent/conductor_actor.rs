@@ -238,8 +238,10 @@ async fn run_actor(
         .map_err(|e| sacp::util::internal_error(format!("Failed to resolve agent: {}", e)))?;
 
 
-    let mcp_servers = enabled_mcp_servers(&mods);
-    let mcp_servers = build_mcp_servers(mcp_servers).await?;
+    // MCP servers are represented as mods with `ModKind::MCP` in `mods`.
+    // Build MCP servers from enabled MCP-type mods so they can be attached to sessions.
+    let mcp_sources = enabled_mcp_servers(&mods);
+    let mcp_servers = build_mcp_servers(mcp_sources).await?;
 
     // TODO: Apply trace_dir to conductor when needed
 

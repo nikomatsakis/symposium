@@ -7,7 +7,9 @@
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::list_agents_with_sources;
-use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig, ModConfig};
+use crate::recommendations::When;
+use symposium_recommendations::{ModKind, HttpDistribution};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -564,18 +566,28 @@ impl ConfigModeActor {
     /// Supports listing, adding, and removing MCP servers.
     async fn manage_mcp_servers(&mut self, mods: &mut WorkspaceModsConfig) -> MenuAction {
         loop {
-            // Show current MCP servers
+            // Show current MCP servers (represented as mods of kind `MCP`)
             let mut msg = String::new();
             msg.push_str("# MCP Servers\n\n");
-            if mods.mcp_servers.is_empty() {
+            let mcp_indices: Vec<usize> = mods
+                .mods
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| matches!(m.kind, ModKind::MCP))
+                .map(|(i, _)| i)
+                .collect();
+
+            if mcp_indices.is_empty() {
                 msg.push_str("  * (none configured)\n\n");
             } else {
-                for (i, s) in mods.mcp_servers.iter().enumerate() {
-                    msg.push_str(&format!("  {}. {} ({})\n", i + 1, s.id, match &s.transport {
-                        crate::user_config::McpServerTransport::Stdio{..} => "stdio",
-                        crate::user_config::McpServerTransport::Http{..} => "http",
-                        crate::user_config::McpServerTransport::Sse{..} => "sse",
-                    }));
+                for (pos, &idx) in mcp_indices.iter().enumerate() {
+                    let m = &mods.mods[idx];
+                    let ty = match &m.source {
+                        ComponentSource::Http(_) => "http",
+                        ComponentSource::Sse(_) => "sse",
+                        _ => "stdio",
+                    };
+                    msg.push_str(&format!("  {}. {} ({})\n", pos + 1, m.source.display_name(), ty));
                 }
                 msg.push('\n');
             }
@@ -610,13 +622,13 @@ impl ConfigModeActor {
                         // Select a component source for the stdio binary
                         self.send_message("Select the component to run as stdio MCP server:");
                         if let Some(source) = self.select_agent().await {
-                            let cfg = crate::user_config::McpServerConfig {
-                                id: id.clone(),
-                                transport: crate::user_config::McpServerTransport::Stdio {
-                                    stdio: crate::user_config::McpServerStdioConfig { source },
-                                },
+                            let cfg = ModConfig {
+                                kind: ModKind::MCP,
+                                source,
+                                enabled: true,
+                                when: When::default(),
                             };
-                            mods.mcp_servers.push(cfg);
+                            mods.mods.push(cfg);
                             self.send_message(&format!("Added stdio MCP server `{}`.", id));
                         } else {
                             self.send_message("Stdio MCP server addition cancelled.");
@@ -643,22 +655,40 @@ impl ConfigModeActor {
                         }
 
                         if transport == "http" {
-                            let cfg = crate::user_config::McpServerConfig {
-                                id: id.clone(),
-                                transport: crate::user_config::McpServerTransport::Http {
-                                    http: crate::user_config::McpServerHttpConfig { url, headers },
-                                },
+                            let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
+                                .into_iter()
+                                .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
+                                .collect();
+                            let src = ComponentSource::Http(HttpDistribution {
+                                name: id.clone(),
+                                url: url.clone(),
+                                headers: rec_headers,
+                            });
+                            let cfg = ModConfig {
+                                kind: ModKind::MCP,
+                                source: src,
+                                enabled: true,
+                                when: When::default(),
                             };
-                            mods.mcp_servers.push(cfg);
+                            mods.mods.push(cfg);
                             self.send_message(&format!("Added http MCP server `{}`.", id));
                         } else {
-                            let cfg = crate::user_config::McpServerConfig {
-                                id: id.clone(),
-                                transport: crate::user_config::McpServerTransport::Sse {
-                                    sse: crate::user_config::McpServerSseConfig { url, headers },
-                                },
+                            let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
+                                .into_iter()
+                                .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
+                                .collect();
+                            let src = ComponentSource::Sse(HttpDistribution {
+                                name: id.clone(),
+                                url: url.clone(),
+                                headers: rec_headers,
+                            });
+                            let cfg = ModConfig {
+                                kind: ModKind::MCP,
+                                source: src,
+                                enabled: true,
+                                when: When::default(),
                             };
-                            mods.mcp_servers.push(cfg);
+                            mods.mods.push(cfg);
                             self.send_message(&format!("Added sse MCP server `{}`.", id));
                         }
                     }
@@ -676,9 +706,10 @@ impl ConfigModeActor {
                 let parts: Vec<_> = input.split_whitespace().collect();
                 if parts.len() >= 2 {
                     if let Ok(idx) = parts[1].parse::<usize>() {
-                        if idx >= 1 && idx <= mods.mcp_servers.len() {
-                            let removed = mods.mcp_servers.remove(idx - 1);
-                            self.send_message(&format!("Removed MCP server `{}`.", removed.id));
+                        if idx >= 1 && idx <= mcp_indices.len() {
+                            let remove_idx = mcp_indices[idx - 1];
+                            let removed = mods.mods.remove(remove_idx);
+                            self.send_message(&format!("Removed MCP server `{}`.", removed.source.display_name()));
                         } else {
                             self.send_message("Invalid index for REMOVE.");
                         }

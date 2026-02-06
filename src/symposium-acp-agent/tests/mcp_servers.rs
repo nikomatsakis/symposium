@@ -13,10 +13,10 @@ use sacp::schema::{
 };
 
 use symposium_acp_agent::recommendations::Recommendations;
-use symposium_acp_agent::user_config::{
-    ConfigPaths, GlobalAgentConfig, McpServerConfig, McpServerStdioConfig, McpServerTransport,
-    WorkspaceModsConfig,
-};
+use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
+use symposium_acp_agent::user_config::ModConfig;
+use symposium_acp_agent::recommendations::When;
+use symposium_recommendations::{ModKind, Recommendation};
 use symposium_acp_agent::ConfigAgent;
 use symposium_recommendations::{ComponentSource, LocalDistribution};
 
@@ -75,18 +75,17 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         .save(&config_paths)
         .unwrap();
 
+    let source = ComponentSource::Local(LocalDistribution {
+        command: mcp_server_bin.to_string_lossy().to_string(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+    });
     let mut mods_config = WorkspaceModsConfig::new(vec![]);
-    mods_config.mcp_servers.push(McpServerConfig {
-        id: "test".to_string(),
-        transport: McpServerTransport::Stdio {
-            stdio: McpServerStdioConfig {
-                source: ComponentSource::Local(LocalDistribution {
-                    command: mcp_server_bin.to_string_lossy().to_string(),
-                    args: Vec::new(),
-                    env: BTreeMap::new(),
-                }),
-            },
-        },
+    mods_config.mods.push(crate::ModConfig {
+        kind: ModKind::MCP,
+        source: source.clone(),
+        enabled: true,
+        when: When::default(),
     });
 
     mods_config.save(&config_paths, &workspace_path).unwrap();
@@ -95,7 +94,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
     let notifications_clone = notifications.clone();
 
     let agent =
-        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
+        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations { mods: vec![Recommendation {kind: ModKind::MCP, source, when: None }] });
 
     ClientToAgent::builder()
         .name("test_client")
@@ -136,7 +135,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
             let prompt_response = cx
                 .send_request(PromptRequest::new(
                     session_id.clone(),
-                    vec![ContentBlock::Text(TextContent::new("list tools from test"))],
+                    vec![ContentBlock::Text(TextContent::new("list tools from mcp-test-server"))],
                 ))
                 .block_task()
                 .await?;
@@ -153,7 +152,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
             cx.send_request(PromptRequest::new(
                 session_id,
                 vec![ContentBlock::Text(TextContent::new(
-                    r#"use tool test::echo with {"text": "hello"}"#,
+                    r#"use tool mcp-test-server::echo with {"text": "hello"}"#,
                 ))],
             ))
             .block_task()

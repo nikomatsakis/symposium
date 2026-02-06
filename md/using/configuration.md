@@ -38,37 +38,31 @@ Changes take effect immediately for the current session. Use `SAVE` to keep them
 
 ## MCP Servers
 
-Workspace configuration can include MCP servers that are attached to every new
-session for that workspace. This is separate from mods and does not use the
-proxy chain.
+MCP servers are configured as mods of kind `MCP` in the workspace `mods` list.
+They will be resolved and attached to every new session for that workspace by
+the conductor.
 
-Example `config.json` snippet:
+Example `config.json` snippet (http and stdio MCPs represented as mod sources):
 
 ```json
 {
-  "mods": [],
-  "mcp_servers": [
+  "mods": [
     {
-      "id": "github",
-      "stdio": {
-        "source": { "cargo": { "crate": "github-mcp", "args": ["--acp"] } }
-      }
+      "kind": "MCP",
+      "source": { "cargo": { "crate": "github-mcp", "args": ["--acp"] } },
+      "enabled": true
     },
     {
-      "id": "db",
-      "sse": {
-        "url": "https://example.com/mcp",
-        "headers": [
-          { "name": "Authorization", "value": "Bearer token" }
-        ]
-      }
+      "kind": "MCP",
+      "source": { "http": { "name": "db", "url": "https://example.com/mcp" } },
+      "enabled": true
     }
   ]
 }
 ```
 
-The `id` becomes the MCP server name (tool prefix). Stdio MCP servers can use
-any `ComponentSource` format supported by mods.
+The `name`/`id` for HTTP/SSE MCP servers is taken from the `Http`/`Sse` source
+`name` field and becomes the MCP server tool prefix.
 
 ## Configuration Location
 

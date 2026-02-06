@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use sacp::schema::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use symposium_recommendations::{
     BinaryDistribution, CargoDistribution, ComponentSource, HttpDistribution, LocalDistribution, NpxDistribution, PipxDistribution
@@ -724,8 +724,9 @@ fn resolve_local(local: &LocalDistribution) -> Result<McpServer> {
         .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
         .collect();
 
+    let file_name = Path::new(&local.command).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| local.command.clone());
     Ok(McpServer::Stdio(
-        McpServerStdio::new(&local.command, &local.command)
+        McpServerStdio::new(file_name, &local.command)
             .args(local.args.clone())
             .env(env),
     ))

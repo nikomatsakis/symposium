@@ -46,16 +46,19 @@ The special value `defaults` expands to all known built-in mods:
 
 ## MCP Servers
 
-Workspace configuration can also include MCP servers to attach directly to new
-sessions. These are not mods and do not appear in the proxy chain. Instead,
-they are injected into the session's `mcp_servers` list.
+Workspace configuration can include MCP servers, which are now represented as
+mods with `kind = MCP`. They are attached directly to new sessions by the
+conductor but are stored in the workspace `mods` list. This unifies server
+configuration with the existing mod model.
 
 Stdio MCP servers reuse the same `ComponentSource` distribution formats as mods,
 so they can be resolved from `cargo`, `npx`, `pipx`, `binary`, `local`, or
-registry entries. HTTP and SSE transports are configured directly with a URL
-and optional headers.
+registry entries. HTTP and SSE transports are represented using the `Http` and
+`Sse` `ComponentSource` variants and include a `name`, `url`, and optional
+headers.
 
-Each MCP server has an `id` that becomes the MCP server name (tool prefix).
+Each MCP server's name (HTTP/SSE) or component source display name (stdio)
+becomes the MCP server tool prefix.
 
 ## Registry Format
 
