@@ -50,13 +50,17 @@ impl ComponentSource {
                 url.rsplit('/').next().unwrap_or(url).to_string()
             }
             ComponentSource::Local(local) => {
-                // Use last component of command path
-                local
-                    .command
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&local.command)
-                    .to_string()
+                // If an explicit name is provided, use it. Otherwise use last component of command path
+                if let Some(name) = &local.name {
+                    name.clone()
+                } else {
+                    local
+                        .command
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&local.command)
+                        .to_string()
+                }
             }
             ComponentSource::Npx(npx) => {
                 // Extract package name without scope and version
