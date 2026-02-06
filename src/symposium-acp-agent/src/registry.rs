@@ -83,8 +83,8 @@ impl ComponentSourceExt for ComponentSource {
             ComponentSource::Pipx(pipx) => resolve_pipx(pipx),
             ComponentSource::Cargo(cargo) => resolve_cargo(cargo).await,
             ComponentSource::Binary(binary_map) => resolve_binary(binary_map).await,
-            ComponentSource::Http(dist) => Ok(resolve_http(dist).await),
-            ComponentSource::Sse(dist) => Ok(resolve_sse(dist).await),
+            ComponentSource::Http(dist) => Ok(resolve_http(dist)),
+            ComponentSource::Sse(dist) => Ok(resolve_sse(dist)),
         }
     }
 }
@@ -934,7 +934,7 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpSer
     Ok(None)
 }
 
-async fn resolve_http(dist: &HttpDistribution) -> McpServer {
+fn resolve_http(dist: &HttpDistribution) -> McpServer {
     let headers = dist
         .headers
         .iter()
@@ -943,7 +943,7 @@ async fn resolve_http(dist: &HttpDistribution) -> McpServer {
     McpServer::Http(McpServerHttp::new(dist.name.clone(), dist.url.clone()).headers(headers))
 }
 
-async fn resolve_sse(dist: &HttpDistribution) -> McpServer {
+fn resolve_sse(dist: &HttpDistribution) -> McpServer {
     let headers = dist
         .headers
         .iter()

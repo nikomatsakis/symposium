@@ -218,8 +218,6 @@ pub struct WorkspaceModsConfig {
     pub mods: Vec<ModConfig>,
 }
 
-// MCP servers are now represented as mods of kind `MCP` in `mods`
-
 // ============================================================================
 // Global Agent Config (for default agent across workspaces)
 // ============================================================================
