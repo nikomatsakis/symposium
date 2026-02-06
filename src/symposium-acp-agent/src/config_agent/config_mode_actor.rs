@@ -9,7 +9,7 @@ use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::list_agents_with_sources;
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig, ModConfig};
 use crate::recommendations::When;
-use symposium_recommendations::{ModKind, HttpDistribution};
+use symposium_recommendations::{HttpDistribution, LocalDistribution, ModKind};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -612,30 +612,35 @@ impl ConfigModeActor {
                 let Some(transport_input) = self.next_input().await else { return MenuAction::Redisplay };
                 let transport = transport_input.trim().to_lowercase();
 
-                // Ask for id
-                self.send_message("Identifier (short id to reference this server):");
-                let Some(id_input) = self.next_input().await else { return MenuAction::Redisplay };
-                let id = id_input.trim().to_string();
-
                 match transport.as_str() {
                     "stdio" => {
                         // Select a component source for the stdio binary
+                        self.send_message("Enter binary path:");
+                        let Some(command) = self.next_input().await else { return MenuAction::Redisplay };
+                        self.send_message("Enter args (space-delimited):");
+                        let Some(args) = self.next_input().await else { return MenuAction::Redisplay };
+                        let args = args.split_ascii_whitespace().map(|s| s.to_string()).collect();
                         self.send_message("Select the component to run as stdio MCP server:");
-                        if let Some(source) = self.select_agent().await {
-                            let cfg = ModConfig {
-                                kind: ModKind::MCP,
-                                source,
-                                enabled: true,
-                                when: When::default(),
-                            };
-                            mods.mods.push(cfg);
-                            self.send_message(&format!("Added stdio MCP server `{}`.", id));
-                        } else {
-                            self.send_message("Stdio MCP server addition cancelled.");
-                        }
+                        let source = ComponentSource::Local(LocalDistribution {
+                            command,
+                            args,
+                            env: Default::default(),
+                        });
+                        let cfg = ModConfig {
+                            kind: ModKind::MCP,
+                            source,
+                            enabled: true,
+                            when: When::default(),
+                        };
+                        mods.mods.push(cfg);
+                        self.send_message("Added stdio MCP server.");
                     }
 
                     "http" | "sse" => {
+                        self.send_message("Identifier (short id to reference this server):");
+                        let Some(id_input) = self.next_input().await else { return MenuAction::Redisplay };
+                        let id = id_input.trim().to_string();
+
                         self.send_message("Enter URL:");
                         let Some(url_input) = self.next_input().await else { return MenuAction::Redisplay };
                         let url = url_input.trim().to_string();
@@ -654,11 +659,12 @@ impl ConfigModeActor {
                             }
                         }
 
+                        let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
+                            .into_iter()
+                            .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
+                            .collect();
+
                         if transport == "http" {
-                            let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
-                                .into_iter()
-                                .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
-                                .collect();
                             let src = ComponentSource::Http(HttpDistribution {
                                 name: id.clone(),
                                 url: url.clone(),
@@ -671,12 +677,8 @@ impl ConfigModeActor {
                                 when: When::default(),
                             };
                             mods.mods.push(cfg);
-                            self.send_message(&format!("Added http MCP server `{}`.", id));
+                            self.send_message("Added http MCP server.");
                         } else {
-                            let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
-                                .into_iter()
-                                .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
-                                .collect();
                             let src = ComponentSource::Sse(HttpDistribution {
                                 name: id.clone(),
                                 url: url.clone(),
@@ -689,7 +691,7 @@ impl ConfigModeActor {
                                 when: When::default(),
                             };
                             mods.mods.push(cfg);
-                            self.send_message(&format!("Added sse MCP server `{}`.", id));
+                            self.send_message("Added sse MCP server.");
                         }
                     }
 
@@ -740,15 +742,17 @@ impl ConfigModeActor {
             "**Mods for workspace `{}`:**\n",
             self.workspace_path.display()
         ));
-        if mods.mods.is_empty() {
+        let mods: Vec<_> = mods.mods.iter().filter(|m| matches!(m.kind, ModKind::Proxy)).collect();
+        if mods.is_empty() {
             msg.push_str("  * (none configured)\n");
         } else {
-            for (m, display_index) in mods.mods.iter().zip(1..) {
+            for (m, display_index) in mods.iter().zip(1..) {
                 let name = m.source.display_name();
+                let mcp = matches!(m.kind, ModKind::MCP).then_some(" (MCP)").unwrap_or("");
                 if m.enabled {
-                    msg.push_str(&format!("  {}. {}\n", display_index, name));
+                    msg.push_str(&format!("  {}. {}{}\n", display_index, name, mcp));
                 } else {
-                    msg.push_str(&format!("  {}. ~~{}~~ (disabled)\n", display_index, name));
+                    msg.push_str(&format!("  {}. ~~{}{}~~ (disabled)\n", display_index, name, mcp));
                 }
             }
         }
@@ -757,7 +761,8 @@ impl ConfigModeActor {
         // Commands
         msg.push_str("# Commands\n\n");
         msg.push_str("- `AGENT` - Change agent (affects all workspaces)\n");
-        match mods.mods.len() {
+        msg.push_str("- `MCPS` - Manage MCP servers (affects all workspaces)\n");
+        match mods.len() {
             0 => {}
             1 => msg.push_str("- `1` - Toggle mod enabled/disabled in this workspace\n"),
             n => msg.push_str(&format!(

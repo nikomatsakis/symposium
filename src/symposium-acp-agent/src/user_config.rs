@@ -186,6 +186,7 @@ impl ConfigPaths {
 /// Mod configuration entry
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModConfig {
+    #[serde(default = "ModKind::default")]
     pub kind: ModKind,
 
     /// The source of this mod
