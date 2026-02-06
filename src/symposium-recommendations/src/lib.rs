@@ -34,6 +34,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum ModKind {
     Proxy,
     MCP,
@@ -367,13 +368,16 @@ when.file-exists = "Cargo.toml"
 
         expect![[r#"
             [[recommendation]]
+            kind = "proxy"
             source.cargo = { args = ["--acp"], crate = "sparkle-mcp" }
 
             [[recommendation]]
+            kind = "proxy"
             source.cargo = { crate = "symposium-cargo" }
             when.file-exists = "Cargo.toml"
 
             [[recommendation]]
+            kind = "proxy"
             source.cargo = { crate = "symposium-rust-analyzer" }
             when.file-exists = "Cargo.toml"
         "#]]
