@@ -773,11 +773,10 @@ impl ConfigModeActor {
             "**Mods for workspace `{}`:**\n",
             self.workspace_path.display()
         ));
-        let mods: Vec<_> = mods.mods.iter().filter(|m| matches!(m.kind, ModKind::Proxy)).collect();
-        if mods.is_empty() {
+        if mods.mods.is_empty() {
             msg.push_str("  * (none configured)\n");
         } else {
-            for (m, display_index) in mods.iter().zip(1..) {
+            for (m, display_index) in mods.mods.iter().zip(1..) {
                 let name = m.source.display_name();
                 let mcp = matches!(m.kind, ModKind::MCP).then_some(" (MCP)").unwrap_or("");
                 if m.enabled {
@@ -793,7 +792,7 @@ impl ConfigModeActor {
         msg.push_str("# Commands\n\n");
         msg.push_str("- `AGENT` - Change agent (affects all workspaces)\n");
         msg.push_str("- `RECS` - Update local recommendations (config/recommendations.toml)\n");
-        match mods.len() {
+        match mods.mods.len() {
             0 => {}
             1 => msg.push_str("- `1` - Toggle mod enabled/disabled in this workspace\n"),
             n => msg.push_str(&format!(
