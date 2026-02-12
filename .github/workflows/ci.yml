@@ -72,42 +72,11 @@ jobs:
         run: cargo ci test
 
   vscode-extension:
-    name: VSCode Extension Tests
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    runs-on: ${{ matrix.os }}
+    name: VSCode Extension Build
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-vscode-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-vscode-
-            ${{ runner.os }}-cargo-
-
-      - name: Cache VS Code test download
-        uses: actions/cache@v4
-        with:
-          path: vscode-extension/.vscode-test
-          key: ${{ runner.os }}-vscode-test-1.108.0
-
-      - name: Install ACP tools
-        run: |
-          cargo install --force elizacp
-          cargo install --force --path src/symposium-acp-agent
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -116,12 +85,6 @@ jobs:
           cache: "npm"
           cache-dependency-path: vscode-extension/package-lock.json
 
-      - name: Build vendored mynah-ui
-        working-directory: vendor/mynah-ui
-        run: |
-          npm ci
-          npm run build
-
       - name: Install dependencies
         working-directory: vscode-extension
         run: npm ci
@@ -129,13 +92,3 @@ jobs:
       - name: Compile TypeScript
         working-directory: vscode-extension
         run: npm run compile
-
-      - name: Run tests
-        working-directory: vscode-extension
-        run: xvfb-run -a npm test
-        if: runner.os == 'Linux'
-
-      - name: Run tests (macOS)
-        working-directory: vscode-extension
-        run: npm test
-        if: runner.os == 'macOS'

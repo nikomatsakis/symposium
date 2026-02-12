@@ -120,12 +120,6 @@ jobs:
         if: runner.os != 'Windows'
         run: chmod +x vscode-extension/bin/${{ matrix.vscode-target }}/${{ matrix.binary }}
 
-      - name: Build vendored mynah-ui
-        working-directory: vendor/mynah-ui
-        run: |
-          npm ci
-          npm run build
-
       - name: Install extension dependencies
         working-directory: vscode-extension
         run: npm ci
