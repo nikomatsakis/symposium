@@ -81,6 +81,19 @@ Provides AI collaboration framework through prompt injection and MCP tooling.
 - **Function:** Enables partnership dynamics, pattern anchors, and meta-collaboration capabilities
 - **Documentation:** [Sparkle docs](https://symposium-dev.github.io/sparkle/)
 
+### Editor Context
+
+Injects the editor's current state (active file, selection) into agent prompts.
+
+- **Type:** Standalone component (no adapter)
+- **Implementation:** Reads a JSON state file written by the editor extension, prepends an `<editor-context>` block to each `PromptRequest`
+- **Activation:** Conditional — only inserted into the proxy chain when the `SYMPOSIUM_EDITOR_STATE_FILE` environment variable is set
+- **Staleness:** Skips injection if the state file is older than 30 seconds
+- **Crate:** `symposium-editor-context`
+- **Documentation:** [VSCode Extension Architecture](./vscode-extension/architecture.md#editor-context-proxy)
+
+The editor extension writes the state file; the proxy reads it. They communicate only through the filesystem, bridged by the environment variable. This means the proxy works with any editor that writes the expected JSON format — it is not VSCode-specific.
+
 ## Future Components
 
 Additional components can be added following these patterns:

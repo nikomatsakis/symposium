@@ -32,7 +32,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 
-# Symposium proxy components are installed at runtime via cargo distribution
+# Symposium proxy components
+symposium-editor-context = { path = "../symposium-editor-context" }
 
 # Built-in agents
 elizacp.workspace = true

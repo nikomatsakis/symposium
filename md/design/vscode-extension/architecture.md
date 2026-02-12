@@ -1,171 +1,138 @@
 # VSCode Extension Architecture
 
-The Symposium VSCode extension provides a chat interface for interacting with AI agents. The architecture divides responsibilities across three layers to handle VSCode's webview constraints while maintaining clean separation of concerns.
+The Symposium VSCode extension provides a chat interface for interacting with AI agents. The extension delegates UI and agent communication to [Toad](https://github.com/anthropics/toad), embedding its web frontend in a webview iframe.
 
-## Components Overview
-
-**mynah-ui:** AWS's open-source chat interface library ([github.com/aws/mynah-ui](https://github.com/aws/mynah-ui)). Provides the chat UI rendering, tab management, and message display. The webview layer uses mynah-ui for all visual presentation.
-
-**Agent:** Currently a mock implementation (HomerActor) that responds with Homer Simpson quotes. Future implementation will spawn an ACP-compatible agent process (see ACP Integration chapter when available).
-
-**Extension activation:** VSCode activates the extension when the user first opens the Symposium sidebar or runs a Symposium command. The extension spawns the agent process during activation (or lazily on first use) and keeps it alive for the entire VSCode session.
-
-## Three-Layer Model
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Webview (Browser Context)                      │
-│  - mynah-ui rendering                           │
-│  - User interaction capture                     │
-│  - Tab management                               │
-└─────────────────┬───────────────────────────────┘
-                  │ VSCode postMessage API
-┌─────────────────▼───────────────────────────────┐
-│  Extension (Node.js Context)                    │
-│  - Message routing                              │
-│  - Agent lifecycle                              │
-│  - Webview lifecycle                            │
-└─────────────────┬───────────────────────────────┘
-                  │ Process spawning / stdio
-┌─────────────────▼───────────────────────────────┐
-│  Agent (Separate Process)                       │
-│  - Session management                           │
-│  - AI interaction                               │
-│  - Streaming responses                          │
+│  VSCode Extension (Node.js)                     │
+│  - Spawns Toad as a detached process            │
+│  - Embeds Toad's web UI in an iframe            │
+│  - Tracks editor state (active file, selection) │
+│  - Manages Toad process lifecycle               │
+└────────┬──────────────────────────┬─────────────┘
+         │                          │
+         │ iframe (localhost)       │ SYMPOSIUM_EDITOR_STATE_FILE
+         ▼                          ▼
+┌──────────────────┐    ┌─────────────────────────┐
+│  Toad             │    │  State File (JSON)       │
+│  - Chat UI        │    │  - Active file path      │
+│  - Tool approval  │    │  - Language ID            │
+│  - Tab management │    │  - Selected text          │
+│  - Session state  │    │  - Workspace folders      │
+└────────┬──────────┘    └─────────────┬───────────┘
+         │ ACP (stdio)                 │ std::fs::read
+         ▼                             ▼
+┌─────────────────────────────────────────────────┐
+│  Symposium Conductor                            │
+│  ┌────────────────────────────────────────────┐ │
+│  │ Editor Context Proxy (reads state file)    │ │
+│  ├────────────────────────────────────────────┤ │
+│  │ Sparkle / Ferris / Cargo / other proxies   │ │
+│  └────────────────────────────────────────────┘ │
+│                    ↓ ACP (stdio)                │
+│              Downstream Agent                   │
 └─────────────────────────────────────────────────┘
 ```
 
-## Why Three Layers?
+## Toad Integration
 
-### Webview Isolation
+The extension spawns Toad as a **detached process** that runs an HTTP server on a local port. The webview displays an iframe pointing to `http://localhost:<port>/`.
 
-VSCode webviews run in isolated browser contexts without Node.js APIs. This security boundary prevents direct file system access, process spawning, or network operations. The webview can only communicate with the extension through VSCode's `postMessage` API.
+Toad handles:
+- Chat UI rendering and interaction
+- Tool permission approval cards
+- Tab and session management
+- Streaming response display
 
-**Design consequence:** UI code must be pure browser JavaScript. All privileged operations (spawning agents, workspace access, persistence) happen in the extension layer.
+The extension handles:
+- Finding a free port and spawning Toad
+- Persisting the Toad process across VSCode reloads (via `globalState`)
+- Reconnecting to an existing Toad process if one is already running
+- Tracking editor state for the editor context proxy
 
-### Extension as Coordinator
+### Process Lifecycle
 
-The extension runs in Node.js with full VSCode API access. It bridges between the isolated webview and external agent processes.
+Toad is spawned with `detached: true` and `child.unref()`, so it survives extension host restarts. The extension stores `{pid, port}` in `globalState`. On activation, it checks whether the saved port is still responding before spawning a new process.
 
-**Key responsibilities:**
-- **Message routing** - Translates between webview UI events and agent protocol messages
-- **Agent lifecycle** - Spawns and manages the agent process
-- **Webview lifecycle** - Handles visibility changes and ensures messages reach the UI
-
-The extension deliberately avoids understanding message semantics. It routes based on IDs (tab ID, message ID) without interpreting content.
-
-### Agent Independence
-
-The agent runs as a separate process communicating via stdio. This isolation provides:
-
-- **Flexibility** - Agent can be any executable (Rust, Python, TypeScript)
-- **Stability** - Agent crashes don't kill the extension
-- **Multiple sessions** - Single agent process handles all tabs/conversations
-
-The agent owns all session state and conversation logic. The extension only tracks which tab corresponds to which session.
-
-## Communication Boundaries
-
-### Webview ↔ Extension
-
-**Transport:** `postMessage` API (asynchronous, JSON-serializable messages only)
-
-**Direction:**
-- Webview → Extension: User actions (new tab, send prompt, close tab)
-- Extension → Webview: Agent responses (response chunks, completion signals)
-
-**Why not synchronous?** VSCode's webview API is inherently asynchronous. This forces the UI to be resilient to message delays and webview lifecycle events.
-
-### Extension ↔ Agent
-
-**Transport:** ACP (Agent Client Protocol) over stdio
-
-**Direction:**
-- Extension → Agent: Session commands (new session, process prompt)
-- Agent → Extension: Streaming responses, session state updates
-
-**Why ACP over stdio?** ACP provides a standardized protocol for agent communication. Stdio is simple, universal, and works with any language. No need for network sockets or IPC complexity.
-
-## Agent Configuration and Sharing
-
-The extension uses `AgentConfiguration` to determine when agent processes can be shared across tabs. An `AgentConfiguration` consists of:
-- Agent name (e.g., "ElizACP", "Claude")
-- Enabled components (e.g., "symposium-acp")
-- Workspace folder (the VSCode workspace the agent operates in)
-
-**Sharing strategy:** Tabs with identical configurations share the same agent actor (process), but each tab gets its own session within that process.
-
-**Workspace folder selection:**
-- Single workspace: Automatically uses that workspace
-- Multiple workspaces: Prompts user to select which workspace folder to use
-- Each session is created with the workspace folder as its working directory
-
-**Rationale:**
-- **Resource efficiency** - Shared actor means one process for multiple tabs with the same config
-- **Workspace isolation** - Different workspace folders get different actors to maintain proper working directory context
-- **Session isolation** - Each tab gets its own session ID for conversation independence
-
-**Trade-off:** Agent must implement multiplexing. Messages include session/tab IDs for routing. Extension maps UI tab IDs to agent session IDs.
-
-## Design Principles
-
-**Opaque state:** Each layer owns its state format. Extension stores but doesn't parse webview UI state or agent session state.
-
-**Graceful degradation:** Webview can be hidden/shown at any time. Extension buffers messages when webview is inactive.
-
-**UUID-based identity:** Tab IDs and message IDs use UUIDs to avoid collisions. Generated at source (webview generates tab IDs, extension generates message IDs) to eliminate coordination overhead.
-
-**Minimal coupling:** Layers communicate through well-defined message protocols. Webview doesn't know about agents. Agent doesn't know about webviews. Extension coordinates without understanding semantics.
-
-## End-to-End Flow
-
-Here's how a complete user interaction flows through the system:
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant VSCode
-    participant Extension
-    participant Webview
-    participant Agent
-    
-    User->>VSCode: Opens Symposium sidebar
-    VSCode->>Extension: activate()
-    Extension->>Extension: Generate session ID
-    Extension->>Agent: Spawn process
-    
-    Extension->>Webview: Create webview (inject session ID)
-    Webview->>Webview: Load, check session ID vs saved state
-    Webview->>Webview: Restore or clear tabs, initialize mynah-ui
-    Webview->>Extension: webview-ready (last-seen-index)
-    
-    User->>Webview: Creates new tab
-    Webview->>Webview: Generate tab UUID
-    Webview->>Extension: new-tab (tabId)
-    Extension->>Agent: new-session
-    Agent->>Agent: Initialize session
-    Agent->>Extension: session-created (sessionId)
-    Extension->>Extension: Store tabId ↔ sessionId mapping
-    
-    User->>Webview: Sends prompt
-    Webview->>Webview: Generate message UUID
-    Webview->>Extension: prompt (tabId, messageId, text)
-    Extension->>Extension: Lookup sessionId for tabId
-    Extension->>Agent: process-prompt (sessionId, text)
-    
-    loop Streaming response
-        Agent->>Extension: response-chunk (sessionId, chunk)
-        Extension->>Extension: Lookup tabId for sessionId
-        Extension->>Webview: response-chunk (tabId, messageId, chunk)
-        Webview->>Webview: Render chunk in mynah-ui
-    end
-    
-    Agent->>Extension: response-complete (sessionId)
-    Extension->>Webview: response-complete (tabId, messageId)
-    Webview->>Webview: End message stream
-    Webview->>Webview: setState() - persist session ID and tabs
+The Toad command is:
+```bash
+toad acp "<conductor-command> run" --serve --port <port>
 ```
 
-The extension maintains tab↔session mappings and handles webview visibility, while the agent maintains session state and generates responses.
+Toad spawns the Symposium conductor internally and manages the ACP connection over stdio.
+
+### Webview
+
+The webview is minimal — an HTML page containing a single iframe:
+
+```html
+<iframe src="http://localhost:<port>/" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
+```
+
+Content Security Policy restricts `frame-src` to the Toad port. The extension uses `retainContextWhenHidden: true` to keep the iframe alive when the panel is hidden.
+
+## Editor Context Proxy
+
+The editor context proxy injects the editor's current state (active file, selection) into agent prompts. It connects the TypeScript extension to the Rust proxy chain via file-based IPC.
+
+### How It Works
+
+1. **TypeScript writes**: `EditorStateTracker` subscribes to `onDidChangeActiveTextEditor` and `onDidChangeTextEditorSelection`. On changes (debounced 100ms), it writes a JSON file to the OS temp directory using atomic writes (write to `.tmp`, then `renameSync`).
+
+2. **Env var bridges the gap**: The extension passes `SYMPOSIUM_EDITOR_STATE_FILE=<path>` to Toad at spawn time. Toad passes it through to the conductor, which passes it to the proxy.
+
+3. **Rust reads**: `EditorContextComponent` reads `SYMPOSIUM_EDITOR_STATE_FILE` at startup. On each `PromptRequest`, it reads the JSON file, checks freshness (skips if >30 seconds old), and prepends an `<editor-context>` block to the prompt content.
+
+### State File Format
+
+```json
+{
+  "activeFile": "/project/src/main.rs",
+  "languageId": "rust",
+  "selection": {
+    "text": "fn main() { ... }",
+    "startLine": 10,
+    "endLine": 12
+  },
+  "workspaceFolders": ["/project"]
+}
+```
+
+### Why File-Based IPC
+
+- Survives detached process restarts on both sides — no reconnection logic
+- Zero coordination overhead — no ports, sockets, or protocol negotiation
+- The env var doubles as a capability signal: the proxy is only inserted into the conductor chain when the variable is set, so CLI usage pays no cost
+
+### Conditional Proxy Insertion
+
+The conductor checks for `SYMPOSIUM_EDITOR_STATE_FILE` at chain assembly time. If present, `EditorContextComponent` is inserted as the first proxy in the chain. If absent (CLI usage, non-VSCode editors), the proxy is not included.
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `vscode-extension/src/extension.ts` | Extension activation, wires up EditorStateTracker |
+| `vscode-extension/src/toadPanelProvider.ts` | Spawns Toad, embeds iframe, passes env var |
+| `vscode-extension/src/editorState.ts` | Tracks editor state, writes JSON file |
+| `src/symposium-editor-context/src/lib.rs` | ACP proxy that reads state file, injects into prompts |
+| `src/symposium-acp-agent/src/config_agent/conductor_actor.rs` | Conditional proxy insertion |
+
+## Configuration
+
+| Setting | Description |
+|---------|-------------|
+| `symposium.toadCommand` | Path to the `toad` binary (default: `"toad"`, found via PATH) |
+| `symposium.toadPort` | Fixed port for Toad (default: `0`, auto-selects a free port) |
+| `symposium.acpAgentPath` | Override path to `symposium-acp-agent` binary |
+
+## Language Model Provider
+
+The extension also includes an experimental Language Model Provider that exposes ACP agents via VS Code's `LanguageModelChatProvider` API. This is independent of the Toad-based chat UI and is documented separately:
+
+- [Language Model Provider](./lm-provider.md)
+- [Language Model Tool Bridging](./lm-tool-bridging.md)
 
 See also: [Common Issues](../common-issues.md) for recurring bug patterns.

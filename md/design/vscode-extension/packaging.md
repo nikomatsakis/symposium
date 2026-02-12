@@ -4,10 +4,11 @@ This chapter documents the design decisions for building and distributing the VS
 
 ## Architecture Overview
 
-The extension consists of two parts that must be bundled together:
+The extension consists of:
 
-1. **TypeScript code** - The extension logic and webview, bundled via webpack
+1. **TypeScript code** - The extension logic, bundled via webpack
 2. **Native binary** - The `symposium-acp-agent` Rust binary for the target platform
+3. **External dependency** - [Toad](https://github.com/anthropics/toad), which must be installed separately (via PATH or `symposium.toadCommand` setting)
 
 ## Platform-Specific Extensions
 
@@ -76,20 +77,13 @@ Publish to marketplaces (TODO)
 - Enables direct downloads for users not on VSCode
 - Versioned and immutable
 
-## Vendored mynah-ui
-
-The extension depends on a fork of mynah-ui (AWS's chat UI component) located in `vendor/mynah-ui`. This is managed as a git subtree.
-
-**Why vendor:**
-- Enables custom features not yet upstream
-- Webpack bundles it into `webview.js` - only the built output ships in the extension
-
 ## Local Development
 
 For development without building platform packages:
 
-1. Install the conductor: `cargo install --path src/symposium-acp-agent`
-2. Build the extension: `cd vscode-extension && npm run compile`
-3. Launch via F5 in VSCode
+1. Install Toad: follow [Toad installation instructions](https://github.com/anthropics/toad)
+2. Install the conductor: `cargo install --path src/symposium-acp-agent`
+3. Build the extension: `cd vscode-extension && npm run compile`
+4. Launch via F5 in VSCode
 
-The extension finds the binary in PATH when no bundled binary exists.
+The extension finds both binaries via PATH when no bundled binary exists.

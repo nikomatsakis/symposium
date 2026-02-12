@@ -256,8 +256,14 @@ async fn run_actor(
                     "Building proxy chain with mods: {:?}",
                     proxies.iter().map(|s| s.display_name()).collect::<Vec<_>>()
                 );
-                let proxies = build_proxies(proxies).await?;
-                Ok((init_req, proxies, DynComponent::new(agent)))
+                let mut all_proxies = vec![];
+                if std::env::var(symposium_editor_context::STATE_FILE_ENV).is_ok() {
+                    all_proxies.push(DynComponent::new(
+                        symposium_editor_context::EditorContextComponent,
+                    ));
+                }
+                all_proxies.extend(build_proxies(proxies).await?);
+                Ok((init_req, all_proxies, DynComponent::new(agent)))
             }
         },
         McpBridgeMode::default(),

@@ -13,4 +13,4 @@ See [Run Mode](../run-mode.md) for details on:
 
 ## Spawn Integration
 
-The VSCode extension spawns the agent using `symposium-acp-agent run`. The config agent loads mod configuration from disk and builds the proxy chain automatically.
+The VSCode extension spawns Toad, which in turn spawns `symposium-acp-agent run`. The config agent loads mod configuration from disk and builds the proxy chain automatically.

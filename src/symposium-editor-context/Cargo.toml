@@ -1,0 +1,24 @@
+[package]
+name = "symposium-editor-context"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Editor context proxy - injects editor state into agent prompts"
+repository = "https://github.com/symposium-dev/symposium"
+homepage = "https://symposium-dev.github.io/symposium/"
+
+[[bin]]
+name = "symposium-editor-context"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+sacp = { workspace = true }
+sacp-tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }

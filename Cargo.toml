@@ -9,6 +9,7 @@ members = [
     "src/symposium-recommendations",
     "src/cli-agent-util",
     "src/symposium-benchmark",
+    "src/symposium-editor-context",
 ]
 resolver = "2"
 

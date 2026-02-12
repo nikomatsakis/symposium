@@ -3,6 +3,7 @@ import * as net from "net";
 import * as http from "http";
 import { ChildProcess, spawn } from "child_process";
 import { getConductorCommand } from "./binaryPath";
+import { EditorStateTracker } from "./editorState";
 import { logger } from "./extension";
 
 interface ToadProcessInfo {
@@ -16,10 +17,15 @@ export class ToadPanelProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "symposium.toadView";
 
   private context: vscode.ExtensionContext;
+  private editorStateTracker: EditorStateTracker;
   private childProcess: ChildProcess | undefined;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(
+    context: vscode.ExtensionContext,
+    editorStateTracker: EditorStateTracker,
+  ) {
     this.context = context;
+    this.editorStateTracker = editorStateTracker;
   }
 
   async resolveWebviewView(
@@ -91,6 +97,10 @@ export class ToadPanelProvider implements vscode.WebviewViewProvider {
       cwd: workspaceFolder,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
+      env: {
+        ...process.env,
+        SYMPOSIUM_EDITOR_STATE_FILE: this.editorStateTracker.filePath,
+      },
     });
 
     child.unref(); // allow the process to survive extension host restarts

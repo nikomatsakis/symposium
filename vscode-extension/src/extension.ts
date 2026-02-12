@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ToadPanelProvider } from "./toadPanelProvider";
+import { EditorStateTracker } from "./editorState";
 import { Logger } from "./logger";
 
 export const logger = new Logger("Symposium");
@@ -7,7 +8,10 @@ export const logger = new Logger("Symposium");
 export function activate(context: vscode.ExtensionContext) {
   logger.important("extension", "Symposium extension is now active");
 
-  const toadProvider = new ToadPanelProvider(context);
+  const editorStateTracker = new EditorStateTracker();
+  context.subscriptions.push(editorStateTracker);
+
+  const toadProvider = new ToadPanelProvider(context, editorStateTracker);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
