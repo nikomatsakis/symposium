@@ -19,7 +19,7 @@ use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use sacp::{JrLink, on_receive_notification};
+use sacp::{Role, on_receive_notification};
 use serde_json::json;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ use symposium_acp_agent::vscodelm::session_actor::AgentDefinition;
 use symposium_acp_agent::vscodelm::{
     ChatRequestOptions, ContentPart, LmBackend, Message, ProvideResponseRequest, ROLE_ASSISTANT,
     ROLE_USER, ResponseCompleteNotification, ResponsePartNotification, ToolDefinition, ToolMode,
-    VsCodeToLmBackend,
+    VsCode,
 };
 
 /// The "average" tool that we provide to Claude Code.
@@ -166,8 +166,10 @@ async fn main() -> Result<()> {
     let collector_clone = collector.clone();
     let complete_tx_clone = complete_tx.clone();
 
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode
+        .builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 // Print text parts immediately for streaming effect
                 if let ContentPart::Text { ref value } = n.part {
@@ -179,15 +181,15 @@ async fn main() -> Result<()> {
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 let _ = complete_tx_clone.unbounded_send(());
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             let stdin = io::stdin();
             let mut history: Vec<Message> = Vec::new();
             let tools = vec![average_tool()];
@@ -225,15 +227,18 @@ async fn main() -> Result<()> {
 
                 // Send request
                 println!(); // Newline before response
-                cx.send_request(ProvideResponseRequest {
-                    model_id: "claude-code".to_string(),
-                    messages: history.clone(),
-                    agent: AgentDefinition::ClaudeCode,
-                    options: ChatRequestOptions {
-                        tools: tools.clone(),
-                        tool_mode: Some(ToolMode::Auto),
+                cx.send_request_to(
+                    VsCode,
+                    ProvideResponseRequest {
+                        model_id: "claude-code".to_string(),
+                        messages: history.clone(),
+                        agent: AgentDefinition::ClaudeCode,
+                        options: ChatRequestOptions {
+                            tools: tools.clone(),
+                            tool_mode: Some(ToolMode::Auto),
+                        },
                     },
-                })
+                )
                 .block_task()
                 .await?;
 
@@ -291,15 +296,18 @@ async fn main() -> Result<()> {
                     collector.lock().unwrap().clear();
                     println!(); // Newline before continuation
 
-                    cx.send_request(ProvideResponseRequest {
-                        model_id: "claude-code".to_string(),
-                        messages: history.clone(),
-                        agent: AgentDefinition::ClaudeCode,
-                        options: ChatRequestOptions {
-                            tools: tools.clone(),
-                            tool_mode: Some(ToolMode::Auto),
+                    cx.send_request_to(
+                        VsCode,
+                        ProvideResponseRequest {
+                            model_id: "claude-code".to_string(),
+                            messages: history.clone(),
+                            agent: AgentDefinition::ClaudeCode,
+                            options: ChatRequestOptions {
+                                tools: tools.clone(),
+                                tool_mode: Some(ToolMode::Auto),
+                            },
                         },
-                    })
+                    )
                     .block_task()
                     .await?;
 

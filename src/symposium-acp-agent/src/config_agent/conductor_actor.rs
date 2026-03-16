@@ -10,13 +10,12 @@ use super::ConfigAgentMessage;
 use crate::registry::ComponentSourceExt;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
-use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
 use sacp::schema::{
     InitializeRequest, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest,
     PromptResponse,
 };
-use sacp::{DynComponent, JrConnectionCx, JrRequestCx, MessageCx};
-use sacp_conductor::{Conductor, McpBridgeMode};
+use sacp::{Agent, Client, Conductor, ConnectionTo, Dispatch, DynConnectTo, Responder};
+use sacp_conductor::{ConductorImpl, McpBridgeMode};
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use symposium_recommendations::{ComponentSource, ModKind};
@@ -27,17 +26,17 @@ pub enum ConductorMessage {
     /// A new session request. The conductor will send NewSessionCreated to ConfigAgent.
     NewSession {
         request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
     },
 
     /// A prompt request for a session.
     Prompt {
         request: PromptRequest,
-        request_cx: JrRequestCx<PromptResponse>,
+        responder: Responder<PromptResponse>,
     },
 
     /// Forward an arbitrary message to the conductor.
-    ForwardMessage { message: MessageCx },
+    ForwardMessage { message: Dispatch },
 
     /// Pause the conductor. It will stop processing messages until the returned
     /// oneshot is dropped or receives a value.
@@ -65,7 +64,7 @@ impl ConductorHandle {
         mods: Vec<ModConfig>,
         trace_dir: Option<&PathBuf>,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-        client_cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         tracing::debug!(?workspace_path, ?agent, ?mods, "ConductorHandle::spawn");
 
@@ -74,7 +73,7 @@ impl ConductorHandle {
 
         let handle = Self { tx: tx.clone() };
 
-        client_cx.spawn(run_actor(
+        connection.spawn(run_actor(
             workspace_path,
             agent,
             mods,
@@ -92,15 +91,12 @@ impl ConductorHandle {
     pub async fn send_new_session(
         &self,
         request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!(?request, "ConductorHandle::send_new_session");
 
         self.tx
-            .send(ConductorMessage::NewSession {
-                request,
-                request_cx,
-            })
+            .send(ConductorMessage::NewSession { request, responder })
             .await
             .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
     }
@@ -109,19 +105,16 @@ impl ConductorHandle {
     pub async fn send_prompt(
         &self,
         request: PromptRequest,
-        request_cx: JrRequestCx<PromptResponse>,
+        responder: Responder<PromptResponse>,
     ) -> Result<(), sacp::Error> {
         self.tx
-            .send(ConductorMessage::Prompt {
-                request,
-                request_cx,
-            })
+            .send(ConductorMessage::Prompt { request, responder })
             .await
             .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
     }
 
     /// Forward an arbitrary message to the conductor.
-    pub async fn forward_message(&self, message: MessageCx) -> Result<(), sacp::Error> {
+    pub async fn forward_message(&self, message: Dispatch) -> Result<(), sacp::Error> {
         tracing::debug!(?message, "ConductorHandle::forward_message");
 
         self.tx
@@ -154,7 +147,7 @@ impl ConductorHandle {
 /// Build proxy components from ComponentSources.
 async fn build_proxies(
     mod_sources: Vec<ComponentSource>,
-) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
+) -> Result<Vec<DynConnectTo<Conductor>>, sacp::Error> {
     let mut proxies = vec![];
     for source in &mod_sources {
         tracing::debug!(mod_name = %source.display_name(), "Resolving mod");
@@ -170,7 +163,7 @@ async fn build_proxies(
                 e
             ))
         })?;
-        proxies.push(DynComponent::new(AcpAgent::new(server)));
+        proxies.push(DynConnectTo::new(AcpAgent::new(server)));
     }
 
     Ok(proxies)
@@ -248,7 +241,7 @@ async fn run_actor(
     let agent = AcpAgent::new(agent_server);
 
     // Build the conductor
-    let conductor = Conductor::new_agent(
+    let conductor = ConductorImpl::new_agent(
         "symposium-conductor",
         {
             async move |init_req| {
@@ -257,26 +250,27 @@ async fn run_actor(
                     proxies.iter().map(|s| s.display_name()).collect::<Vec<_>>()
                 );
                 let proxies = build_proxies(proxies).await?;
-                Ok((init_req, proxies, DynComponent::new(agent)))
+                Ok((init_req, proxies, DynConnectTo::new(agent)))
             }
         },
         McpBridgeMode::default(),
     );
 
     // Connect to the conductor
-    ClientToAgent::builder()
-        .on_receive_message(
-            async |message_cx: MessageCx, _cx| {
+    Client
+        .builder()
+        .on_receive_dispatch(
+            async |message_cx: Dispatch, _cx| {
                 // Incoming message from the conductor: forward via ConfigAgent to client
                 config_agent_tx
                     .unbounded_send(ConfigAgentMessage::MessageToClient(message_cx))
                     .map_err(|_| sacp::util::internal_error("ConfigAgent closed"))
             },
-            sacp::on_receive_message!(),
+            sacp::on_receive_dispatch!(),
         )
-        .run_until(conductor, async |conductor_cx| {
+        .connect_with(conductor, async |connection| {
             // Initialize the conductor
-            let _init_response = conductor_cx
+            let _init_response = connection
                 .send_request(InitializeRequest::new(
                     sacp::schema::ProtocolVersion::LATEST,
                 ))
@@ -287,14 +281,14 @@ async fn run_actor(
                 match message {
                     ConductorMessage::NewSession {
                         mut request,
-                        request_cx,
+                        responder,
                     } => {
                         request.mcp_servers.extend(mcp_servers.clone());
 
                         let config_agent_tx = config_agent_tx.clone();
                         let self_handle = self_handle.clone();
                         let workspace_path = workspace_path.clone();
-                        conductor_cx.send_request(request).on_receiving_result(
+                        connection.send_request(request).on_receiving_result(
                             async move |result| {
                                 match result {
                                     Ok(response) => {
@@ -304,7 +298,7 @@ async fn run_actor(
                                                 response,
                                                 conductor: self_handle,
                                                 workspace_path,
-                                                request_cx,
+                                                responder,
                                             })
                                             .map_err(|_| {
                                                 sacp::util::internal_error("ConfigAgent closed")
@@ -312,29 +306,24 @@ async fn run_actor(
                                     }
                                     Err(e) => {
                                         // Forward error directly to client
-                                        request_cx.respond_with_error(e)
+                                        responder.respond_with_error(e)
                                     }
                                 }
                             },
                         )?;
                     }
 
-                    ConductorMessage::Prompt {
-                        request,
-                        request_cx,
-                    } => {
-                        if let Err(e) = conductor_cx
+                    ConductorMessage::Prompt { request, responder } => {
+                        if let Err(e) = connection
                             .send_request(request)
-                            .forward_to_request_cx(request_cx)
+                            .forward_response_to(responder)
                         {
                             tracing::error!("Failed to forward prompt to conductor: {}", e);
                         }
                     }
 
                     ConductorMessage::ForwardMessage { message } => {
-                        if let Err(e) =
-                            conductor_cx.send_proxied_message_to(sacp::AgentPeer, message)
-                        {
+                        if let Err(e) = connection.send_proxied_message_to(Agent, message) {
                             tracing::error!("Failed to forward message to conductor: {}", e);
                         }
                     }

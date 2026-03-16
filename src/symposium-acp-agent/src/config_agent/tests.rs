@@ -3,9 +3,8 @@
 use super::*;
 use crate::recommendations::Recommendations;
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
-use sacp::link::ClientToAgent;
-use sacp::on_receive_notification;
 use sacp::schema::{ContentChunk, ProtocolVersion, TextContent};
+use sacp::{Client, on_receive_notification};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -20,8 +19,9 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::DEBUG.into()),
+                .add_directive(tracing::Level::TRACE.into()),
         )
+        .with_ansi(false)
         .with_test_writer()
         .try_init();
 }
@@ -105,7 +105,8 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     let agent = ConfigAgent::with_config_paths(config_paths.clone())
         .with_recommendations(Recommendations::empty());
 
-    ClientToAgent::builder()
+    Client
+        .builder()
         .name("test_client")
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
@@ -119,8 +120,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(agent)?
-        .run_until(async |cx| {
+        .connect_with(agent, async |cx| {
             // Initialize
             let init_response = cx
                 .send_request(InitializeRequest::new(ProtocolVersion::LATEST))
@@ -227,7 +227,8 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     let config_agent =
         ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
-    ClientToAgent::builder()
+    Client
+        .builder()
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
                 match notif.update {
@@ -249,8 +250,7 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(config_agent)?
-        .run_until(async |cx| {
+        .connect_with(config_agent, async |cx| {
             // Initialize
             cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
                 .block_task()
@@ -264,7 +264,6 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
             let session_id = session_response.session_id;
 
             // Send a prompt - elizacp should respond
-            notifications.lock().unwrap().clear();
             cx.send_request(PromptRequest::new(
                 session_id.clone(),
                 vec![ContentBlock::Text(TextContent::new("Hello, how are you?"))],
@@ -319,7 +318,8 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     let config_agent =
         ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
-    ClientToAgent::builder()
+    Client
+        .builder()
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
                 if let SessionUpdate::AgentMessageChunk(ContentChunk { content, .. }) = notif.update
@@ -332,8 +332,7 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(config_agent)?
-        .run_until(async |cx| {
+        .connect_with(config_agent, async |cx| {
             // Initialize
             cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))
                 .block_task()

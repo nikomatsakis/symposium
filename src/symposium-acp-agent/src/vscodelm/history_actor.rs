@@ -7,7 +7,10 @@
 
 use futures::StreamExt;
 use futures::channel::{mpsc, oneshot};
+use sacp::Responder;
 use uuid::Uuid;
+
+use crate::vscodelm::{LmBackend, VsCode};
 
 use super::session_actor::{AgentDefinition, SessionActor};
 use super::{
@@ -15,9 +18,6 @@ use super::{
     ResponseCompleteNotification, ResponsePartNotification, SYMPOSIUM_AGENT_ACTION,
     normalize_messages,
 };
-use sacp::JrConnectionCx;
-
-use super::LmBackendToVsCode;
 
 // ============================================================================
 // Messages to HistoryActor
@@ -29,7 +29,7 @@ pub enum HistoryActorMessage {
     FromVsCode {
         request: ProvideResponseRequest,
         request_id: serde_json::Value,
-        request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+        responder: Responder<ProvideResponseResponse>,
     },
     /// A cancel notification from VS Code
     CancelFromVsCode { request_id: serde_json::Value },
@@ -81,13 +81,13 @@ impl HistoryActorHandle {
         &self,
         request: ProvideResponseRequest,
         request_id: serde_json::Value,
-        request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+        responder: Responder<ProvideResponseResponse>,
     ) -> Result<(), sacp::Error> {
         self.tx
             .unbounded_send(HistoryActorMessage::FromVsCode {
                 request,
                 request_id,
-                request_cx,
+                responder,
             })
             .map_err(|_| sacp::util::internal_error("no history actor"))
     }
@@ -129,7 +129,7 @@ struct StreamingState {
     /// The JSON-RPC request ID of the in-flight request
     request_id: serde_json::Value,
     /// The request context for responding when done
-    request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+    responder: Responder<ProvideResponseResponse>,
     /// Channel to signal cancellation
     ///
     /// We never actually send a signal on this channel, we just
@@ -268,14 +268,14 @@ pub struct HistoryActor {
     /// Handle for creating new session actors
     handle: HistoryActorHandle,
     /// Connection to VS Code for sending notifications
-    cx: JrConnectionCx<LmBackendToVsCode>,
+    cx: sacp::ConnectionTo<VsCode>,
     /// All sessions
     sessions: Vec<SessionData>,
 }
 
 impl HistoryActor {
     /// Create a new HistoryActor and return a handle to it.
-    pub fn new(cx: &JrConnectionCx<LmBackendToVsCode>) -> Result<HistoryActorHandle, sacp::Error> {
+    pub fn new(cx: &sacp::ConnectionTo<VsCode>) -> Result<HistoryActorHandle, sacp::Error> {
         let (tx, rx) = mpsc::unbounded();
         let handle = HistoryActorHandle { tx };
         let actor = Self {
@@ -295,9 +295,9 @@ impl HistoryActor {
                 HistoryActorMessage::FromVsCode {
                     request,
                     request_id,
-                    request_cx,
+                    responder,
                 } => {
-                    self.handle_vscode_request(request, request_id, request_cx)?;
+                    self.handle_vscode_request(request, request_id, responder)?;
                 }
                 HistoryActorMessage::CancelFromVsCode { request_id } => {
                     self.handle_vscode_cancel(request_id);
@@ -318,7 +318,7 @@ impl HistoryActor {
         &mut self,
         mut request: ProvideResponseRequest,
         request_id: serde_json::Value,
-        request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+        responder: Responder<ProvideResponseResponse>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!(
             message_count = request.messages.len(),
@@ -395,7 +395,7 @@ impl HistoryActor {
         // Store streaming state
         session_data.streaming = Some(StreamingState {
             request_id,
-            request_cx,
+            responder,
             cancel_tx,
         });
 
@@ -472,8 +472,10 @@ impl HistoryActor {
                 session_data.record_part(part.clone());
 
                 // Forward to VS Code
-                self.cx
-                    .send_notification(ResponsePartNotification { request_id, part })?;
+                self.cx.send_notification_to(
+                    LmBackend,
+                    ResponsePartNotification { request_id, part },
+                )?;
             }
             SessionToHistoryMessage::Complete => {
                 // Normalize provisional messages before completion.
@@ -482,18 +484,18 @@ impl HistoryActor {
 
                 // Send completion notification
                 self.cx
-                    .send_notification(ResponseCompleteNotification { request_id })?;
+                    .send_notification_to(LmBackend, ResponseCompleteNotification { request_id })?;
 
                 // Respond to the request
                 let streaming = session_data.streaming.take().unwrap();
-                streaming.request_cx.respond(ProvideResponseResponse {})?;
+                streaming.responder.respond(ProvideResponseResponse {})?;
             }
             SessionToHistoryMessage::Error(err) => {
                 tracing::error!(%session_id, %err, "session error");
                 // Take streaming and respond with error
                 if let Some(streaming) = session_data.streaming.take() {
                     streaming
-                        .request_cx
+                        .responder
                         .respond_with_error(sacp::Error::new(-32000, err))?;
                 }
             }

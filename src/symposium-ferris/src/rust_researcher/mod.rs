@@ -7,14 +7,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use indoc::formatdoc;
+use sacp::mcp_server::McpConnectionTo;
+use sacp::util::MatchDispatch;
+use sacp::{Conductor, Responder, RunWithConnectionTo};
 use sacp::{
-    ProxyToConductor,
-    mcp_server::{McpContext, McpServerBuilder},
+    mcp_server::McpServerBuilder,
     schema::{
         RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
         SelectedPermissionOutcome, StopReason,
     },
-    util::MatchMessage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,11 +47,14 @@ pub struct RustResearcherOutput {
 }
 
 /// Register the rust_researcher tool with the MCP server builder.
-pub fn register(
-    builder: McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>>,
+pub fn register<R>(
+    builder: McpServerBuilder<Conductor, R>,
     enabled: bool,
     cwd: PathBuf,
-) -> McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+) -> McpServerBuilder<Conductor, impl RunWithConnectionTo<Conductor>>
+where
+    R: sacp::RunWithConnectionTo<Conductor>,
+{
     const TOOL_NAME: &str = "rust_researcher";
 
     let builder = builder.tool_fn_mut(
@@ -67,8 +71,8 @@ pub fn register(
             - "How do I use async-trait with associated types?"
             - "What's the signature of reqwest::Client::get()?"
         "#},
-        async move |input: RustResearcherParams, mcp_cx: McpContext<ProxyToConductor>| {
-            run_research(input, mcp_cx, cwd.clone()).await
+        async move |input: RustResearcherParams, mcp_connection: McpConnectionTo<Conductor>| {
+            run_research(input, mcp_connection, cwd.clone()).await
         },
         sacp::tool_fn_mut!(),
     );
@@ -107,7 +111,7 @@ fn build_research_prompt(user_prompt: &str) -> String {
 /// Run a research query using a sub-agent session.
 async fn run_research(
     input: RustResearcherParams,
-    mcp_cx: McpContext<ProxyToConductor>,
+    mcp_cx: McpConnectionTo<Conductor>,
     cwd: PathBuf,
 ) -> Result<RustResearcherOutput, sacp::Error> {
     let RustResearcherParams {
@@ -123,7 +127,7 @@ async fn run_research(
     );
     tracing::debug!(prompt = %prompt, "Research prompt");
 
-    let cx = mcp_cx.connection_cx();
+    let cx = mcp_cx.connection_to();
 
     // Create a channel for receiving responses from the sub-agent's return_response_to_user calls
     let responses: Arc<Mutex<Vec<serde_json::Value>>> = Default::default();
@@ -141,7 +145,7 @@ async fn run_research(
             loop {
                 match active_session.read_update().await? {
                     sacp::SessionMessage::SessionMessage(message_cx) => {
-                        MatchMessage::new(message_cx)
+                        MatchDispatch::new(message_cx)
                             .if_request(async |request: RequestPermissionRequest, request_cx| {
                                 approve_tool_request(request, request_cx)
                             })
@@ -185,7 +189,7 @@ async fn run_research(
 
 fn approve_tool_request(
     request: RequestPermissionRequest,
-    request_cx: sacp::JrRequestCx<RequestPermissionResponse>,
+    responder: Responder<RequestPermissionResponse>,
 ) -> Result<(), sacp::Error> {
     let outcome = request
         .options
@@ -204,5 +208,5 @@ fn approve_tool_request(
         })
         .unwrap_or(RequestPermissionOutcome::Cancelled);
 
-    request_cx.respond(RequestPermissionResponse::new(outcome))
+    responder.respond(RequestPermissionResponse::new(outcome))
 }

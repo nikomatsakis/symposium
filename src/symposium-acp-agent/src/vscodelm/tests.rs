@@ -17,11 +17,13 @@ fn init_tracing() {
 
 #[tokio::test]
 async fn test_provide_info() -> Result<(), sacp::Error> {
-    VsCodeToLmBackend::builder()
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+    init_tracing();
+
+    VsCode
+        .builder()
+        .connect_with(LmBackend, async |cx| {
             let response = cx
-                .send_request(ProvideInfoRequest { silent: false })
+                .send_request_to(VsCode, ProvideInfoRequest { silent: false })
                 .block_task()
                 .await?;
 
@@ -51,14 +53,17 @@ async fn test_provide_info() -> Result<(), sacp::Error> {
 
 #[tokio::test]
 async fn test_provide_token_count() -> Result<(), sacp::Error> {
-    VsCodeToLmBackend::builder()
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+    VsCode
+        .builder()
+        .connect_with(LmBackend, async |cx| {
             let response = cx
-                .send_request(ProvideTokenCountRequest {
-                    model_id: "symposium-eliza".to_string(),
-                    text: "Hello, world!".to_string(),
-                })
+                .send_request_to(
+                    VsCode,
+                    ProvideTokenCountRequest {
+                        model_id: "symposium-eliza".to_string(),
+                        text: "Hello, world!".to_string(),
+                    },
+                )
                 .block_task()
                 .await?;
 
@@ -143,7 +148,7 @@ fn test_agent_definition_mcp_server_serialization() {
 use super::session_actor::AgentDefinition;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use sacp::on_receive_notification;
+use sacp::{ConnectionTo, Role, on_receive_notification};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -189,7 +194,7 @@ impl CollectedParts {
 
 /// Helper to send a chat request with elizacp.
 async fn send_chat(
-    cx: &sacp::JrConnectionCx<VsCodeToLmBackend>,
+    connection: &ConnectionTo<LmBackend>,
     prompt: &str,
     tools: Vec<ToolDefinition>,
 ) -> Result<(), sacp::Error> {
@@ -200,19 +205,23 @@ async fn send_chat(
         }],
     }];
 
-    cx.send_request(ProvideResponseRequest {
-        model_id: "symposium-eliza".to_string(),
-        messages,
-        agent: AgentDefinition::Eliza {
-            deterministic: true,
-        },
-        options: ChatRequestOptions {
-            tools,
-            tool_mode: Some(ToolMode::Auto),
-        },
-    })
-    .block_task()
-    .await?;
+    connection
+        .send_request_to(
+            VsCode,
+            ProvideResponseRequest {
+                model_id: "symposium-eliza".to_string(),
+                messages,
+                agent: AgentDefinition::Eliza {
+                    deterministic: true,
+                },
+                options: ChatRequestOptions {
+                    tools,
+                    tool_mode: Some(ToolMode::Auto),
+                },
+            },
+        )
+        .block_task()
+        .await?;
 
     Ok(())
 }
@@ -224,23 +233,25 @@ async fn test_simple_chat_request() -> Result<(), sacp::Error> {
     let (complete_tx, mut complete_rx) = mpsc::unbounded::<()>();
 
     let parts_clone = parts.clone();
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode
+        .builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 parts_clone.lock().unwrap().0.push(n.part);
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 let _ = complete_tx.unbounded_send(());
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             send_chat(&cx, "Hello, how are you?", vec![]).await?;
             tokio::time::timeout(Duration::from_secs(10), complete_rx.next())
                 .await
@@ -260,23 +271,25 @@ async fn test_chat_request_with_tools() -> Result<(), sacp::Error> {
     let (complete_tx, mut complete_rx) = mpsc::unbounded::<()>();
 
     let parts_clone = parts.clone();
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode
+        .builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 parts_clone.lock().unwrap().0.push(n.part);
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 let _ = complete_tx.unbounded_send(());
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             let tools = vec![
                 ToolDefinition {
                     name: "test_read_file".to_string(),
@@ -310,23 +323,25 @@ async fn test_multi_turn_conversation() -> Result<(), sacp::Error> {
     let (complete_tx, mut complete_rx) = mpsc::unbounded::<()>();
 
     let parts_clone = parts.clone();
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode
+        .builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 parts_clone.lock().unwrap().0.push(n.part);
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 let _ = complete_tx.unbounded_send(());
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             // First turn
             send_chat(&cx, "Hello", vec![]).await?;
             tokio::time::timeout(Duration::from_secs(10), complete_rx.next())
@@ -359,14 +374,17 @@ async fn test_multi_turn_conversation() -> Result<(), sacp::Error> {
                 },
             ];
 
-            cx.send_request(ProvideResponseRequest {
-                model_id: "symposium-eliza".to_string(),
-                messages,
-                agent: AgentDefinition::Eliza {
-                    deterministic: true,
+            cx.send_request_to(
+                VsCode,
+                ProvideResponseRequest {
+                    model_id: "symposium-eliza".to_string(),
+                    messages,
+                    agent: AgentDefinition::Eliza {
+                        deterministic: true,
+                    },
+                    options: ChatRequestOptions::default(),
                 },
-                options: ChatRequestOptions::default(),
-            })
+            )
             .block_task()
             .await?;
 
@@ -392,23 +410,25 @@ async fn test_mcp_list_tools() -> Result<(), sacp::Error> {
     let (complete_tx, mut complete_rx) = mpsc::unbounded::<()>();
 
     let parts_clone = parts.clone();
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode
+        .builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 parts_clone.lock().unwrap().0.push(n.part);
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 let _ = complete_tx.unbounded_send(());
                 Ok(())
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             let tools = vec![
                 ToolDefinition {
                     name: "read_file".to_string(),
@@ -460,8 +480,9 @@ async fn test_mcp_invoke_tool() -> Result<(), sacp::Error> {
 
     let parts_clone = parts.clone();
     let complete_tx_clone = complete_tx.clone();
-    VsCodeToLmBackend::builder()
-        .on_receive_notification(
+    VsCode.builder()
+        .on_receive_notification_from(
+            VsCode,
             async move |n: ResponsePartNotification, _| {
                 tracing::debug!(?n.part, "received response part");
                 parts_clone.lock().unwrap().0.push(n.part);
@@ -469,7 +490,8 @@ async fn test_mcp_invoke_tool() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .on_receive_notification(
+        .on_receive_notification_from(
+            VsCode,
             async move |_: ResponseCompleteNotification, _| {
                 tracing::debug!("received response complete");
                 let _ = complete_tx_clone.unbounded_send(());
@@ -477,8 +499,7 @@ async fn test_mcp_invoke_tool() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(LmBackend::new())?
-        .run_until(async |cx| {
+        .connect_with(LmBackend, async |cx| {
             let tools = vec![ToolDefinition {
                 name: "read_file".to_string(),
                 description: "Read contents of a file".to_string(),
@@ -545,7 +566,7 @@ async fn test_mcp_invoke_tool() -> Result<(), sacp::Error> {
             parts.lock().unwrap().clear();
 
             tracing::info!("Step 2: sending tool result");
-            cx.send_request(ProvideResponseRequest {
+            cx.send_request_to(VsCode, ProvideResponseRequest {
                 model_id: "symposium-eliza".to_string(),
                 messages,
                 agent: AgentDefinition::Eliza {

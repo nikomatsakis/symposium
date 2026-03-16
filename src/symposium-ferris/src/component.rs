@@ -6,9 +6,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use sacp::ProxyToConductor;
-use sacp::component::Component;
-use sacp::link::ConductorToProxy;
+use sacp::{Conductor, ConnectTo, Proxy};
 
 use crate::Ferris;
 
@@ -33,18 +31,19 @@ impl Default for FerrisComponent {
     }
 }
 
-impl Component<ProxyToConductor> for FerrisComponent {
-    async fn serve(self, client: impl Component<ConductorToProxy>) -> Result<(), sacp::Error> {
+impl ConnectTo<Conductor> for FerrisComponent {
+    async fn connect_to(self, client: impl ConnectTo<Proxy>) -> Result<(), sacp::Error> {
         tracing::info!("Ferris ACP proxy starting");
 
         // Get the cwd for the MCP server - for now use current directory
         // In the future, this could be passed through session context
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        ProxyToConductor::builder()
+        Proxy
+            .builder()
             .name("ferris-proxy")
             .with_mcp_server(self.config.into_mcp_server(cwd))
-            .serve(client)
+            .connect_to(client)
             .await
     }
 }

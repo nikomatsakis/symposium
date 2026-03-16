@@ -14,7 +14,6 @@ symposium-recommendations = { path = "../symposium-recommendations" }
 sacp.workspace = true
 sacp-tokio.workspace = true
 sacp-conductor.workspace = true
-sacp-tee.workspace = true
 yopo.workspace = true
 
 # Async runtime

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use sacp::DynComponent;
+use sacp::DynConnectTo;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -125,8 +125,8 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     let cargo_server = cargo_source.resolve().await?;
 
     let proxies = vec![
-        DynComponent::new(AcpAgent::new(ferris_server)),
-        DynComponent::new(AcpAgent::new(cargo_server)),
+        DynConnectTo::new(AcpAgent::new(ferris_server)),
+        DynConnectTo::new(AcpAgent::new(cargo_server)),
     ];
     let symposium =
         symposium_acp_agent::symposium::Symposium::new(config, proxies).with_agent(agent);

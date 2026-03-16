@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use sacp::{ProxyToConductor, mcp_server::McpServerBuilder};
+use sacp::{Conductor, RunWithConnectionTo, mcp_server::McpServerBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -31,11 +31,14 @@ pub struct CrateSourceOutput {
 }
 
 /// Register the crate_source tool with the MCP server builder.
-pub fn register(
-    builder: McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>>,
-    enabled: bool,
+pub fn register<R>(
+    builder: McpServerBuilder<Conductor, R>,
+    single_file_search: bool,
     cwd: PathBuf,
-) -> McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+) -> McpServerBuilder<Conductor, impl RunWithConnectionTo<Conductor>>
+where
+    R: sacp::RunWithConnectionTo<Conductor>,
+{
     const TOOL_NAME: &str = "crate_sources";
 
     let builder = builder.tool_fn_mut(
@@ -85,7 +88,7 @@ pub fn register(
         sacp::tool_fn_mut!(),
     );
 
-    if enabled {
+    if single_file_search {
         builder.enable_tool(TOOL_NAME).expect("valid tool name")
     } else {
         builder.disable_tool(TOOL_NAME).expect("valid tool name")

@@ -35,10 +35,7 @@ impl TestServer {
 #[tool_handler(router = self.tool_router)]
 impl rmcp::ServerHandler for TestServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
     }
 }
 

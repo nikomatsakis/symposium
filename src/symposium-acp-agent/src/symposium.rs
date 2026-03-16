@@ -7,9 +7,9 @@
 //! - `Symposium`: Proxy mode - sits between editor and an existing agent
 //! - `SymposiumAgent`: Agent mode - wraps a downstream agent
 
-use sacp::link::{AgentToClient, ConductorToProxy, ProxyToConductor};
-use sacp::{Component, DynComponent};
-use sacp_conductor::{Conductor, McpBridgeMode, ProxiesAndAgent};
+use sacp::{Client, Conductor, Proxy};
+use sacp::{ConnectTo, DynConnectTo};
+use sacp_conductor::{ConductorHostRole, ConductorImpl, McpBridgeMode, ProxiesAndAgent};
 use std::path::PathBuf;
 
 /// Shared configuration for Symposium proxy chains.
@@ -31,10 +31,10 @@ impl SymposiumConfig {
     }
 
     /// Configure a conductor with tracing and other settings.
-    fn configure_conductor<L: sacp_conductor::ConductorLink>(
+    fn configure_conductor<H: ConductorHostRole>(
         &self,
-        conductor: Conductor<L>,
-    ) -> Result<Conductor<L>, sacp::Error> {
+        conductor: ConductorImpl<H>,
+    ) -> Result<ConductorImpl<H>, sacp::Error> {
         let Some(ref dir) = self.trace_dir else {
             return Ok(conductor);
         };
@@ -57,29 +57,29 @@ impl SymposiumConfig {
 /// agent setup without Symposium managing the agent lifecycle.
 pub struct Symposium {
     config: SymposiumConfig,
-    proxies: Vec<DynComponent<ProxyToConductor>>,
+    proxies: Vec<DynConnectTo<Conductor>>,
 }
 
 impl Symposium {
     /// Create a new Symposium from configuration.
-    pub fn new(config: SymposiumConfig, proxies: Vec<DynComponent<ProxyToConductor>>) -> Self {
+    pub fn new(config: SymposiumConfig, proxies: Vec<DynConnectTo<Conductor>>) -> Self {
         Symposium { config, proxies }
     }
 
     /// Pair the symposium proxy with an agent, producing a new composite agent
-    pub fn with_agent(self, agent: impl Component<AgentToClient>) -> SymposiumAgent {
+    pub fn with_agent(self, agent: impl ConnectTo<Client>) -> SymposiumAgent {
         let Symposium { config, proxies } = self;
         SymposiumAgent::new(config, proxies, agent)
     }
 }
 
-impl Component<ProxyToConductor> for Symposium {
-    async fn serve(self, client: impl Component<ConductorToProxy>) -> Result<(), sacp::Error> {
+impl ConnectTo<Conductor> for Symposium {
+    async fn connect_to(self, client: impl ConnectTo<Proxy>) -> Result<(), sacp::Error> {
         tracing::debug!("Symposium::serve starting (proxy mode)");
         let Self { config, proxies } = self;
 
         tracing::debug!("Creating conductor (proxy mode)");
-        let conductor = Conductor::new_proxy("symposium", proxies, McpBridgeMode::default());
+        let conductor = ConductorImpl::new_proxy("symposium", proxies, McpBridgeMode::default());
 
         let conductor = config.configure_conductor(conductor)?;
 
@@ -94,28 +94,28 @@ impl Component<ProxyToConductor> for Symposium {
 /// building a standalone enriched agent binary.
 pub struct SymposiumAgent {
     config: SymposiumConfig,
-    proxies: Vec<DynComponent<ProxyToConductor>>,
-    agent: DynComponent<AgentToClient>,
+    proxies: Vec<DynConnectTo<Conductor>>,
+    agent: DynConnectTo<Client>,
 }
 
 impl SymposiumAgent {
-    fn new<C: Component<AgentToClient>>(
+    fn new<C: ConnectTo<Client>>(
         config: SymposiumConfig,
-        proxies: Vec<DynComponent<ProxyToConductor>>,
+        proxies: Vec<DynConnectTo<Conductor>>,
         agent: C,
     ) -> Self {
         SymposiumAgent {
             config,
             proxies,
-            agent: DynComponent::new(agent),
+            agent: DynConnectTo::new(agent),
         }
     }
 }
 
-impl Component<AgentToClient> for SymposiumAgent {
-    async fn serve(
+impl ConnectTo<Client> for SymposiumAgent {
+    async fn connect_to(
         self,
-        client: impl Component<sacp::link::ClientToAgent>,
+        client: impl ConnectTo<<Client as sacp::Role>::Counterpart>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!("SymposiumAgent::serve starting (agent mode)");
         let Self {
@@ -125,7 +125,7 @@ impl Component<AgentToClient> for SymposiumAgent {
         } = self;
 
         tracing::debug!("Creating conductor (agent mode)");
-        let conductor = Conductor::new_agent(
+        let conductor = ConductorImpl::new_agent(
             "symposium",
             ProxiesAndAgent::new(agent).proxies(proxies),
             McpBridgeMode::default(),
@@ -134,6 +134,6 @@ impl Component<AgentToClient> for SymposiumAgent {
         let conductor = config.configure_conductor(conductor)?;
 
         tracing::debug!("Starting conductor.run()");
-        conductor.run(client).await
+        conductor.connect_to(client).await
     }
 }

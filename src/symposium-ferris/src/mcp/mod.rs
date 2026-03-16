@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use sacp::{ProxyToConductor, mcp_server::McpServer};
+use sacp::mcp_server::McpServer;
 
 use crate::Ferris;
 
@@ -10,6 +10,8 @@ use crate::Ferris;
 pub fn build_server(
     config: Ferris,
     _cwd: PathBuf,
-) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+) -> McpServer<ProxyToConductor, sacp::NullRun> {
 
+    // Minimal compat: delegate to Ferris::into_mcp_server and return that
+    config.into_mcp_server(_cwd)
 }

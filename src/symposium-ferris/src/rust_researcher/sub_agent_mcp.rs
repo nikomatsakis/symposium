@@ -7,7 +7,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use sacp::{ProxyToConductor, mcp_server::McpServer};
+use sacp::mcp_server::McpServer;
+use sacp::{Conductor, RunWithConnectionTo};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +32,7 @@ struct ReturnResponseOutput {
 pub fn build_server(
     responses: Arc<Mutex<Vec<serde_json::Value>>>,
     cwd: PathBuf,
-) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+) -> McpServer<Conductor, impl RunWithConnectionTo<Conductor>> {
     let builder = McpServer::builder("ferris-research".to_string());
 
     let builder = crate::crate_sources::mcp::register(builder, true, cwd);

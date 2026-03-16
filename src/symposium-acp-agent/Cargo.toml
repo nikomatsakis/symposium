@@ -21,7 +21,6 @@ sacp-conductor.workspace = true
 sacp.workspace = true
 sacp-tokio.workspace = true
 sacp-rmcp.workspace = true
-sacp-tee.workspace = true
 rmcp.workspace = true
 tokio = { workspace = true }
 anyhow = { workspace = true }

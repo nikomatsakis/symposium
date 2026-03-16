@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use futures::channel::{mpsc, oneshot};
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, ErrorCode, InitializeRequestParam, InitializeResult,
-    ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, ErrorCode, InitializeRequestParams, InitializeResult,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{Peer, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
@@ -168,26 +168,22 @@ fn tools_equal(a: &[VscodeTool], b: &[VscodeTool]) -> bool {
 
 impl ServerHandler for VscodeToolsMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: rmcp::model::ProtocolVersion::default(),
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
-            server_info: rmcp::model::Implementation {
-                name: "vscode_tools".to_string(),
-                title: None,
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                icons: None,
-                website_url: None,
-            },
-            instructions: Some("VS Code-provided tools bridged to ACP".to_string()),
-        }
+        )
+        .with_server_info(rmcp::model::Implementation::new(
+            "vscode_tools",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions("VS Code-provided tools bridged to ACP")
     }
 
     async fn initialize(
         &self,
-        request: InitializeRequestParam,
+        request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, ErrorData> {
         tracing::debug!(
@@ -208,12 +204,11 @@ impl ServerHandler for VscodeToolsMcpServer {
             context.peer.set_peer_info(request);
         }
 
-        let result = InitializeResult {
-            protocol_version: rmcp::model::ProtocolVersion::LATEST,
-            capabilities: self.get_info().capabilities,
-            server_info: self.get_info().server_info,
-            instructions: self.get_info().instructions,
-        };
+        let info = self.get_info();
+        let result = InitializeResult::new(info.capabilities)
+            .with_protocol_version(rmcp::model::ProtocolVersion::LATEST)
+            .with_server_info(info.server_info)
+            .with_instructions(info.instructions.unwrap_or_default());
 
         tracing::debug!(?result.capabilities, "MCP initialize complete");
         Ok(result)
@@ -221,7 +216,7 @@ impl ServerHandler for VscodeToolsMcpServer {
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let state = self.state.read().await;
@@ -234,16 +229,11 @@ impl ServerHandler for VscodeToolsMcpServer {
                     serde_json::Value::Object(obj) => Arc::new(obj.clone()),
                     _ => Arc::new(serde_json::Map::new()),
                 };
-                Tool {
-                    name: Cow::Owned(t.name.clone()),
-                    title: None,
-                    description: Some(Cow::Owned(t.description.clone())),
+                Tool::new_with_raw(
+                    t.name.clone(),
+                    Some(Cow::Owned(t.description.clone())),
                     input_schema,
-                    output_schema: None,
-                    annotations: None,
-                    icons: None,
-                    meta: None,
-                }
+                )
             })
             .collect();
 
@@ -255,7 +245,7 @@ impl ServerHandler for VscodeToolsMcpServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         tracing::debug!(tool_name = %request.name, ?request.arguments, "call_tool called");

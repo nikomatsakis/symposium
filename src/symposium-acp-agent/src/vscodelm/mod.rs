@@ -12,8 +12,8 @@ mod vscode_tools_mcp;
 use anyhow::Result;
 use history_actor::{HistoryActor, HistoryActorHandle};
 use sacp::{
-    Component, Handled, JrConnectionCx, JrLink, JrMessageHandler, JrNotification, JrPeer,
-    JrRequest, JrResponsePayload, MessageCx, link::RemoteStyle, util::MatchMessage,
+    ConnectTo, Dispatch, HandleDispatchFrom, JsonRpcNotification, JsonRpcRequest, Role,
+    util::MatchDispatch,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -31,55 +31,88 @@ pub const ROLE_ASSISTANT: &str = "assistant";
 
 /// Peer representing the VS Code extension (TypeScript side).
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VsCodePeer;
-
-impl JrPeer for VsCodePeer {}
+pub struct VsCode;
 
 /// Peer representing the LM backend (Rust side).
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LmBackendPeer;
+pub struct LmBackend;
 
-impl JrPeer for LmBackendPeer {}
+impl sacp::Role for VsCode {
+    type Counterpart = LmBackend;
 
-// ============================================================================
-// Links
-// ============================================================================
+    fn role_id(&self) -> sacp::role::RoleId {
+        sacp::role::RoleId::from_singleton(self)
+    }
 
-/// Link from the LM backend's perspective (talking to VS Code).
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LmBackendToVsCode;
+    fn default_handle_dispatch_from(
+        &self,
+        message: sacp::Dispatch,
+        _connection: sacp::ConnectionTo<Self>,
+    ) -> impl std::future::Future<Output = Result<sacp::Handled<sacp::Dispatch>, sacp::Error>> + Send
+    {
+        async move {
+            Ok(sacp::Handled::No {
+                message,
+                retry: false,
+            })
+        }
+    }
 
-impl JrLink for LmBackendToVsCode {
-    type ConnectsTo = VsCodeToLmBackend;
-    type State = ();
-}
-
-impl sacp::HasDefaultPeer for LmBackendToVsCode {
-    type DefaultPeer = VsCodePeer;
-}
-
-impl sacp::HasPeer<VsCodePeer> for LmBackendToVsCode {
-    fn remote_style(_peer: VsCodePeer) -> RemoteStyle {
-        RemoteStyle::Counterpart
+    fn counterpart(&self) -> Self::Counterpart {
+        LmBackend
     }
 }
 
-/// Link from VS Code's perspective (talking to the LM backend).
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VsCodeToLmBackend;
+impl sacp::Role for LmBackend {
+    type Counterpart = VsCode;
 
-impl JrLink for VsCodeToLmBackend {
-    type ConnectsTo = LmBackendToVsCode;
-    type State = ();
+    fn role_id(&self) -> sacp::role::RoleId {
+        sacp::role::RoleId::from_singleton(self)
+    }
+
+    fn default_handle_dispatch_from(
+        &self,
+        message: sacp::Dispatch,
+        _connection: sacp::ConnectionTo<Self>,
+    ) -> impl std::future::Future<Output = Result<sacp::Handled<sacp::Dispatch>, sacp::Error>> + Send
+    {
+        async move {
+            Ok(sacp::Handled::No {
+                message,
+                retry: false,
+            })
+        }
+    }
+
+    fn counterpart(&self) -> Self::Counterpart {
+        VsCode
+    }
 }
 
-impl sacp::HasDefaultPeer for VsCodeToLmBackend {
-    type DefaultPeer = LmBackendPeer;
+impl sacp::role::HasPeer<VsCode> for LmBackend {
+    fn remote_style(&self, _peer: VsCode) -> sacp::role::RemoteStyle {
+        sacp::role::RemoteStyle::Counterpart
+    }
 }
 
-impl sacp::HasPeer<LmBackendPeer> for VsCodeToLmBackend {
-    fn remote_style(_peer: LmBackendPeer) -> RemoteStyle {
-        RemoteStyle::Counterpart
+impl sacp::role::HasPeer<LmBackend> for VsCode {
+    fn remote_style(&self, _peer: LmBackend) -> sacp::role::RemoteStyle {
+        sacp::role::RemoteStyle::Counterpart
+    }
+}
+
+impl ConnectTo<LmBackend> for VsCode {
+    async fn connect_to(self, client: impl ConnectTo<VsCode>) -> Result<(), sacp::Error> {
+        VsCode::builder(self).connect_to(client).await
+    }
+}
+
+impl ConnectTo<VsCode> for LmBackend {
+    async fn connect_to(self, client: impl ConnectTo<LmBackend>) -> Result<(), sacp::Error> {
+        LmBackend::builder(self)
+            .with_handler(LmBackendHandler::new())
+            .connect_to(client)
+            .await
     }
 }
 
@@ -219,23 +252,33 @@ pub struct ModelCapabilities {
 // lm/provideLanguageModelChatInformation
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrRequest)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcRequest)]
 #[request(method = "lm/provideLanguageModelChatInformation", response = ProvideInfoResponse)]
 pub struct ProvideInfoRequest {
     #[serde(default)]
     pub silent: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrResponsePayload)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvideInfoResponse {
     pub models: Vec<ModelInfo>,
+}
+
+impl sacp::JsonRpcResponse for ProvideInfoResponse {
+    fn into_json(self, _version: &str) -> Result<serde_json::Value, sacp::Error> {
+        serde_json::to_value(self).map_err(Into::into)
+    }
+
+    fn from_value(_version: &str, v: serde_json::Value) -> Result<Self, sacp::Error> {
+        serde_json::from_value(v).map_err(Into::into)
+    }
 }
 
 // ----------------------------------------------------------------------------
 // lm/provideLanguageModelChatResponse
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrRequest)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcRequest)]
 #[request(method = "lm/provideLanguageModelChatResponse", response = ProvideResponseResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvideResponseRequest {
@@ -246,14 +289,24 @@ pub struct ProvideResponseRequest {
     pub options: ChatRequestOptions,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrResponsePayload)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvideResponseResponse {}
+
+impl sacp::JsonRpcResponse for ProvideResponseResponse {
+    fn into_json(self, _version: &str) -> Result<serde_json::Value, sacp::Error> {
+        serde_json::to_value(self).map_err(Into::into)
+    }
+
+    fn from_value(_version: &str, v: serde_json::Value) -> Result<Self, sacp::Error> {
+        serde_json::from_value(v).map_err(Into::into)
+    }
+}
 
 // ----------------------------------------------------------------------------
 // lm/responsePart (notification: backend -> vscode)
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrNotification)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcNotification)]
 #[notification(method = "lm/responsePart")]
 #[serde(rename_all = "camelCase")]
 pub struct ResponsePartNotification {
@@ -265,7 +318,7 @@ pub struct ResponsePartNotification {
 // lm/responseComplete (notification: backend -> vscode)
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrNotification)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcNotification)]
 #[notification(method = "lm/responseComplete")]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseCompleteNotification {
@@ -276,7 +329,7 @@ pub struct ResponseCompleteNotification {
 // lm/cancel (notification: vscode -> backend)
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrNotification)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcNotification)]
 #[notification(method = "lm/cancel")]
 #[serde(rename_all = "camelCase")]
 pub struct CancelNotification {
@@ -287,7 +340,7 @@ pub struct CancelNotification {
 // lm/provideTokenCount
 // ----------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrRequest)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcRequest)]
 #[request(method = "lm/provideTokenCount", response = ProvideTokenCountResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvideTokenCountRequest {
@@ -295,9 +348,19 @@ pub struct ProvideTokenCountRequest {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JrResponsePayload)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvideTokenCountResponse {
     pub count: u32,
+}
+
+impl sacp::JsonRpcResponse for ProvideTokenCountResponse {
+    fn into_json(self, _version: &str) -> Result<serde_json::Value, sacp::Error> {
+        serde_json::to_value(self).map_err(Into::into)
+    }
+
+    fn from_value(_version: &str, v: serde_json::Value) -> Result<Self, sacp::Error> {
+        serde_json::from_value(v).map_err(Into::into)
+    }
 }
 
 // ============================================================================
@@ -323,7 +386,7 @@ impl LmBackendHandler {
     /// The actor is created lazily on first use, using the provided connection context.
     fn get_or_create_history_handle(
         &mut self,
-        cx: &JrConnectionCx<LmBackendToVsCode>,
+        cx: &sacp::ConnectionTo<VsCode>,
     ) -> Result<&HistoryActorHandle, sacp::Error> {
         if self.history_handle.is_none() {
             let handle = HistoryActor::new(&cx)?;
@@ -333,24 +396,22 @@ impl LmBackendHandler {
     }
 }
 
-impl JrMessageHandler for LmBackendHandler {
-    type Link = LmBackendToVsCode;
-
+impl HandleDispatchFrom<VsCode> for LmBackendHandler {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "LmBackendHandler"
     }
 
-    async fn handle_message(
+    async fn handle_dispatch_from(
         &mut self,
-        message: MessageCx,
-        cx: JrConnectionCx<Self::Link>,
-    ) -> Result<Handled<MessageCx>, sacp::Error> {
+        message: sacp::Dispatch,
+        connection: sacp::ConnectionTo<VsCode>,
+    ) -> std::result::Result<sacp::Handled<sacp::Dispatch>, sacp::Error> {
         tracing::trace!(?message, "handle_message");
 
         // Get or create the history actor handle (lazy init on first call)
-        let history_handle = self.get_or_create_history_handle(&cx)?.clone();
+        let history_handle = self.get_or_create_history_handle(&connection)?.clone();
 
-        MatchMessage::new(message)
+        MatchDispatch::new(message)
             .if_request(async |_req: ProvideInfoRequest, request_cx| {
                 let response = ProvideInfoResponse {
                     models: vec![ModelInfo {
@@ -393,53 +454,19 @@ impl JrMessageHandler for LmBackendHandler {
             })
             .await
             .otherwise(async |message| match message {
-                MessageCx::Request(request, request_cx) => {
+                Dispatch::Request(request, request_cx) => {
                     tracing::warn!("unknown request method: {}", request.method());
                     request_cx.respond_with_error(sacp::Error::method_not_found())
                 }
-                MessageCx::Notification(notif) => {
+                Dispatch::Notification(notif) => {
                     tracing::warn!("unexpected notification: {}", notif.method());
                     Ok(())
                 }
+                Dispatch::Response(response, router) => router.respond_with_result(response),
             })
             .await?;
 
-        Ok(Handled::Yes)
-    }
-}
-
-// ============================================================================
-// Component Implementation
-// ============================================================================
-
-/// The LM backend component that can be used with sacp's Component infrastructure.
-pub struct LmBackend {
-    handler: LmBackendHandler,
-}
-
-impl LmBackend {
-    pub fn new() -> Self {
-        Self {
-            handler: LmBackendHandler::new(),
-        }
-    }
-}
-
-impl Default for LmBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl sacp::Component<LmBackendToVsCode> for LmBackend {
-    async fn serve(
-        self,
-        client: impl sacp::Component<VsCodeToLmBackend>,
-    ) -> Result<(), sacp::Error> {
-        LmBackendToVsCode::builder()
-            .with_handler(self.handler)
-            .serve(client)
-            .await
+        Ok(sacp::Handled::Yes)
     }
 }
 
@@ -483,6 +510,6 @@ pub async fn serve_stdio(trace_dir: Option<PathBuf>) -> Result<()> {
         sacp_tokio::Stdio::new()
     };
 
-    LmBackend::new().serve(stdio).await?;
+    LmBackend.builder().connect_to(stdio).await?;
     Ok(())
 }

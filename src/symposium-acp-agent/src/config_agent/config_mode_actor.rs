@@ -12,9 +12,8 @@ use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use futures::StreamExt;
 use futures::channel::mpsc::{self, UnboundedSender};
 use regex::Regex;
-use sacp::JrConnectionCx;
-use sacp::link::AgentToClient;
 use sacp::schema::SessionId;
+use sacp::{Client, ConnectionTo};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use symposium_recommendations::{
@@ -90,7 +89,7 @@ impl ConfigModeHandle {
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: oneshot::Sender<()>,
-        cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         Self::spawn_inner(
             StartingConfiguration::ExistingConfig { agent, mods },
@@ -100,7 +99,7 @@ impl ConfigModeHandle {
             session_id,
             config_agent_tx,
             Some(resume_tx),
-            cx,
+            connection,
         )
     }
 
@@ -121,7 +120,7 @@ impl ConfigModeHandle {
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
-        cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         Self::spawn_inner(
             StartingConfiguration::NewWorkspace(recommendations),
@@ -131,7 +130,7 @@ impl ConfigModeHandle {
             session_id,
             config_agent_tx,
             resume_tx,
-            cx,
+            connection,
         )
     }
 
@@ -148,7 +147,7 @@ impl ConfigModeHandle {
         diff: RecommendationDiff,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-        cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         diff.apply(&mut mods);
         Self::spawn_inner(
@@ -159,7 +158,7 @@ impl ConfigModeHandle {
             session_id,
             config_agent_tx,
             None, // No resume_tx for diff-only mode
-            cx,
+            connection,
         )
     }
 
@@ -171,7 +170,7 @@ impl ConfigModeHandle {
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
-        cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
         let handle = Self { tx };
@@ -186,7 +185,7 @@ impl ConfigModeHandle {
             _resume_tx: resume_tx,
         };
 
-        cx.spawn(actor.run(config))?;
+        connection.spawn(actor.run(config))?;
 
         Ok(handle)
     }

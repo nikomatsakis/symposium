@@ -33,7 +33,9 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sacp::{Component, DynComponent, ProxyToConductor};
+use sacp::Conductor;
+use sacp::DynConnectTo;
+use sacp::component::ConnectTo;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -165,10 +167,10 @@ enum RegistryCommand {
 }
 
 /// Build proxy components from the configured sources, preserving order.
-fn build_proxies(raw_proxies: Vec<String>) -> Result<Vec<DynComponent<ProxyToConductor>>> {
+fn build_proxies(raw_proxies: Vec<String>) -> Result<Vec<DynConnectTo<Conductor>>> {
     let mut proxies = Vec::with_capacity(raw_proxies.len());
     for proxy in raw_proxies {
-        proxies.push(DynComponent::new(AcpAgent::from_str(&proxy)?));
+        proxies.push(DynConnectTo::new(AcpAgent::from_str(&proxy)?));
     }
 
     Ok(proxies)
@@ -242,18 +244,18 @@ async fn main() -> Result<()> {
                 );
                 symposium
                     .with_agent(agent)
-                    .serve(sacp_tokio::Stdio::new())
+                    .connect_to(sacp_tokio::Stdio::new())
                     .await?;
             } else {
                 tracing::debug!("Starting in proxy mode");
-                symposium.serve(sacp_tokio::Stdio::new()).await?;
+                symposium.connect_to(sacp_tokio::Stdio::new()).await?;
             }
         }
 
         Command::Eliza => {
             // Run the built-in Eliza agent directly (no Symposium wrapping)
             elizacp::ElizaAgent::new(false)
-                .serve(sacp_tokio::Stdio::new())
+                .connect_to(sacp_tokio::Stdio::new())
                 .await?;
         }
 
@@ -276,7 +278,7 @@ async fn main() -> Result<()> {
             if let Some(dir) = logging.trace_dir {
                 agent = agent.with_trace_dir(dir);
             }
-            agent.serve(sacp_tokio::Stdio::new()).await?;
+            agent.connect_to(sacp_tokio::Stdio::new()).await?;
         }
 
         Command::Registry(registry_cmd) => match registry_cmd {

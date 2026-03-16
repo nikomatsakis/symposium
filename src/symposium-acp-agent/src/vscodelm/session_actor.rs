@@ -8,19 +8,16 @@ use futures::StreamExt;
 use futures::channel::{mpsc, oneshot};
 use futures::stream::Peekable;
 use futures_concurrency::future::Race;
-use sacp::JrConnectionCx;
+use sacp::schema::{
+    InitializeRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+};
 use sacp::schema::{
     ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
-use sacp::{
-    ClientToAgent, Component, MessageCx,
-    link::AgentToClient,
-    schema::{
-        InitializeRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
-        RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-    },
-};
-use sacp_conductor::{AgentOnly, Conductor, McpBridgeMode};
+use sacp::util::MatchDispatch;
+use sacp::{Agent, Client, ConnectTo, ConnectionTo, Dispatch};
+use sacp_conductor::{AgentOnly, ConductorImpl, McpBridgeMode};
 use sacp_tokio::AcpAgent;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -184,7 +181,7 @@ pub struct SessionRequest {
     pub vscode_tools: Vec<ToolDefinition>,
 }
 
-/// Per-request state that needs to be passed through message processing.
+/// Per-request state that needs to be passed through dispatch processing.
 /// This is bundled together because both values can change between requests.
 #[derive(Debug)]
 pub struct RequestState {
@@ -294,20 +291,20 @@ impl SessionActor {
     async fn run_with_agent(
         request_rx: mpsc::UnboundedReceiver<SessionRequest>,
         history_handle: HistoryActorHandle,
-        agent: impl Component<AgentToClient> + 'static,
+        agent: impl ConnectTo<Client>,
         session_id: Uuid,
     ) -> Result<(), sacp::Error> {
         // Create a conductor to wrap the agent. This enables MCP-over-ACP negotiation,
         // which is required for our synthetic MCP server to be discovered by the agent.
-        let conductor = Conductor::new_agent(
+        let conductor = ConductorImpl::new_agent(
             "vscodelm-session",
             AgentOnly(agent),
             McpBridgeMode::default(),
         );
 
-        ClientToAgent::builder()
-            .connect_to(conductor)?
-            .run_until(async |cx| {
+        Client
+            .builder()
+            .connect_with(conductor, async |cx| {
                 tracing::debug!(%session_id, "connected to conductor, initializing");
 
                 let _init_response = cx
@@ -325,7 +322,7 @@ impl SessionActor {
     async fn run_with_cx(
         request_rx: mpsc::UnboundedReceiver<SessionRequest>,
         history_handle: HistoryActorHandle,
-        cx: JrConnectionCx<ClientToAgent>,
+        connection: ConnectionTo<Agent>,
         session_id: Uuid,
     ) -> Result<(), sacp::Error> {
         // Wait for the first request to arrive so we have the initial tool list
@@ -363,14 +360,14 @@ impl SessionActor {
 
         // Create the MCP server wrapper using sacp-rmcp
         let mcp_server =
-            sacp::mcp_server::McpServer::<ClientToAgent, _>::from_rmcp("vscode_tools", move || {
+            sacp::mcp_server::McpServer::<Agent, _>::from_rmcp("vscode_tools", move || {
                 // Clone the server for each connection
                 // Note: This requires VscodeToolsMcpServer to be Clone
                 vscode_tools_server.clone()
             });
 
         // Create a session with the MCP server injected
-        let mut session = cx
+        let mut session = connection
             .build_session(PathBuf::from("."))
             .with_mcp_server(mcp_server)?
             .block_task()
@@ -447,9 +444,9 @@ impl SessionActor {
                     Event::AgentUpdate(result) => {
                         let update = result?;
                         match update {
-                            sacp::SessionMessage::SessionMessage(message) => {
+                            sacp::SessionMessage::SessionMessage(dispatch) => {
                                 let new_state = Self::process_session_message(
-                                    message,
+                                    dispatch,
                                     &history_handle,
                                     &mut request_rx,
                                     request_state,
@@ -469,7 +466,7 @@ impl SessionActor {
                                 break false;
                             }
                             other => {
-                                tracing::trace!(%session_id, ?other, "ignoring session message");
+                                tracing::trace!(%session_id, ?other, "ignoring session dispatch");
                             }
                         }
                     }
@@ -509,7 +506,7 @@ impl SessionActor {
             };
 
             if canceled {
-                cx.send_notification(sacp::schema::CancelNotification::new(
+                connection.send_notification(sacp::schema::CancelNotification::new(
                     session.session_id().clone(),
                 ))?;
             } else {
@@ -525,12 +522,12 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Process a single session message from the ACP agent.
+    /// Process a single session dispatch from the ACP agent.
     /// This will end the turn on the vscode side, so we consume the `request_state`.
     /// Returns `Some` with a new `RequestState` if tool use was approved (and sends that response to the agent).
     /// Returns `None` if tool use was declined; the outer loop should await a new prompt.
     async fn process_session_message(
-        message: MessageCx,
+        dispatch: Dispatch,
         history_handle: &HistoryActorHandle,
         request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
         request_state: RequestState,
@@ -538,12 +535,10 @@ impl SessionActor {
         tools_handle: &VscodeToolsHandle,
         session_id: Uuid,
     ) -> Result<Option<RequestState>, sacp::Error> {
-        use sacp::util::MatchMessage;
-
         let has_internal_tool = request_state.has_internal_tool;
         let mut return_value = Some(request_state);
 
-        MatchMessage::new(message)
+        MatchDispatch::new(dispatch)
             .if_notification(async |notif: SessionNotification| {
                 match notif.update {
                     SessionUpdate::AgentMessageChunk(chunk) => {
@@ -697,7 +692,7 @@ impl SessionActor {
                 }
 
                 // Consume the request and use its state for the next iteration
-                let SessionRequest { messages, canceled, state, .. } = request_rx.next().await.expect("message is waiting");
+                let SessionRequest { messages, canceled, state, .. } = request_rx.next().await.expect("dispatch is waiting");
                 assert_eq!(canceled, false);
                 assert_eq!(messages.len(), 1);
                 return_value = Some(state);
@@ -705,14 +700,17 @@ impl SessionActor {
                 Ok(())
             })
             .await
-            .otherwise(async |message| {
-                match message {
-                    MessageCx::Request(req, request_cx) => {
+            .otherwise(async |dispatch| {
+                match dispatch {
+                    Dispatch::Request(req, request_cx) => {
                         tracing::warn!(%session_id, method = req.method(), "unknown request");
                         request_cx.respond_with_error(sacp::util::internal_error("unknown request"))?;
                     }
-                    MessageCx::Notification(notif) => {
+                    Dispatch::Notification(notif) => {
                         tracing::trace!(%session_id, method = notif.method(), "ignoring notification");
+                    }
+                    Dispatch::Response(response, router) => {
+                        router.respond_with_result(response)?;
                     }
                 }
                 Ok(())
@@ -777,7 +775,7 @@ impl SessionActor {
         }
 
         // This marks the end of the request from the VSCode point-of-view, so drop the
-        // `request_state`. We'll get a replacement in the next message.
+        // `request_state`. We'll get a replacement in the next dispatch.
         drop(request_state);
 
         // Wait for the next request (which should have the tool result).
@@ -832,7 +830,7 @@ impl SessionActor {
         };
 
         // Consume the request and get the new state
-        let SessionRequest { state, .. } = request_rx.next().await.expect("message is waiting");
+        let SessionRequest { state, .. } = request_rx.next().await.expect("dispatch is waiting");
 
         // Convert the result to rmcp CallToolResult
         // The result from VS Code is a JSON value - convert to text content

@@ -5,12 +5,11 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use sacp::link::ClientToAgent;
-use sacp::on_receive_notification;
 use sacp::schema::{
     ContentBlock, ContentChunk, InitializeRequest, NewSessionRequest, PromptRequest,
     ProtocolVersion, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
+use sacp::{Client, on_receive_notification};
 
 use symposium_acp_agent::ConfigAgent;
 use symposium_acp_agent::recommendations::Recommendations;
@@ -108,7 +107,8 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
             }],
         });
 
-    ClientToAgent::builder()
+    Client
+        .builder()
         .name("test_client")
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
@@ -122,8 +122,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
             },
             on_receive_notification!(),
         )
-        .connect_to(agent)?
-        .run_until(async |cx| {
+        .connect_with(agent, async |cx| {
             tracing::debug!("initialize");
 
             cx.send_request(InitializeRequest::new(ProtocolVersion::LATEST))

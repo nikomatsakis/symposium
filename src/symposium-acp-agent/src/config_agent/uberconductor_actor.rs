@@ -11,9 +11,10 @@ use super::conductor_actor::ConductorHandle;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;
-use sacp::link::AgentToClient;
-use sacp::schema::{NewSessionRequest, NewSessionResponse};
-use sacp::{JrConnectionCx, JrRequestCx};
+use sacp::{
+    Client, ConnectionTo, Responder,
+    schema::{NewSessionRequest, NewSessionResponse},
+};
 use std::path::PathBuf;
 use symposium_recommendations::ComponentSource;
 use tokio::sync::mpsc;
@@ -26,7 +27,7 @@ pub enum UberconductorMessage {
         agent: ComponentSource,
         mods: Vec<ModConfig>,
         request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
     },
 }
 
@@ -41,11 +42,16 @@ impl UberconductorHandle {
     pub fn spawn(
         trace_dir: Option<PathBuf>,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-        client_cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
 
-        client_cx.spawn(run_actor(trace_dir, config_agent_tx, client_cx.clone(), rx))?;
+        connection.spawn(run_actor(
+            trace_dir,
+            config_agent_tx,
+            connection.clone(),
+            rx,
+        ))?;
 
         Ok(Self { tx })
     }
@@ -57,7 +63,7 @@ impl UberconductorHandle {
         agent: ComponentSource,
         mods: Vec<ModConfig>,
         request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         self.tx
             .send(UberconductorMessage::NewSession {
@@ -65,7 +71,7 @@ impl UberconductorHandle {
                 agent,
                 mods,
                 request,
-                request_cx,
+                responder,
             })
             .await
             .map_err(|_| sacp::util::internal_error("Uberconductor actor closed"))
@@ -76,7 +82,7 @@ impl UberconductorHandle {
 async fn run_actor(
     trace_dir: Option<PathBuf>,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-    client_cx: JrConnectionCx<AgentToClient>,
+    connection: ConnectionTo<Client>,
     mut rx: mpsc::Receiver<UberconductorMessage>,
 ) -> Result<(), sacp::Error> {
     // Key conductors by workspace path - each workspace gets its own conductor
@@ -89,7 +95,7 @@ async fn run_actor(
                 agent,
                 mods,
                 request,
-                request_cx,
+                responder,
             } => {
                 // Get or create conductor for this workspace
                 let handle = match conductors.get(&workspace_path) {
@@ -101,7 +107,7 @@ async fn run_actor(
                             mods,
                             trace_dir.as_ref(),
                             config_agent_tx.clone(),
-                            &client_cx,
+                            &connection,
                         )
                         .await?;
                         conductors.insert(workspace_path.clone(), handle.clone());
@@ -111,7 +117,7 @@ async fn run_actor(
 
                 // Forward the session request to the conductor
                 // The conductor will send NewSessionCreated back to ConfigAgent
-                handle.send_new_session(request, request_cx).await?;
+                handle.send_new_session(request, responder).await?;
             }
         }
     }

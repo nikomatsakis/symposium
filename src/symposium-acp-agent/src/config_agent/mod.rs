@@ -21,14 +21,13 @@ use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use fxhash::FxHashMap;
-use sacp::link::AgentToClient;
 use sacp::schema::{
     AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
     InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
     PromptResponse, SessionId, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
-use sacp::util::MatchMessage;
-use sacp::{ClientPeer, Component, JrConnectionCx, JrRequestCx, MessageCx};
+use sacp::util::MatchDispatch;
+use sacp::{Agent, Client, ConnectTo, ConnectionTo, Dispatch, Responder};
 use std::path::{Path, PathBuf};
 use symposium_recommendations::ComponentSource;
 use uberconductor_actor::UberconductorHandle;
@@ -37,10 +36,11 @@ use uberconductor_actor::UberconductorHandle;
 const CONFIG_SLASH_COMMAND: &str = "symposium:config";
 
 /// Extract the session ID from a message, if present.
-fn get_session_id(message: &MessageCx) -> Result<Option<SessionId>, sacp::Error> {
+fn get_session_id(message: &Dispatch) -> Result<Option<SessionId>, sacp::Error> {
     let params = match message {
-        MessageCx::Request(req, _) => req.params(),
-        MessageCx::Notification(notif) => notif.params(),
+        Dispatch::Request(req, _) => req.params(),
+        Dispatch::Notification(notif) => notif.params(),
+        Dispatch::Response(_, _) => return Ok(None),
     };
     match params.get("sessionId") {
         Some(value) => {
@@ -182,26 +182,26 @@ impl ConfigAgent {
         uberconductor: UberconductorHandle,
         mut rx: UnboundedReceiver<ConfigAgentMessage>,
         tx: futures::channel::mpsc::UnboundedSender<ConfigAgentMessage>,
-        cx: JrConnectionCx<AgentToClient>,
+        connection: ConnectionTo<Client>,
     ) -> Result<(), sacp::Error> {
         while let Some(message) = rx.next().await {
             tracing::debug!(?message, "ConfigAgent::run: received message");
 
             match message {
                 ConfigAgentMessage::MessageFromClient(message) => {
-                    self.handle_message_from_client(message, &uberconductor, &cx, &tx)
+                    self.handle_message_from_client(message, &uberconductor, &connection, &tx)
                         .await?
                 }
 
                 ConfigAgentMessage::MessageToClient(message) => {
-                    self.handle_message_to_client(message, &cx).await?;
+                    self.handle_message_to_client(message, &connection).await?;
                 }
 
                 ConfigAgentMessage::NewSessionCreated {
                     response,
                     conductor,
                     workspace_path,
-                    request_cx,
+                    responder,
                 } => {
                     let session_id = response.session_id.clone();
 
@@ -215,12 +215,12 @@ impl ConfigAgent {
                     );
 
                     // Respond to the client
-                    request_cx.respond(response)?;
+                    responder.respond(response)?;
 
                     // Send initial available commands with /symposium:config
                     // This ensures the command is available even if the downstream agent
                     // doesn't send its own AvailableCommandsUpdate
-                    cx.send_notification(SessionNotification::new(
+                    connection.send_notification(SessionNotification::new(
                         session_id,
                         SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(vec![
                             AvailableCommand::new(
@@ -232,7 +232,7 @@ impl ConfigAgent {
                 }
 
                 ConfigAgentMessage::ConfigModeOutput(session_id, output) => {
-                    self.handle_config_mode_output(session_id, output, &uberconductor, &cx)
+                    self.handle_config_mode_output(session_id, output, &uberconductor, &connection)
                         .await?;
                 }
             }
@@ -246,7 +246,7 @@ impl ConfigAgent {
         session_id: SessionId,
         output: ConfigModeOutput,
         _uberconductor: &UberconductorHandle,
-        cx: &JrConnectionCx<AgentToClient>,
+        cx: &ConnectionTo<Client>,
     ) -> Result<(), sacp::Error> {
         match output {
             ConfigModeOutput::SendMessage(text) => {
@@ -372,13 +372,13 @@ impl ConfigAgent {
     }
 
     /// Handle a new session request.
-    #[tracing::instrument(skip(self, request_cx, uberconductor, cx, config_agent_tx), ret)]
+    #[tracing::instrument(skip(self, responder, uberconductor, connection, config_agent_tx), ret)]
     async fn handle_new_session(
         &mut self,
         request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
         uberconductor: &UberconductorHandle,
-        cx: &JrConnectionCx<AgentToClient>,
+        connection: &ConnectionTo<Client>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
         // Clone workspace_path upfront so we can move request later
@@ -392,7 +392,7 @@ impl ConfigAgent {
             tracing::debug!("handle_new_session: no global agent configured");
 
             let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-            request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
+            responder.respond(NewSessionResponse::new(session_id.clone()))?;
 
             let workspace_recs = self.recommendations_for_workspace(&workspace_path);
 
@@ -403,7 +403,7 @@ impl ConfigAgent {
                 session_id.clone(),
                 config_agent_tx.clone(),
                 None,
-                cx,
+                connection,
             )?;
 
             self.sessions.insert(
@@ -452,7 +452,7 @@ impl ConfigAgent {
                 tracing::debug!(?diff, "handle_new_session: diff computed");
 
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-                request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
+                responder.respond(NewSessionResponse::new(session_id.clone()))?;
 
                 let actor_handle = ConfigModeHandle::spawn_with_recommendations(
                     agent,
@@ -462,7 +462,7 @@ impl ConfigAgent {
                     diff,
                     session_id.clone(),
                     config_agent_tx.clone(),
-                    cx,
+                    connection,
                 )?;
 
                 self.sessions.insert(
@@ -486,7 +486,7 @@ impl ConfigAgent {
 
         // No diff changes - proceed directly to uberconductor
         uberconductor
-            .new_session(workspace_path, agent, mods_config.mods, request, request_cx)
+            .new_session(workspace_path, agent, mods_config.mods, request, responder)
             .await
     }
 
@@ -497,8 +497,8 @@ impl ConfigAgent {
     async fn enter_config_mode(
         &mut self,
         session_id: SessionId,
-        request_cx: JrRequestCx<PromptResponse>,
-        cx: &JrConnectionCx<AgentToClient>,
+        responder: Responder<PromptResponse>,
+        connection: &ConnectionTo<Client>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
         // Get the current session state to potentially preserve the conductor and workspace path
@@ -509,7 +509,7 @@ impl ConfigAgent {
             }) => (conductor.clone(), workspace_path.clone()),
             Some(SessionState::Config { .. }) | None => {
                 // Can't enter config mode while diff is pending
-                return request_cx.respond_with_error(sacp::Error::new(
+                return responder.respond_with_error(sacp::Error::new(
                     -32600,
                     "Cannot only enter config mode when deleating",
                 ));
@@ -534,7 +534,7 @@ impl ConfigAgent {
                 session_id.clone(),
                 config_agent_tx.clone(),
                 resume_tx,
-                cx,
+                connection,
             )?,
             // If for some reason the configuration has vanished, reinitialize
             _ => {
@@ -546,7 +546,7 @@ impl ConfigAgent {
                     session_id.clone(),
                     config_agent_tx.clone(),
                     Some(resume_tx),
-                    cx,
+                    connection,
                 )?
             }
         };
@@ -562,7 +562,7 @@ impl ConfigAgent {
         );
 
         // Respond to the prompt (the actor will send the welcome message)
-        request_cx.respond(PromptResponse::new(StopReason::EndTurn))
+        responder.respond(PromptResponse::new(StopReason::EndTurn))
     }
 
     /// Check if the prompt is invoking the config slash command.
@@ -588,8 +588,8 @@ impl ConfigAgent {
     async fn handle_prompt(
         &mut self,
         request: PromptRequest,
-        request_cx: JrRequestCx<PromptResponse>,
-        cx: &JrConnectionCx<AgentToClient>,
+        responder: Responder<PromptResponse>,
+        connection: &ConnectionTo<Client>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
         let session_id = request.session_id.clone();
@@ -601,25 +601,25 @@ impl ConfigAgent {
             Some(SessionState::Delegating { conductor, .. }) => {
                 // Check if this is the config command
                 if Self::is_config_command(&request) {
-                    self.enter_config_mode(session_id, request_cx, cx, config_agent_tx)
+                    self.enter_config_mode(session_id, responder, connection, config_agent_tx)
                         .await
                 } else {
                     // Forward to conductor
-                    conductor.send_prompt(request, request_cx).await
+                    conductor.send_prompt(request, responder).await
                 }
             }
             Some(SessionState::Config { actor, .. }) => {
                 // Forward input to the config mode actor
                 let input = Self::extract_prompt_text(&request);
                 if actor.send_input(input).await.is_err() {
-                    return request_cx
+                    return responder
                         .respond_with_error(sacp::Error::new(-32603, "Config mode actor closed"));
                 }
-                request_cx.respond(PromptResponse::new(StopReason::EndTurn))
+                responder.respond(PromptResponse::new(StopReason::EndTurn))
             }
             None => {
                 // Unknown session
-                request_cx.respond_with_error(sacp::Error::new(-32600, "Unknown session"))
+                responder.respond_with_error(sacp::Error::new(-32600, "Unknown session"))
             }
         }
     }
@@ -640,7 +640,7 @@ impl ConfigAgent {
     async fn handle_session_message(
         &self,
         session_id: &SessionId,
-        message: MessageCx,
+        message: Dispatch,
     ) -> Result<(), sacp::Error> {
         match self.sessions.get(session_id) {
             Some(SessionState::Delegating { conductor, .. }) => {
@@ -649,20 +649,22 @@ impl ConfigAgent {
             Some(SessionState::Config { .. }) => {
                 // Config mode and pending diff don't handle arbitrary messages
                 match message {
-                    MessageCx::Request(req, request_cx) => {
+                    Dispatch::Request(req, request_cx) => {
                         request_cx.respond_with_error(sacp::Error::new(
                             -32601,
                             format!("Method not supported in config mode: {}", req.method()),
                         ))
                     }
-                    MessageCx::Notification(_) => Ok(()),
+                    Dispatch::Notification(_) => Ok(()),
+                    Dispatch::Response(_, _) => Ok(()),
                 }
             }
             None => match message {
-                MessageCx::Request(_, request_cx) => {
+                Dispatch::Request(_, request_cx) => {
                     request_cx.respond_with_error(sacp::Error::new(-32600, "Unknown session"))
                 }
-                MessageCx::Notification(_) => Ok(()),
+                Dispatch::Notification(_) => Ok(()),
+                Dispatch::Response(_, _) => Ok(()),
             },
         }
     }
@@ -673,10 +675,10 @@ impl ConfigAgent {
     /// then forwards the message to the client.
     async fn handle_message_to_client(
         &self,
-        message: MessageCx,
-        cx: &JrConnectionCx<AgentToClient>,
+        message: Dispatch,
+        cx: &ConnectionTo<Client>,
     ) -> Result<(), sacp::Error> {
-        MatchMessage::new(message)
+        MatchDispatch::new(message)
             .if_notification(async |mut notif: SessionNotification| {
                 // Check if this is an AvailableCommandsUpdate
                 if let SessionUpdate::AvailableCommandsUpdate(ref mut update) = notif.update {
@@ -692,7 +694,7 @@ impl ConfigAgent {
             .await
             .otherwise(async |message| {
                 // Default: proxy the message onward
-                cx.send_proxied_message_to(ClientPeer, message)
+                cx.send_proxied_message_to(Client, message)
             })
             .await
     }
@@ -700,15 +702,15 @@ impl ConfigAgent {
     /// Handle messages using MatchMessage for dispatch.
     async fn handle_message_from_client(
         &mut self,
-        message: MessageCx,
+        message: Dispatch,
         uberconductor: &UberconductorHandle,
-        cx: &JrConnectionCx<AgentToClient>,
+        cx: &ConnectionTo<Client>,
         config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
-        MatchMessage::new(message)
+        MatchDispatch::new(message)
             .if_request(
-                async |_init: InitializeRequest, request_cx: JrRequestCx<InitializeResponse>| {
-                    request_cx.respond(
+                async |_init: InitializeRequest, responder: Responder<InitializeResponse>| {
+                    responder.respond(
                         InitializeResponse::new(sacp::schema::ProtocolVersion::LATEST)
                             .agent_capabilities(AgentCapabilities::new()),
                     )
@@ -716,15 +718,15 @@ impl ConfigAgent {
             )
             .await
             .if_request(
-                async |request: NewSessionRequest, request_cx: JrRequestCx<NewSessionResponse>| {
-                    self.handle_new_session(request, request_cx, uberconductor, cx, config_agent_tx)
+                async |request: NewSessionRequest, responder: Responder<NewSessionResponse>| {
+                    self.handle_new_session(request, responder, uberconductor, cx, config_agent_tx)
                         .await
                 },
             )
             .await
             .if_request(
-                async |request: PromptRequest, request_cx: JrRequestCx<PromptResponse>| {
-                    self.handle_prompt(request, request_cx, cx, config_agent_tx)
+                async |request: PromptRequest, responder: Responder<PromptResponse>| {
+                    self.handle_prompt(request, responder, cx, config_agent_tx)
                         .await
                 },
             )
@@ -738,10 +740,11 @@ impl ConfigAgent {
                 // No session ID - return error for requests, ignore notifications
                 tracing::debug!("Received message without session ID: {:?}", message);
                 match message {
-                    MessageCx::Request(req, request_cx) => request_cx.respond_with_error(
+                    Dispatch::Request(req, request_cx) => request_cx.respond_with_error(
                         sacp::Error::new(-32601, format!("Method not found: {}", req.method())),
                     ),
-                    MessageCx::Notification(_) => Ok(()),
+                    Dispatch::Notification(_) => Ok(()),
+                    sacp::Dispatch::Response(_, _) => Ok(()),
                 }
             })
             .await
@@ -751,11 +754,11 @@ impl ConfigAgent {
 #[derive(Debug)]
 pub enum ConfigAgentMessage {
     /// Sent when a client sends a message to the agent.
-    MessageFromClient(MessageCx),
+    MessageFromClient(Dispatch),
 
     /// Sent when a conductor wants to send a message to the client.
     /// ConfigAgent forwards this (and can inject additional messages like session updates).
-    MessageToClient(MessageCx),
+    MessageToClient(Dispatch),
 
     /// Sent when a conductor has established a session.
     /// ConfigAgent stores the session mapping, then responds to the client.
@@ -763,23 +766,21 @@ pub enum ConfigAgentMessage {
         response: NewSessionResponse,
         conductor: ConductorHandle,
         workspace_path: PathBuf,
-        request_cx: JrRequestCx<NewSessionResponse>,
+        responder: Responder<NewSessionResponse>,
     },
 
     /// Output from a config mode actor.
     ConfigModeOutput(SessionId, ConfigModeOutput),
 }
 
-impl Component<AgentToClient> for ConfigAgent {
-    async fn serve(
-        self,
-        client: impl Component<sacp::link::ClientToAgent>,
-    ) -> Result<(), sacp::Error> {
+impl ConnectTo<Client> for ConfigAgent {
+    async fn connect_to(self, client: impl ConnectTo<Agent>) -> Result<(), sacp::Error> {
         let (tx, rx) = unbounded();
         let trace_dir = self.trace_dir.clone();
         let tx_for_message = tx.clone();
         let tx_for_run = tx.clone();
-        AgentToClient::builder()
+        Agent
+            .builder()
             .with_spawned({
                 async move |cx| {
                     // Create the uberconductor actor
@@ -787,16 +788,15 @@ impl Component<AgentToClient> for ConfigAgent {
                     self.run(uberconductor, rx, tx_for_run, cx).await
                 }
             })
-            .on_receive_message(
-                async move |message: MessageCx, _cx: JrConnectionCx<AgentToClient>| {
+            .on_receive_dispatch(
+                async move |message: Dispatch, _cx: ConnectionTo<Client>| {
                     tx_for_message
                         .unbounded_send(ConfigAgentMessage::MessageFromClient(message))
                         .map_err(|_| sacp::util::internal_error("no config-agent receiver"))
                 },
-                sacp::on_receive_message!(),
+                sacp::on_receive_dispatch!(),
             )
-            .connect_to(client)?
-            .serve()
+            .connect_to(client)
             .await
     }
 }

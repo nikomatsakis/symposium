@@ -24,7 +24,7 @@
 
 use std::path::PathBuf;
 
-use sacp::{ProxyToConductor, mcp_server::McpServer};
+use sacp::{Conductor, RunWithConnectionTo, mcp_server::McpServer};
 
 mod component;
 mod crate_sources;
@@ -82,7 +82,7 @@ impl Ferris {
     pub fn into_mcp_server(
         self,
         cwd: impl Into<PathBuf>,
-    ) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+    ) -> McpServer<Conductor, impl RunWithConnectionTo<Conductor>> {
         let cwd = cwd.into();
 
         let builder = McpServer::builder("ferris".to_string()).instructions(indoc::indoc! {"
