@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+use crate::config::{home_dir, plugins_dir};
 use crate::hook::HookEvent;
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +25,41 @@ pub struct Hook {
     pub name: String,
     pub event: HookEvent,
     pub command: String,
+}
+
+/// Load all plugins from a directory containing TOML plugin files.
+pub fn load_plugins_from_dir<P: AsRef<Path>>(dir: P) -> Result<Vec<Result<Plugin>>> {
+    let mut plugins = Vec::new();
+    let dir = dir.as_ref();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            plugins.push(Err(anyhow::anyhow!(
+                "directory contains non-file entry: {}",
+                path.display()
+            )));
+        }
+
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("toml") => {
+                plugins.push(from_path(&path));
+            }
+            other => {
+                plugins.push(Err(anyhow::anyhow!(
+                    "unexpected file extension for {}: {:?}",
+                    path.display(),
+                    other
+                )));
+            }
+        }
+    }
+    Ok(plugins)
+}
+
+pub fn load_global_plugins() -> Result<Vec<Result<Plugin>>> {
+    let dir = plugins_dir();
+    load_plugins_from_dir(dir)
 }
 
 pub fn from_str(s: &str) -> Result<Plugin> {

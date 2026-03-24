@@ -56,6 +56,12 @@ pub fn logs_dir() -> PathBuf {
     dir
 }
 
+pub fn plugins_dir() -> PathBuf {
+    let dir = home_dir().join("plugins");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 /// Returns the path to the config file (~/.symposium/config.toml).
 pub fn config_path() -> PathBuf {
     home_dir().join("config.toml")

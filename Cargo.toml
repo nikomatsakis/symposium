@@ -32,3 +32,7 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+
+[dev-dependencies]
+assert_matches = "1.5"
+tempfile = "3.6"
