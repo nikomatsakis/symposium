@@ -1,10 +1,13 @@
 use std::io::Read;
 use std::process::ExitCode;
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+use serde::Deserialize;
+
+#[derive(Debug, Clone, clap::ValueEnum, Deserialize)]
 pub enum HookEvent {
     /// Claude Code PreToolUse hook
     #[value(name = "claude:pre-tool-use")]
+    #[serde(rename = "claude:pre-tool-use")]
     ClaudePreToolUse,
 }
 
