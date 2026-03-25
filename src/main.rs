@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
 mod cargo_cmd;
+pub mod tutorial;
 
 #[derive(Parser)]
 #[command(name = "symposium", version, about = "AI the Rust Way")]
@@ -18,6 +19,9 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+
+    /// Show the Symposium tutorial for agents and humans
+    Tutorial,
 }
 
 fn main() -> ExitCode {
@@ -25,6 +29,10 @@ fn main() -> ExitCode {
 
     match cli.command {
         Some(Commands::Cargo { args }) => cargo_cmd::run(args),
+        Some(Commands::Tutorial) => {
+            print!("{}", tutorial::render_cli());
+            ExitCode::SUCCESS
+        }
         None => {
             println!("symposium — AI the Rust Way");
             println!();
@@ -32,6 +40,7 @@ fn main() -> ExitCode {
             println!();
             println!("Commands:");
             println!("  cargo      Run cargo commands with token-optimized output");
+            println!("  tutorial   Show the Symposium tutorial for agents and humans");
             println!("  help       Show this message");
             println!();
             println!("Run `symposium <command> --help` for more information.");
