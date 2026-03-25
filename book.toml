@@ -1,0 +1,18 @@
+[book]
+authors = ["Niko Matsakis"]
+language = "en"
+src = "md"
+title = "Symposium"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output]
+
+[output.html]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["theme/custom.css"]
+fold.enable = true
+fold.level = 0
+git-repository-url = "https://github.com/symposium-dev/symposium"
+edit-url-template = "https://github.com/symposium-dev/symposium/edit/main/md/{path}"
