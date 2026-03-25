@@ -6,7 +6,5 @@
         <a href="./about.md" class="action-link">About</a>
         <span class="separator">⁄</span>
         <a href="./install.md" class="action-link">Get started</a>
-        <span class="separator">⁄</span>
-        <a href="./contribute.md" class="action-link">Contribute</a>
     </div>
 </center>

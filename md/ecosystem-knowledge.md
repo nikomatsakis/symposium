@@ -1,1 +1,0 @@
-# Ecosystem-Powered Knowledge

@@ -1,9 +1,0 @@
-*.*ts
-*.md
-package-lock.json
-.github
-.husky
-api-docs
-docs
-dist
-build

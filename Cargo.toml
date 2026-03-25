@@ -1,60 +1,31 @@
-[workspace]
-members = [
-    "setup",
-    "md-rfd-preprocessor",
-    "ci",
-    "src/symposium-acp-agent",
-    "src/symposium-ferris",
-    "src/symposium-math",
-    "src/symposium-recommendations",
-    "src/cli-agent-util",
-    "src/symposium-benchmark",
-]
-resolver = "2"
+[package]
+name = "symposium"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "AI the Rust Way"
+repository = "https://github.com/symposium-dev/symposium"
+readme = "README.md"
 
-[workspace.dependencies]
-sacp = "11.0"
-sacp-tokio = "11.0"
-sacp-conductor = "11.0"
-sacp-rmcp = "11.0"
-yopo = "11.0"
-elizacp = "12.0"
-jsonrpcmsg = "0.1.2"
+[[bin]]
+name = "symposium"
+path = "src/main.rs"
 
-# Core async runtime
-tokio = { version = "1.0", features = ["full"] }
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ name }-v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/{ name }-v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+symposium-rtk = "0.31"
+sacp = "11"
+sacp-tokio = "11"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+shell-words = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
 tokio-util = { version = "0.7", features = ["compat"] }
-futures = "0.3.31"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-schemars = { version = "1.0", features = ["derive"] }
-
-# UUID generation
-uuid = { version = "1.0", features = ["v4"] }
-
-# Error handling
-anyhow = "1.0"
-thiserror = "1.0"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# MCP SDK
-rmcp = { version = "1.2", features = ["server", "transport-io", "schemars"] }
-
-# Sparkle integration
-sparkle = { package = "sparkle-mcp", version = "0.5.0" }
-
-# CLI parsing
-clap = { version = "4.0", features = ["derive"] }
-
-# Setup tool dependencies
-which = "6.0"
-home = "0.5"
-fxhash = "0.2.1"
-
-# Testing
-expect-test = "1.5"

@@ -1,70 +1,49 @@
 # How to install
 
-## Install in your favorite editor
+## Pre-built binary (recommended)
 
-<ul class="editor-list">
-  <li>
-    <a href="./install-vscode.md">
-      <img src="./artwork/logos/vscode.png" alt="VSCode"/>
-      <span class="editor-name">VSCode</span>
-    </a>
-  </li>
-  <li>
-    <a href="./install-zed.md">
-      <img src="./artwork/logos/zed.png" alt="Zed"/>
-      <span class="editor-name">Zed</span>
-    </a>
-  </li>
-  <li>
-    <a href="./install-rust-rover.md">
-      <img src="./artwork/logos/rustrover.png" alt="RustRover"/>
-      <span class="editor-name">RustRover</span>
-    </a>
-  </li>
-  <li>
-    <a href="./install-other.md">
-      <img src="./artwork/logos/neovim.svg" alt="NeoVim"/>
-      <span class="editor-name">NeoVim</span>
-    </a>
-  </li>
-  <li>
-    <a href="./install-other.md">
-      <img src="./artwork/logos/emacs.png" alt="Emacs"/>
-      <span class="editor-name">Emacs</span>
-    </a>
-  </li>
-  <li>
-    <a href="./install-other.md">
-      <img src="./artwork/logos/acp.png" alt="ACP"/>
-      <span class="editor-name">Other ACP-supporting editors</span>
-    </a>
-  </li>
-</ul>
-
-## Installing from source
-
-Clone the repository and use the setup tool:
+Download a pre-built binary using [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
 
 ```bash
-git clone https://github.com/symposium-dev/symposium.git
-cd symposium
-cargo setup --all
+cargo binstall symposium
 ```
 
-### Setup options
+This downloads the appropriate binary for your platform from GitHub releases.
 
-| Option | Description |
-|--------|-------------|
-| `--all` | Install everything (ACP binaries, VSCode extension, Zed config) |
-| `--acp` | Install ACP binaries only |
-| `--vscode` | Build and install VSCode extension |
-| `--zed` | Configure Zed editor |
-| `--dry-run` | Show what would be done without making changes |
-
-Options can be combined:
+## Build from source
 
 ```bash
-cargo setup --acp --zed    # Install ACP binaries and configure Zed
+cargo install symposium
 ```
 
-For editors other than VSCode and Zed, you need to manually configure your editor to run `symposium-acp-agent run`.
+## Python package
+
+Symposium is also available as a Python package, which bundles the native binary:
+
+```bash
+uvx symposium
+# or
+pipx install symposium-rs
+```
+
+## Claude Code plugin
+
+The repository includes a Claude Code plugin at `agent-plugins/claude-code/`. The plugin's bootstrap script finds or downloads the binary automatically.
+
+To test locally:
+
+```bash
+claude --plugin-dir path/to/symposium/agent-plugins/claude-code
+```
+
+Then use `/symposium:rust` to activate the skill.
+
+## MCP server
+
+To use Symposium as an MCP server, run:
+
+```bash
+symposium mcp
+```
+
+This starts the server on stdio, exposing a `rust` tool. Configure your editor or agent to launch this command as an MCP server.
