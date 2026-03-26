@@ -1,13 +1,3 @@
 # Symposium — AI the Rust Way
 
-Agents writing Rust code should use the symposium tools.
-
-## Building and running cargo
-
-Instead of running `cargo` directly, use {{CARGO}}. It accepts the same arguments as cargo but produces more token-efficient output.
-
-### Example: running tests
-
-**Do not:** Run `cargo test --all --workspace`.
-
-**Instead:** Run {{CARGO_EXAMPLE:test --all --workspace}}.
+Symposium helps agents write better Rust by providing up-to-date language guidance and integration with the Rust ecosystem.

@@ -16,6 +16,7 @@
 # Using Symposium
 
 - [How to install](./install.md)
+- [Configuration](./configuration.md)
 
 # Design
 

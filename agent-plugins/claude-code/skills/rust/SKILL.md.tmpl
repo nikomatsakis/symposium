@@ -1,6 +1,6 @@
 ---
 name: rust
-description: Rust development assistant. Provides token-optimized cargo output and up-to-date language guidance. Use when writing Rust code, running cargo commands, or working with Rust dependencies.
+description: Rust development assistant. Provides up-to-date language guidance. Use when writing Rust code or working with Rust dependencies.
 compatibility: Requires macOS or Linux with curl or wget
 ---
 
@@ -8,10 +8,8 @@ compatibility: Requires macOS or Linux with curl or wget
 
 Use the bundled script to invoke Symposium commands. The script finds or installs the binary automatically.
 
-**Important:** The script path is relative to this skill's directory. Use the full path:
+**Important:** The script path is relative to the plugin root. Use the full path:
 
-    ${CLAUDE_SKILL_DIR}/scripts/symposium.sh cargo check
-    ${CLAUDE_SKILL_DIR}/scripts/symposium.sh cargo test --all
-    ${CLAUDE_SKILL_DIR}/scripts/symposium.sh cargo clippy
+    ${CLAUDE_PLUGIN_ROOT}/scripts/symposium.sh tutorial
 
 ---

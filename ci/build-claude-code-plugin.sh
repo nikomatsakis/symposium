@@ -7,18 +7,25 @@ out="${1:-dist/claude-code-plugin}"
 rm -rf "$out"
 mkdir -p "$out"
 
-# Copy the plugin structure (exclude the template)
+# Copy the plugin structure (exclude the template and old skill-local scripts)
 cp -r agent-plugins/claude-code/.claude-plugin "$out/"
 cp -r agent-plugins/claude-code/skills "$out/"
 rm -f "$out/skills/rust/SKILL.md.tmpl"
-chmod +x "$out/skills/rust/scripts/symposium.sh"
+rm -rf "$out/skills/rust/scripts"
+
+# Copy shared scripts
+cp -r agent-plugins/claude-code/scripts "$out/"
+chmod +x "$out/scripts/symposium.sh"
+
+# Copy hooks
+cp -r agent-plugins/claude-code/hooks "$out/"
 
 # Add the MCP server config
 cat > "$out/.mcp.json" << 'EOF'
 {
   "mcpServers": {
     "symposium": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/skills/rust/scripts/symposium.sh",
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/symposium.sh",
       "args": ["mcp"]
     }
   }

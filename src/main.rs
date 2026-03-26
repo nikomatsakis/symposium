@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
-mod cargo_cmd;
+mod config;
+mod hook;
 mod mcp;
 pub mod tutorial;
 
@@ -14,25 +15,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run cargo commands with token-optimized output
-    Cargo {
-        /// Arguments passed to cargo (e.g., check, build --release, test -- --nocapture)
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
     /// Show the Symposium tutorial for agents and humans
     Tutorial,
 
     /// Run as an MCP server (stdio transport)
     Mcp,
+
+    /// Handle a hook event (invoked by editor plugins)
+    Hook {
+        /// The hook event (e.g., claude:pre-tool)
+        event: hook::HookEvent,
+    },
 }
 
 fn main() -> ExitCode {
+    config::init();
+
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Cargo { args }) => cargo_cmd::run(args),
         Some(Commands::Tutorial) => {
             print!("{}", tutorial::render_cli());
             ExitCode::SUCCESS
@@ -47,15 +48,16 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some(Commands::Hook { event }) => hook::run(event),
         None => {
             println!("symposium — AI the Rust Way");
             println!();
             println!("Usage: symposium <command>");
             println!();
             println!("Commands:");
-            println!("  cargo      Run cargo commands with token-optimized output");
             println!("  tutorial   Show the Symposium tutorial for agents and humans");
             println!("  mcp        Run as an MCP server (stdio transport)");
+            println!("  hook       Handle a hook event (invoked by editor plugins)");
             println!("  help       Show this message");
             println!();
             println!("Run `symposium <command> --help` for more information.");
