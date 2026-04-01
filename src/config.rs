@@ -184,6 +184,7 @@ pub fn plugin_sources() -> Vec<PluginSourceConfig> {
     })
 }
 
+#[cfg(test)]
 pub fn plugins_dir() -> PathBuf {
     let dir = config_dir().join("plugins");
     let _ = fs::create_dir_all(&dir);

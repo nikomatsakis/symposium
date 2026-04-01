@@ -3,7 +3,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, clap::ValueEnum, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HookEvent {
     #[value(name = "pre-tool-use")]
     #[serde(rename = "PreToolUse")]
