@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
+use crate::plugins::ParsedPlugin;
+
 mod advice_for;
 mod config;
 mod crate_sources;
@@ -14,6 +16,10 @@ pub mod tutorial;
 #[derive(Parser)]
 #[command(name = "symposium", version, about = "AI the Rust Way")]
 struct Cli {
+    /// Control plugin source update behavior (none, check, fetch)
+    #[arg(long, global = true, default_value = "none")]
+    update: git_source::UpdateLevel,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -31,6 +37,57 @@ enum Commands {
         /// The hook event (e.g., claude:pre-tool)
         event: hook::HookEvent,
     },
+
+    /// Get Rust development guidance
+    Rust {
+        /// The command to run (e.g., "help")
+        #[arg(default_value = "help")]
+        command: String,
+    },
+
+    /// Find crate sources and guidance
+    Crate {
+        /// Crate name (omit to use --list)
+        name: Option<String>,
+
+        /// Version constraint (e.g., "1.0.3", "^1.0"); defaults to workspace version or latest
+        #[arg(long)]
+        version: Option<String>,
+
+        /// List all workspace dependency crates
+        #[arg(long)]
+        list: bool,
+    },
+
+    /// Manage plugins
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginCommand {
+    /// Sync plugin sources from git repositories
+    Sync {
+        /// Provider name to sync (omit to sync all)
+        provider: Option<String>,
+    },
+
+    /// List all providers and their plugins
+    List,
+
+    /// Show details for a specific plugin
+    Show {
+        /// Plugin name
+        plugin: String,
+    },
+
+    /// Validate a plugin manifest file
+    Validate {
+        /// Path to the plugin TOML file
+        path: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -38,6 +95,9 @@ async fn main() -> ExitCode {
     config::init();
 
     let cli = Cli::parse();
+
+    // Ensure git-based plugin sources are up to date (non-blocking on failure).
+    plugins::ensure_plugin_sources(cli.update).await;
 
     match cli.command {
         Some(Commands::Tutorial) => {
@@ -52,6 +112,111 @@ async fn main() -> ExitCode {
             }
         },
         Some(Commands::Hook { event }) => hook::run(event).await,
+        Some(Commands::Rust { command }) => {
+            print!("{}", mcp::execute_rust_command(&command));
+            ExitCode::SUCCESS
+        }
+        Some(Commands::Crate {
+            name,
+            version,
+            list,
+        }) => {
+            let cwd = std::env::current_dir().expect("failed to get current directory");
+
+            if list {
+                let workspace = crate_sources::workspace_semver_pairs(&cwd);
+                let plugins = plugins::load_all_plugins();
+                print!("{}", skills::list_output(&plugins, &workspace).await);
+                ExitCode::SUCCESS
+            } else if let Some(name) = name {
+                let workspace = crate_sources::workspace_semver_pairs(&cwd);
+                let plugins = plugins::load_all_plugins();
+                match skills::info_output(&name, version.as_deref(), &plugins, &workspace).await {
+                    Ok(output) => {
+                        print!("{output}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        ExitCode::FAILURE
+                    }
+                }
+            } else {
+                eprintln!("Provide a crate name or use --list");
+                ExitCode::FAILURE
+            }
+        }
+        Some(Commands::Plugin { command }) => match command {
+            PluginCommand::Sync { provider } => {
+                match plugins::sync_plugin_source(provider.as_deref()).await {
+                    Ok(synced) => {
+                        if synced.is_empty() {
+                            if let Some(ref p) = provider {
+                                println!("No git source found for provider: {p}");
+                            } else {
+                                println!("No git sources to sync.");
+                            }
+                        } else {
+                            for name in &synced {
+                                println!("Synced: {name}");
+                            }
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("Sync failed: {e}");
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            PluginCommand::List => {
+                let providers = plugins::list_plugins();
+                for provider in &providers {
+                    println!("Provider: {}", provider.name);
+                    println!("  Type: {}", provider.source_type);
+                    if let Some(ref url) = provider.git_url {
+                        println!("  URL: {url}");
+                    }
+                    if let Some(ref path) = provider.path {
+                        println!("  Path: {path}");
+                    }
+                    if provider.plugins.is_empty() {
+                        println!("  (no plugins)");
+                    } else {
+                        for plugin in &provider.plugins {
+                            println!(
+                                "  - {} ({} hooks, {} skill groups)",
+                                plugin.name, plugin.hooks_count, plugin.skill_groups_count
+                            );
+                        }
+                    }
+                    println!();
+                }
+                ExitCode::SUCCESS
+            }
+            PluginCommand::Validate { path } => match plugins::load_plugin(&path) {
+                Ok(ParsedPlugin { path: _, plugin }) => {
+                    println!("{}", toml::to_string_pretty(&plugin).unwrap());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{}: {e}", path.display());
+                    ExitCode::FAILURE
+                }
+            },
+            PluginCommand::Show { plugin } => match plugins::find_plugin(&plugin) {
+                Some(ParsedPlugin { path, plugin }) => {
+                    println!("# Source: {}", path.display());
+                    println!();
+                    print!("{}", toml::to_string_pretty(&plugin).unwrap());
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("Plugin not found: {plugin}");
+                    ExitCode::FAILURE
+                }
+            },
+        },
         None => {
             println!("symposium — AI the Rust Way");
             println!();
@@ -59,6 +224,9 @@ async fn main() -> ExitCode {
             println!();
             println!("Commands:");
             println!("  tutorial   Show the Symposium tutorial for agents and humans");
+            println!("  rust       Get Rust development guidance");
+            println!("  crate      Find crate sources and guidance");
+            println!("  plugin     Manage plugins");
             println!("  mcp        Run as an MCP server (stdio transport)");
             println!("  hook       Handle a hook event (invoked by editor plugins)");
             println!("  help       Show this message");
