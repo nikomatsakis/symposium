@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 mod config;
 mod crate_sources;
+mod git_source;
 mod hook;
 mod mcp;
 mod plugins;
