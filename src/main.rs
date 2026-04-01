@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
+mod advice_for;
 mod config;
 mod crate_sources;
 mod git_source;
