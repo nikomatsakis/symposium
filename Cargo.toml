@@ -21,19 +21,32 @@ pkg-fmt = "zip"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+cargo_metadata = "0.18"
 chrono = "0.4"
+crates_io_api = { version = "0.12", default-features = false, features = ["rustls"] }
 dirs = "6"
-toml = "0.8"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+flate2 = "1.0"
+home = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sacp = "11"
 sacp-tokio = "11"
 schemars = "1"
+semver = "1.0"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+tempfile = "3.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["compat"] }
-serde_json = "1.0.149"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+bytes = "1.11.1"
 
 [dev-dependencies]
 assert_matches = "1.5"
-tempfile = "3.6"
+expect-test = "1.5.1"
+indoc = "2.0.7"
+
+[workspace]
+members = [".", "symposium-artifacts"]

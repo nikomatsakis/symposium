@@ -1,7 +1,11 @@
-# Generate the SKILL.md from the template + tutorial output
-skill:
-    ci/generate-skill.sh
+# Build the project
+build:
+    cargo build
 
-# Build a self-contained Claude Code plugin directory ready for distribution
-claude-code-plugin: skill
-    ci/build-claude-code-plugin.sh
+# Assemble plugin artifacts into target/artifacts/
+artifacts: build
+    cargo artifacts
+
+# Launch Claude Code with the Symposium plugin
+claude: artifacts
+    claude --plugin-dir target/artifacts/claude-code-plugin

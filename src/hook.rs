@@ -3,7 +3,9 @@ use std::process::{Command, ExitCode, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, clap::ValueEnum, Deserialize, PartialEq, Eq)]
+use crate::plugins::ParsedPlugin;
+
+#[derive(Debug, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HookEvent {
     #[value(name = "pre-tool-use")]
     #[serde(rename = "PreToolUse")]
@@ -49,7 +51,7 @@ pub struct PreToolUsePayload {
     pub tool_name: String,
 }
 
-pub fn run(event: HookEvent) -> ExitCode {
+pub async fn run(event: HookEvent) -> ExitCode {
     let mut input = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut input) {
         tracing::warn!(?event, error = %e, "failed to read hook stdin");
@@ -71,22 +73,16 @@ pub fn run(event: HookEvent) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    dispatch_hook(payload)
+    dispatch_hook(payload).await
 }
 
 /// Handle hook dispatch for a parsed payload string. Separated from `run`
 /// so tests and other callers can invoke it without wiring stdin.
-pub fn dispatch_hook(payload: HookPayload) -> ExitCode {
+pub async fn dispatch_hook(payload: HookPayload) -> ExitCode {
     tracing::info!(?payload, "hook invoked");
 
-    let Ok(hooks) = crate::plugins::hooks_for_payload(&payload) else {
-        tracing::warn!(
-            ?payload,
-            error = "failed to load global plugins",
-            "skipping plugin hooks"
-        );
-        return ExitCode::FAILURE;
-    };
+    let plugins = crate::plugins::load_all_plugins();
+    let hooks = hooks_for_payload(&plugins, &payload);
 
     for (plugin_name, hook) in hooks {
         tracing::info!(?plugin_name, hook = %hook.name, cmd = %hook.command, "running plugin hook");
@@ -120,10 +116,45 @@ pub fn dispatch_hook(payload: HookPayload) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Return all hooks (with their plugin name) that match the event in `payload`.
+fn hooks_for_payload(
+    plugins: &[crate::plugins::ParsedPlugin],
+    payload: &HookPayload,
+) -> Vec<(String, crate::plugins::Hook)> {
+    tracing::debug!(?payload);
+
+    let mut out = Vec::new();
+
+    for ParsedPlugin { path: _, plugin } in plugins {
+        let name = plugin.name.clone();
+        for hook in &plugin.hooks {
+            tracing::debug!(?hook);
+            if hook.event != payload.sub_payload.hook_event() {
+                continue;
+            }
+            if let Some(matcher) = &hook.matcher {
+                if !payload.sub_payload.matches_matcher(matcher) {
+                    tracing::info!(
+                        ?payload,
+                        ?matcher,
+                        "skipping hook due to non-matching matcher"
+                    );
+                    continue;
+                }
+            }
+            out.push((name.clone(), hook.clone()));
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    use indoc::formatdoc;
 
     fn setup_tracing() {
         let _ = tracing_subscriber::fmt()
@@ -137,8 +168,8 @@ mod tests {
             .try_init();
     }
 
-    #[test]
-    fn plugin_hooks_run_and_create_files() {
+    #[tokio::test]
+    async fn plugin_hooks_run_and_create_files() {
         setup_tracing();
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -160,51 +191,47 @@ mod tests {
         let out5 = home.join("out5.txt");
 
         // Create two plugin TOML files that run simple echo commands.
-        let p1 = format!(
-            r#"
-name = "plugin-one"
+        let p1 = formatdoc! {r#"
+            name = "plugin-one"
 
-[[hooks]]
-name = "write1"
-event = "PreToolUse"
-command = "sh -c 'echo plugin-one-write1 > {}'"
-"#,
-            out1.display()
-        );
+            [[hooks]]
+            name = "write1"
+            event = "PreToolUse"
+            command = "sh -c 'echo plugin-one-write1 > {out1}'"
+        "#, out1 = out1.display()};
 
-        let p2 = format!(
-            r#"
-name = "plugin-two"
+        let p2 = formatdoc! {r#"
+            name = "plugin-two"
 
-[[hooks]]
-name = "write2"
-event = "PreToolUse"
-matcher = "*"
-command = "sh -c 'echo plugin-two-write2 > {}'"
+            [[hooks]]
+            name = "write2"
+            event = "PreToolUse"
+            matcher = "*"
+            command = "sh -c 'echo plugin-two-write2 > {out2}'"
 
-[[hooks]]
-name = "write3"
-event = "PreToolUse"
-matcher = "Bash"
-command = "sh -c 'echo plugin-two-write3 > {}'"
+            [[hooks]]
+            name = "write3"
+            event = "PreToolUse"
+            matcher = "Bash"
+            command = "sh -c 'echo plugin-two-write3 > {out3}'"
 
-[[hooks]]
-name = "write4"
-event = "PreToolUse"
-matcher = "Bash|Read"
-command = "sh -c 'echo plugin-two-write4 > {}'"
+            [[hooks]]
+            name = "write4"
+            event = "PreToolUse"
+            matcher = "Bash|Read"
+            command = "sh -c 'echo plugin-two-write4 > {out4}'"
 
-[[hooks]]
-name = "write4"
-event = "PreToolUse"
-matcher = "Read|Write"
-command = "sh -c 'echo plugin-two-write5 > {}'"
-"#,
-            out2.display(),
-            out3.display(),
-            out4.display(),
-            out5.display(),
-        );
+            [[hooks]]
+            name = "write4"
+            event = "PreToolUse"
+            matcher = "Read|Write"
+            command = "sh -c 'echo plugin-two-write5 > {out5}'"
+        "#,
+            out2 = out2.display(),
+            out3 = out3.display(),
+            out4 = out4.display(),
+            out5 = out5.display(),
+        };
 
         fs::write(plugins_dir.join("plugin-one.toml"), p1).expect("write plugin1");
         fs::write(plugins_dir.join("plugin-two.toml"), p2).expect("write plugin2");
@@ -216,7 +243,7 @@ command = "sh -c 'echo plugin-two-write5 > {}'"
             }),
             rest: serde_json::Map::new(),
         };
-        let _ = dispatch_hook(payload);
+        let _ = dispatch_hook(payload).await;
 
         // Verify files were created and contain expected contents.
         let got1 = fs::read_to_string(&out1).expect("read out1");

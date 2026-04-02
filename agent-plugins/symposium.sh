@@ -55,36 +55,71 @@ detect_target() {
     esac
 }
 
+install_binary() {
+    # 1. Try downloading a prebuilt binary
+    if download_binary; then
+        return 0
+    fi
+
+    # 2. Try cargo binstall (fast, prebuilt)
+    if command -v cargo-binstall >/dev/null 2>&1; then
+        echo >&2 "Installing symposium via cargo binstall..."
+        if cargo binstall --no-confirm symposium 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # 3. Last resort: cargo install (compiles from source)
+    if command -v cargo >/dev/null 2>&1; then
+        echo >&2 "Installing symposium via cargo install (this may take a while)..."
+        cargo install symposium
+        return 0
+    fi
+
+    echo >&2 "Error: could not install symposium. Install cargo or provide curl/wget."
+    exit 1
+}
+
 download_binary() {
     local target url
-    target="$(detect_target)"
+    target="$(detect_target)" || return 1
+
     url="https://github.com/${REPO}/releases/latest/download/symposium-${target}.tar.gz"
 
     echo >&2 "Downloading symposium for ${target}..."
 
     DOWNLOAD_TMPDIR="$(mktemp -d)"
+    trap 'rm -rf "${DOWNLOAD_TMPDIR}"' RETURN
 
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "${url}" -o "${DOWNLOAD_TMPDIR}/symposium.tar.gz"
+        curl -fsSL "${url}" -o "${DOWNLOAD_TMPDIR}/symposium.tar.gz" || return 1
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "${url}" -O "${DOWNLOAD_TMPDIR}/symposium.tar.gz"
+        wget -q "${url}" -O "${DOWNLOAD_TMPDIR}/symposium.tar.gz" || return 1
     else
-        echo >&2 "Error: neither curl nor wget found"
-        exit 1
+        return 1
     fi
 
     mkdir -p "${SYMPOSIUM_DIR}"
     tar -xzf "${DOWNLOAD_TMPDIR}/symposium.tar.gz" -C "${SYMPOSIUM_DIR}"
     chmod +x "${SYMPOSIUM_DIR}/symposium"
-    rm -rf "${DOWNLOAD_TMPDIR}"
 
     echo >&2 "Installed symposium to ${SYMPOSIUM_DIR}/symposium"
 }
 
-# Find or download the binary
+# If we're in a symposium checkout, use cargo run directly
+if CARGO_TOML="$(cargo locate-project --message-format plain 2>/dev/null)"; then
+    if grep -q '^name = "symposium"$' "$CARGO_TOML" 2>/dev/null; then
+        exec cargo run --quiet -- "$@"
+    fi
+fi
+
+# Otherwise, find or install the binary
 BINARY="$(find_binary)" || {
-    download_binary
-    BINARY="${SYMPOSIUM_DIR}/symposium"
+    install_binary
+    BINARY="$(find_binary)" || {
+        echo >&2 "Error: symposium installation succeeded but binary not found"
+        exit 1
+    }
 }
 
 # Forward all arguments

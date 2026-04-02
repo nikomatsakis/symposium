@@ -51,11 +51,9 @@ yarn-error.log*
 .kiro/
 .sparkle-space/
 
-# Generated skill files and build output
-agent-plugins/claude-code/skills/rust/SKILL.md
+# Build output
 dist/
 
 # Used for planning that shouldn't be committed
 WIP.md
 retcon-spec.toml
-

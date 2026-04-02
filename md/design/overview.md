@@ -57,14 +57,14 @@ We vend native integrations where we can: Claude Code plugin, VSCode extension, 
 ## CLI subcommands
 
 * `symposium tutorial` -- Emits a skill document for agents (and humans) on how to use the CLI
-* `symposium skill` -- List and retrieve skills
-    * `list` -- List available skills
-    * `rust` -- General Rust advice
-    * `crate $c` -- Skill for a specific crate
-* `symposium cargo` -- Run cargo with token-optimized output
-* `symposium update` -- Update your symposium installation
+* `symposium rust` -- General Rust development guidance
+* `symposium crate <name>` -- Find skills/source for the crate named `<name>`
+    * `--list` -- List skills available for crates in the current dependencies
+    * `--version <constraint>` -- Version constraint (e.g., `^1.0`)
 * `symposium mcp` -- Run as an MCP server (stdio)
 * `symposium hook [..details..]` -- Invoked from hooks
+* `symposium update` -- Update plugin sources from configured repositories
+* `symposium cargo` -- Run cargo with token-optimized output *(planned)*
 
 ## Plugins
 
