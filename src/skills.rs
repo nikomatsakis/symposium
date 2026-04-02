@@ -63,7 +63,7 @@ pub async fn info_output(
 #[serde(rename_all = "lowercase")]
 pub enum Activation {
     /// Skill content is printed inline with crate output.
-    Default,
+    Always,
     /// Skill is listed with its path for on-demand loading.
     #[default]
     Optional,
@@ -92,11 +92,7 @@ impl Skill {
     /// Returns `true` if any skill-level `crates` predicate references the crate,
     /// or if the skill has no skill-level `crates` (inheriting from the group).
     pub fn advises_on(&self, crate_name: &str) -> bool {
-        self.crates.is_empty()
-            || self
-                .crates
-                .iter()
-                .any(|p| p.references_crate(crate_name))
+        self.crates.is_empty() || self.crates.iter().any(|p| p.references_crate(crate_name))
     }
 
     /// Check whether this skill's `applies-when` constraints match the workspace.
@@ -225,7 +221,8 @@ async fn resolve_skills(
     // is extra logic.
     for ParsedPlugin { path, plugin } in &registry.plugins {
         for group in &plugin.skills {
-            let (group_crates, skills) = load_skills_for_group(path, group, for_crate, workspace).await;
+            let (group_crates, skills) =
+                load_skills_for_group(path, group, for_crate, workspace).await;
 
             collect_matching_skills(&skills, &group_crates, for_crate, workspace, &mut results);
         }
@@ -265,7 +262,7 @@ async fn guidance(
 
     for entry in resolve_skills(registry, Some(crate_name), workspace).await {
         match entry.skill.activation {
-            Activation::Default => {
+            Activation::Always => {
                 let name = entry.skill.name().to_string();
                 let path = entry.skill.path.clone();
                 advice
@@ -651,7 +648,7 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
 
 fn parse_activation(s: &str) -> Result<Activation> {
     match s.trim().to_lowercase().as_str() {
-        "default" => Ok(Activation::Default),
+        "default" => Ok(Activation::Always),
         "optional" => Ok(Activation::Optional),
         other => bail!("unknown activation mode: {other:?} (expected \"default\" or \"optional\")"),
     }
@@ -746,7 +743,7 @@ mod tests {
         assert_eq!(skill.frontmatter.get("name").unwrap(), "test-skill");
         assert_eq!(skill.crates.len(), 1);
         assert!(skill.crates[0].references_crate("serde"));
-        assert_eq!(skill.activation, Activation::Default);
+        assert_eq!(skill.activation, Activation::Always);
         assert!(skill.body.contains("Use serde like this."));
     }
 
@@ -793,7 +790,7 @@ mod tests {
 
         let defaults = SkillGroup {
             crates: Some(vec![pred("tokio")]),
-            activation: Some(Activation::Default),
+            activation: Some(Activation::Always),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
@@ -801,7 +798,7 @@ mod tests {
         // Skill has no crates in frontmatter, so it's empty at skill level.
         // The plugin default provides the crates scope.
         assert!(skill.crates.is_empty());
-        assert_eq!(skill.activation, Activation::Default);
+        assert_eq!(skill.activation, Activation::Always);
     }
 
     #[test]
@@ -824,7 +821,7 @@ mod tests {
 
         let defaults = SkillGroup {
             crates: Some(vec![pred("tokio")]),
-            activation: Some(Activation::Default),
+            activation: Some(Activation::Always),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
@@ -937,7 +934,7 @@ mod tests {
         let skill = load_standalone_skill(&skill_dir.join("SKILL.md")).unwrap();
         assert_eq!(skill.name(), "my-standalone");
         assert!(skill.crates[0].references_crate("serde"));
-        assert_eq!(skill.activation, Activation::Default);
+        assert_eq!(skill.activation, Activation::Always);
         assert!(skill.body.contains("Standalone body."));
     }
 

@@ -11,12 +11,26 @@
 # Summary
 
 - [Introduction](./introduction.md)
-- [About](./about.md)
+- [What is Symposium?](./about.md)
 
-# Using Symposium
+# User's guide
 
-- [How to install](./install.md)
-- [Configuration](./configuration.md)
+- [Getting started](./install.md)
+- [Usage patterns](./usage-patterns.md)
+
+# For crate authors
+
+- [Supporting your crate](./crate-authors/supporting-your-crate.md)
+- [Publishing skills](./crate-authors/publishing-skills.md)
+- [Creating a plugin](./crate-authors/creating-a-plugin.md)
+- [Publishing hooks](./crate-authors/publishing-hooks.md)
+
+# Reference
+
+- [Configuration](./reference/configuration.md)
+- [Plugin definition](./reference/plugin-definition.md)
+- [Skill definition](./reference/skill-definition.md)
+- [Skill matching](./reference/skill-matching.md)
 
 # Design
 
