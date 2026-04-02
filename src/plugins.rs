@@ -19,22 +19,66 @@ pub struct PluginSource {
 
 /// A `[[skills]]` entry from a plugin manifest.
 ///
-/// Each group declares which crates it advises on (`advice-for`), workspace
+/// Each group declares which crates it advises on (`crates`), workspace
 /// constraints (`applies-when`), an activation mode, and optionally a remote
 /// source for the skill files.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillGroup {
-    /// Crate predicates this group advises on (e.g., `["serde", "serde_json>=1.0"]`).
-    #[serde(default, rename = "advice-for")]
-    pub advice_for: Option<Vec<crate::advice_for::Predicate>>,
+    /// Crate predicates this group advises on (e.g., `"serde"` or `["serde", "serde_json>=1.0"]`).
+    #[serde(default, deserialize_with = "deserialize_string_or_vec_opt")]
+    pub crates: Option<Vec<crate::predicate::Predicate>>,
     /// Workspace constraints: all listed predicates must match (AND semantics).
     #[serde(default, rename = "applies-when")]
-    pub applies_when: Option<Vec<crate::advice_for::Predicate>>,
+    pub applies_when: Option<Vec<crate::predicate::Predicate>>,
     /// Activation mode for skills in this group.
     pub activation: Option<crate::skills::Activation>,
     /// Remote source for skills.
     #[serde(default)]
     pub source: PluginSource,
+}
+
+/// Deserialize a field that accepts either a single string or a vec of strings,
+/// and parse each as a `Predicate`. Returns `None` if absent, `Some(vec)` otherwise.
+fn deserialize_string_or_vec_opt<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<crate::predicate::Predicate>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Option<Vec<crate::predicate::Predicate>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or array of predicate strings")
+        }
+
+        fn visit_none<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+            let pred = crate::predicate::parse(v).map_err(de::Error::custom)?;
+            Ok(Some(vec![pred]))
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut preds = Vec::new();
+            while let Some(s) = seq.next_element::<String>()? {
+                let pred = crate::predicate::parse(&s).map_err(de::Error::custom)?;
+                preds.push(pred);
+            }
+            Ok(Some(preds))
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
 }
 
 /// A parsed plugin with its path and manifest.
@@ -478,7 +522,7 @@ pub fn validate_source_dir(dir: &Path) -> Result<Vec<ValidationResult>> {
 
 /// Collect all crate names referenced in predicates across a plugin source directory.
 ///
-/// Scans TOML plugin manifests (skill group `advice-for`/`applies-when`) and
+/// Scans TOML plugin manifests (skill group `crates`/`applies-when`) and
 /// standalone SKILL.md files, returning deduplicated crate names.
 /// Items that fail to load are silently skipped.
 pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
@@ -487,7 +531,7 @@ pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
 
     for plugin_result in contents.plugins.into_iter().flatten() {
         for group in &plugin_result.plugin.skills {
-            if let Some(preds) = &group.advice_for {
+            if let Some(preds) = &group.crates {
                 for pred in preds {
                     pred.collect_crate_names(&mut names);
                 }
@@ -502,7 +546,7 @@ pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
 
     for skill_md in contents.skill_files {
         if let Ok(skill) = crate::skills::load_standalone_skill(&skill_md) {
-            for pred in &skill.advice_for {
+            for pred in &skill.crates {
                 pred.collect_crate_names(&mut names);
             }
             for pred in &skill.applies_when {
@@ -587,7 +631,7 @@ mod tests {
             name = "remote-plugin"
 
             [[skills]]
-            advice-for = ["serde"]
+            crates = ["serde"]
             applies-when = ["serde>=1.0"]
             source.git = "https://github.com/org/repo/tree/main/serde"
         "#};
@@ -595,9 +639,9 @@ mod tests {
         assert_eq!(plugin.name, "remote-plugin");
         assert_eq!(plugin.skills.len(), 1);
         let group = &plugin.skills[0];
-        let af = group.advice_for.as_ref().unwrap();
-        assert_eq!(af.len(), 1);
-        assert!(af[0].references_crate("serde"));
+        let cr = group.crates.as_ref().unwrap();
+        assert_eq!(cr.len(), 1);
+        assert!(cr[0].references_crate("serde"));
         let aw = group.applies_when.as_ref().unwrap();
         assert_eq!(aw.len(), 1);
         assert!(aw[0].references_crate("serde"));
@@ -605,6 +649,21 @@ mod tests {
             group.source.git.as_ref().map(|s| s.as_str()),
             Some("https://github.com/org/repo/tree/main/serde")
         );
+    }
+
+    #[test]
+    fn parse_manifest_crates_as_string() {
+        let toml = indoc! {r#"
+            name = "string-crates"
+
+            [[skills]]
+            crates = "serde"
+        "#};
+        let plugin = from_str(toml).expect("parse");
+        let group = &plugin.skills[0];
+        let cr = group.crates.as_ref().unwrap();
+        assert_eq!(cr.len(), 1);
+        assert!(cr[0].references_crate("serde"));
     }
 
     #[test]
@@ -635,7 +694,7 @@ mod tests {
                 ---
                 name: assert-struct
                 description: Check struct layout
-                advice-for: serde
+                crates: serde
                 activation: default
                 ---
 
@@ -684,7 +743,7 @@ mod tests {
             indoc! {"
                 ---
                 name: root-skill
-                advice-for: serde
+                crates: serde
                 ---
 
                 Root level skill.
@@ -723,7 +782,7 @@ mod tests {
             indoc! {"
                 ---
                 name: my-skill
-                advice-for: serde
+                crates: serde
                 ---
 
                 Body.
@@ -738,7 +797,7 @@ mod tests {
             bad_skill.join("SKILL.md"),
             indoc! {"
                 ---
-                advice-for: serde
+                crates: serde
                 ---
 
                 Body.
@@ -766,7 +825,7 @@ mod tests {
                 name = "my-plugin"
 
                 [[skills]]
-                advice-for = ["serde", "serde_json>=1.0"]
+                crates = ["serde", "serde_json>=1.0"]
                 applies-when = ["tokio>=1.0"]
             "#},
         )
@@ -780,7 +839,7 @@ mod tests {
             indoc! {"
                 ---
                 name: my-skill
-                advice-for: anyhow
+                crates: anyhow
                 applies-when: tracing
                 ---
 
@@ -813,7 +872,7 @@ mod tests {
             indoc! {"
                 ---
                 name: good
-                advice-for: serde
+                crates: serde
                 ---
 
                 Body.
@@ -821,7 +880,7 @@ mod tests {
         )
         .unwrap();
 
-        // Invalid standalone skill (missing advice-for, skipped)
+        // Invalid standalone skill (missing crates, skipped)
         let bad_skill = dir.join("bad-skill");
         std::fs::create_dir_all(&bad_skill).unwrap();
         std::fs::write(
@@ -853,17 +912,17 @@ mod tests {
             name = "multi-group"
 
             [[skills]]
-            advice-for = ["serde"]
+            crates = ["serde"]
             applies-when = ["serde>=1.0"]
 
             [[skills]]
-            advice-for = ["tokio"]
+            crates = ["tokio"]
             applies-when = ["tokio>=1.0"]
         "#};
         let plugin = from_str(toml).expect("parse");
         assert_eq!(plugin.name, "multi-group");
         assert_eq!(plugin.skills.len(), 2);
-        assert!(plugin.skills[0].advice_for.as_ref().unwrap()[0].references_crate("serde"));
-        assert!(plugin.skills[1].advice_for.as_ref().unwrap()[0].references_crate("tokio"));
+        assert!(plugin.skills[0].crates.as_ref().unwrap()[0].references_crate("serde"));
+        assert!(plugin.skills[1].crates.as_ref().unwrap()[0].references_crate("tokio"));
     }
 }

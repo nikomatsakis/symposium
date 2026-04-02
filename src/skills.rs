@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::advice_for::{self, Predicate};
+use crate::predicate::{self, Predicate};
 use crate::plugins::{ParsedPlugin, PluginRegistry, SkillGroup};
 
 /// Format the list of skills available for workspace crates as display text.
@@ -74,8 +74,8 @@ pub enum Activation {
 pub struct Skill {
     /// Frontmatter fields as key-value pairs (name, description, license, etc.).
     pub frontmatter: BTreeMap<String, String>,
-    /// Crate atoms this skill advises on (skill-level; ANDed with group-level).
-    pub advice_for: Vec<Predicate>,
+    /// Crate predicates this skill advises on (skill-level; ANDed with group-level).
+    pub crates: Vec<Predicate>,
     /// Workspace atoms: all must match (skill-level; ANDed with group-level).
     pub applies_when: Vec<Predicate>,
     /// Activation mode.
@@ -89,12 +89,12 @@ pub struct Skill {
 impl Skill {
     /// Check whether this skill advises on the given crate.
     ///
-    /// Returns `true` if any skill-level `advice-for` atom references the crate,
-    /// or if the skill has no skill-level `advice-for` (inheriting from the group).
+    /// Returns `true` if any skill-level `crates` predicate references the crate,
+    /// or if the skill has no skill-level `crates` (inheriting from the group).
     pub fn advises_on(&self, crate_name: &str) -> bool {
-        self.advice_for.is_empty()
+        self.crates.is_empty()
             || self
-                .advice_for
+                .crates
                 .iter()
                 .any(|p| p.references_crate(crate_name))
     }
@@ -114,10 +114,10 @@ impl Skill {
             .map_or("unknown", |s| s.as_str())
     }
 
-    /// Return the crate names referenced by this skill's `advice-for` atoms.
+    /// Return the crate names referenced by this skill's `crates` predicates.
     pub fn crate_names(&self) -> Vec<String> {
         let mut names = std::collections::BTreeSet::new();
-        for pred in &self.advice_for {
+        for pred in &self.crates {
             pred.collect_crate_names(&mut names);
         }
         names.into_iter().collect()
@@ -181,23 +181,23 @@ impl CrateAdvice {
     }
 }
 
-/// A skill paired with its group's advice-for atoms, for display purposes.
+/// A skill paired with its group's crate predicates, for display purposes.
 pub struct SkillWithGroupContext {
     pub skill: Skill,
-    /// Group-level advice-for predicates (used when the skill has none of its own).
-    pub group_advice_for: Vec<Predicate>,
+    /// Group-level crate predicates (used when the skill has none of its own).
+    pub group_crates: Vec<Predicate>,
 }
 
 impl SkillWithGroupContext {
     /// Return the effective crate names this skill applies to.
     ///
-    /// Uses skill-level advice-for if present, otherwise falls back to group-level.
+    /// Uses skill-level crates if present, otherwise falls back to group-level.
     pub fn effective_crate_names(&self) -> Vec<String> {
         let mut names = std::collections::BTreeSet::new();
-        let preds = if !self.skill.advice_for.is_empty() {
-            &self.skill.advice_for
+        let preds = if !self.skill.crates.is_empty() {
+            &self.skill.crates
         } else {
-            &self.group_advice_for
+            &self.group_crates
         };
         for pred in preds {
             pred.collect_crate_names(&mut names);
@@ -208,7 +208,7 @@ impl SkillWithGroupContext {
 
 /// Resolve all applicable skills from the registry.
 ///
-/// When `for_crate` is `Some`, filters by `advice-for` at both group and skill level
+/// When `for_crate` is `Some`, filters by `crates` at both group and skill level
 /// (used for crate-specific guidance). When `None`, returns all skills that match
 /// the workspace (used for listing).
 ///
@@ -221,13 +221,13 @@ async fn resolve_skills(
     let mut results = Vec::new();
 
     // Skills from plugin manifests. We iterate these separately
-    // because we lazilly load skill groups, so there
+    // because we lazily load skill groups, so there
     // is extra logic.
     for ParsedPlugin { path, plugin } in &registry.plugins {
         for group in &plugin.skills {
-            let (group_af, skills) = load_skills_for_group(path, group, for_crate, workspace).await;
+            let (group_crates, skills) = load_skills_for_group(path, group, for_crate, workspace).await;
 
-            collect_matching_skills(&skills, &group_af, for_crate, workspace, &mut results);
+            collect_matching_skills(&skills, &group_crates, for_crate, workspace, &mut results);
         }
     }
 
@@ -334,7 +334,7 @@ fn format_skill_entry(skill: &Skill, crate_names: &[String]) -> String {
 
 /// Discover and load skills for a group, applying pre-fetch filtering.
 ///
-/// Checks `advice-for` and `applies-when` predicates before fetching
+/// Checks `crates` and `applies-when` predicates before fetching
 /// git sources, to avoid unnecessary downloads.
 async fn load_skills_for_group(
     plugin_path: &Path,
@@ -342,21 +342,21 @@ async fn load_skills_for_group(
     for_crate: Option<&str>,
     workspace: &[(String, semver::Version)],
 ) -> (Vec<Predicate>, Vec<Skill>) {
-    let advice_for = group.advice_for.as_deref().unwrap_or_default();
+    let group_crates = group.crates.as_deref().unwrap_or_default();
     let applies_when = group.applies_when.as_deref().unwrap_or_default();
 
     // Pre-fetch filtering: skip groups that can't match.
     if let Some(crate_name) = for_crate {
-        if !advice_for.iter().any(|p| p.references_crate(crate_name)) {
-            return (advice_for.to_vec(), Vec::new());
+        if !group_crates.iter().any(|p| p.references_crate(crate_name)) {
+            return (group_crates.to_vec(), Vec::new());
         }
     }
     if !atoms_all_match(applies_when, workspace) {
-        return (advice_for.to_vec(), Vec::new());
+        return (group_crates.to_vec(), Vec::new());
     }
 
     let Some(dir) = resolve_skill_dir(plugin_path, group).await else {
-        return (advice_for.to_vec(), Vec::new());
+        return (group_crates.to_vec(), Vec::new());
     };
 
     let mut skills = Vec::new();
@@ -369,7 +369,7 @@ async fn load_skills_for_group(
         }
     }
 
-    (advice_for.to_vec(), skills)
+    (group_crates.to_vec(), skills)
 }
 
 /// Discover all skills found in a given directory.
@@ -458,15 +458,15 @@ async fn resolve_skill_dir(plugin_path: &Path, group: &SkillGroup) -> Option<Pat
 
 /// Load a standalone skill from a SKILL.md file (no plugin group context).
 ///
-/// Standalone skills must be self-contained: all metadata (advice-for,
+/// Standalone skills must be self-contained: all metadata (crates,
 /// applies-when, activation) comes from the SKILL.md frontmatter.
-/// Returns an error if `advice-for` is missing (standalone skills have
+/// Returns an error if `crates` is missing (standalone skills have
 /// no group to inherit from).
 pub fn load_standalone_skill(skill_md_path: &Path) -> Result<Skill> {
     let skill = load_skill(skill_md_path, &SkillGroup::default())?;
-    if skill.advice_for.is_empty() {
+    if skill.crates.is_empty() {
         bail!(
-            "standalone skill `{}` is missing `advice-for` in frontmatter \
+            "standalone skill `{}` is missing `crates` in frontmatter \
              (standalone skills have no plugin group to inherit from)",
             skill.name()
         );
@@ -476,13 +476,13 @@ pub fn load_standalone_skill(skill_md_path: &Path) -> Result<Skill> {
 
 /// Load a single skill from a SKILL.md file.
 ///
-/// `advice-for` and `applies-when` in frontmatter are skill-level criteria
+/// `crates` and `applies-when` in frontmatter are skill-level criteria
 /// that specialize (AND with) the group-level settings — they are NOT
-/// fallbacks. A skill with no `advice-for` simply doesn't narrow the
+/// fallbacks. A skill with no `crates` simply doesn't narrow the
 /// group's scope; a skill with no `applies-when` doesn't add workspace
 /// constraints beyond what the group declares.
 ///
-/// A skill should have `advice-for` at either the skill level or
+/// A skill should have `crates` at either the skill level or
 /// the group level (or both). If neither provides it, a warning is logged
 /// but loading succeeds (the skill simply won't match any crate query).
 fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
@@ -505,26 +505,26 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
         .get("name")
         .context("SKILL.md frontmatter missing required `name` field")?;
 
-    // Parse skill-level advice-for predicates.
+    // Parse skill-level crates predicates (comma-separated).
     // This is independent of group-level — both layers are ANDed at match time.
-    let advice_for = if !fm.advice_for.is_empty() {
-        advice_for::parse_predicates(&fm.advice_for)?
+    let crates = if let Some(ref crates_str) = fm.crates {
+        predicate::parse_comma_separated(crates_str)?
     } else {
         Vec::new()
     };
 
-    // Warn if no advice-for at either level — the skill won't match anything,
+    // Warn if no crates at either level — the skill won't match anything,
     // but we don't fail so a misconfigured plugin can't bring down the tool.
-    if advice_for.is_empty() && group.advice_for.is_none() {
+    if crates.is_empty() && group.crates.is_none() {
         tracing::warn!(
             skill = %name,
-            "skill has no `advice-for` in SKILL.md frontmatter or plugin [[skills]] group"
+            "skill has no `crates` in SKILL.md frontmatter or plugin [[skills]] group"
         );
     }
 
     // Parse skill-level applies-when predicates.
     let applies_when = if !fm.applies_when.is_empty() {
-        advice_for::parse_predicates(&fm.applies_when)?
+        predicate::parse_predicates(&fm.applies_when)?
     } else {
         Vec::new()
     };
@@ -538,7 +538,7 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
 
     Ok(Skill {
         frontmatter,
-        advice_for,
+        crates,
         applies_when,
         activation,
         body: fm.body,
@@ -549,7 +549,7 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
 /// Filter skills by crate and workspace constraints, collecting matches with group context.
 fn collect_matching_skills(
     skills: &[Skill],
-    group_advice_for: &[Predicate],
+    group_crates: &[Predicate],
     for_crate: Option<&str>,
     workspace: &[(String, semver::Version)],
     results: &mut Vec<SkillWithGroupContext>,
@@ -560,7 +560,7 @@ fn collect_matching_skills(
         }
         results.push(SkillWithGroupContext {
             skill: skill.clone(),
-            group_advice_for: group_advice_for.to_vec(),
+            group_crates: group_crates.to_vec(),
         });
     }
 }
@@ -586,10 +586,11 @@ fn atoms_all_match(atoms: &[Predicate], workspace: &[(String, semver::Version)])
 }
 
 /// Raw frontmatter fields extracted from a SKILL.md file.
-/// `advice_for` and `applies_when` are Vecs because those keys can appear multiple times.
+/// `crates` is comma-separated on a single line; `applies_when` can appear multiple times.
 struct RawFrontmatter {
     fields: BTreeMap<String, String>,
-    advice_for: Vec<String>,
+    /// Raw `crates` value (comma-separated predicate string).
+    crates: Option<String>,
     applies_when: Vec<String>,
     body: String,
 }
@@ -619,7 +620,7 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
         .unwrap_or(after_first_fence.get(body_start..).unwrap_or(""));
 
     let mut fields = BTreeMap::new();
-    let mut advice_for = Vec::new();
+    let mut crates = None;
     let mut applies_when = Vec::new();
 
     for line in frontmatter_text.lines() {
@@ -630,8 +631,8 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
         if let Some((key, value)) = line.split_once(':') {
             let key = key.trim();
             let value = value.trim().to_string();
-            if key == "advice-for" {
-                advice_for.push(value);
+            if key == "crates" {
+                crates = Some(value);
             } else if key == "applies-when" {
                 applies_when.push(value);
             } else {
@@ -642,7 +643,7 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
 
     Ok(RawFrontmatter {
         fields,
-        advice_for,
+        crates,
         applies_when,
         body: body.to_string(),
     })
@@ -664,7 +665,7 @@ mod tests {
 
     /// Parse a predicate string for use in test fixtures.
     fn pred(s: &str) -> Predicate {
-        crate::advice_for::parse_predicates(&[s.to_string()])
+        crate::predicate::parse_predicates(&[s.to_string()])
             .unwrap()
             .remove(0)
     }
@@ -677,7 +678,7 @@ mod tests {
             ---
             name: my-skill
             description: A test skill
-            advice-for: serde
+            crates: serde
             ---
 
             # Body content
@@ -687,28 +688,23 @@ mod tests {
         let fm = parse_frontmatter(content).unwrap();
         assert_eq!(fm.fields.get("name").unwrap(), "my-skill");
         assert_eq!(fm.fields.get("description").unwrap(), "A test skill");
-        assert_eq!(fm.advice_for, vec!["serde"]);
+        assert_eq!(fm.crates.as_deref(), Some("serde"));
         assert!(fm.body.contains("# Body content"));
         assert!(fm.body.contains("Some instructions here."));
     }
 
     #[test]
-    fn parse_frontmatter_multiple_advice_for() {
+    fn parse_frontmatter_comma_separated_crates() {
         let content = indoc! {"
             ---
             name: multi
-            advice-for: serde
-            advice-for: serde_json>=1.0
-            advice-for: any(toml, toml_edit)
+            crates: serde, serde_json>=1.0, toml
             ---
 
             Body.
         "};
         let fm = parse_frontmatter(content).unwrap();
-        assert_eq!(
-            fm.advice_for,
-            vec!["serde", "serde_json>=1.0", "any(toml, toml_edit)"]
-        );
+        assert_eq!(fm.crates.as_deref(), Some("serde, serde_json>=1.0, toml"));
     }
 
     #[test]
@@ -735,7 +731,7 @@ mod tests {
                 ---
                 name: test-skill
                 description: Test
-                advice-for: serde
+                crates: serde
                 activation: default
                 ---
 
@@ -748,10 +744,34 @@ mod tests {
         let skill = load_skill(&skill_md, &defaults).unwrap();
 
         assert_eq!(skill.frontmatter.get("name").unwrap(), "test-skill");
-        assert_eq!(skill.advice_for.len(), 1);
-        assert!(skill.advice_for[0].references_crate("serde"));
+        assert_eq!(skill.crates.len(), 1);
+        assert!(skill.crates[0].references_crate("serde"));
         assert_eq!(skill.activation, Activation::Default);
         assert!(skill.body.contains("Use serde like this."));
+    }
+
+    #[test]
+    fn load_skill_comma_separated_crates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_md = tmp.path().join("SKILL.md");
+        fs::write(
+            &skill_md,
+            indoc! {"
+                ---
+                name: multi-crate
+                crates: serde, tokio>=1.0
+                ---
+
+                Body.
+            "},
+        )
+        .unwrap();
+
+        let defaults = SkillGroup::default();
+        let skill = load_skill(&skill_md, &defaults).unwrap();
+        assert_eq!(skill.crates.len(), 2);
+        assert!(skill.crates[0].references_crate("serde"));
+        assert!(skill.crates[1].references_crate("tokio"));
     }
 
     #[test]
@@ -763,7 +783,7 @@ mod tests {
             indoc! {"
                 ---
                 name: inherited
-                description: Inherits advice-for from TOML
+                description: Inherits crates from TOML
                 ---
 
                 Body.
@@ -772,15 +792,15 @@ mod tests {
         .unwrap();
 
         let defaults = SkillGroup {
-            advice_for: Some(vec![pred("tokio")]),
+            crates: Some(vec![pred("tokio")]),
             activation: Some(Activation::Default),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
 
-        // Skill has no advice-for in frontmatter, so it's empty at skill level.
-        // The plugin default provides the advice-for scope.
-        assert!(skill.advice_for.is_empty());
+        // Skill has no crates in frontmatter, so it's empty at skill level.
+        // The plugin default provides the crates scope.
+        assert!(skill.crates.is_empty());
         assert_eq!(skill.activation, Activation::Default);
     }
 
@@ -793,7 +813,7 @@ mod tests {
             indoc! {"
                 ---
                 name: override
-                advice-for: serde
+                crates: serde
                 activation: optional
                 ---
 
@@ -803,29 +823,29 @@ mod tests {
         .unwrap();
 
         let defaults = SkillGroup {
-            advice_for: Some(vec![pred("tokio")]),
+            crates: Some(vec![pred("tokio")]),
             activation: Some(Activation::Default),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
 
-        // Skill-level advice-for specializes (ANDs with) plugin defaults
-        assert_eq!(skill.advice_for.len(), 1);
-        assert!(skill.advice_for[0].references_crate("serde"));
-        assert!(!skill.advice_for[0].references_crate("tokio"));
+        // Skill-level crates specializes (ANDs with) plugin defaults
+        assert_eq!(skill.crates.len(), 1);
+        assert!(skill.crates[0].references_crate("serde"));
+        assert!(!skill.crates[0].references_crate("tokio"));
         assert_eq!(skill.activation, Activation::Optional);
     }
 
     #[test]
-    fn load_skill_missing_advice_for_warns_but_succeeds() {
+    fn load_skill_missing_crates_warns_but_succeeds() {
         let tmp = tempfile::tempdir().unwrap();
         let skill_md = tmp.path().join("SKILL.md");
         fs::write(
             &skill_md,
             indoc! {"
                 ---
-                name: no-advice
-                description: Missing advice-for
+                name: no-crates
+                description: Missing crates
                 ---
 
                 Body.
@@ -836,19 +856,19 @@ mod tests {
         let defaults = SkillGroup::default();
         // No longer an error — just a warning. The skill loads but won't match anything.
         let skill = load_skill(&skill_md, &defaults).unwrap();
-        assert!(skill.advice_for.is_empty());
+        assert!(skill.crates.is_empty());
     }
 
     #[test]
-    fn load_skill_ok_when_plugin_provides_advice_for() {
+    fn load_skill_ok_when_plugin_provides_crates() {
         let tmp = tempfile::tempdir().unwrap();
         let skill_md = tmp.path().join("SKILL.md");
         fs::write(
             &skill_md,
             indoc! {"
                 ---
-                name: no-own-advice
-                description: Plugin provides advice-for
+                name: no-own-crates
+                description: Plugin provides crates
                 ---
 
                 Body.
@@ -856,38 +876,14 @@ mod tests {
         )
         .unwrap();
 
-        // Plugin defaults provide advice-for, so the skill doesn't need its own
+        // Plugin defaults provide crates, so the skill doesn't need its own
         let defaults = SkillGroup {
-            advice_for: Some(vec![pred("serde")]),
+            crates: Some(vec![pred("serde")]),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
-        assert!(skill.advice_for.is_empty()); // skill-level is empty
-        assert_eq!(skill.frontmatter.get("name").unwrap(), "no-own-advice");
-    }
-
-    #[test]
-    fn load_skill_advice_for_accepts_combinators() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skill_md = tmp.path().join("SKILL.md");
-        fs::write(
-            &skill_md,
-            indoc! {"
-                ---
-                name: combo-advice
-                advice-for: any(serde, tokio)
-                ---
-
-                Body.
-            "},
-        )
-        .unwrap();
-
-        let defaults = SkillGroup::default();
-        let skill = load_skill(&skill_md, &defaults).unwrap();
-        assert_eq!(skill.advice_for.len(), 1);
-        assert!(skill.advice_for[0].references_crate("serde"));
-        assert!(skill.advice_for[0].references_crate("tokio"));
+        assert!(skill.crates.is_empty()); // skill-level is empty
+        assert_eq!(skill.frontmatter.get("name").unwrap(), "no-own-crates");
     }
 
     #[test]
@@ -899,7 +895,7 @@ mod tests {
             indoc! {"
                 ---
                 name: guarded
-                advice-for: serde
+                crates: serde
                 applies-when: serde
                 applies-when: serde_json>=1.0
                 ---
@@ -929,7 +925,7 @@ mod tests {
                 ---
                 name: my-standalone
                 description: A standalone skill
-                advice-for: serde
+                crates: serde
                 activation: default
                 ---
 
@@ -940,13 +936,13 @@ mod tests {
 
         let skill = load_standalone_skill(&skill_dir.join("SKILL.md")).unwrap();
         assert_eq!(skill.name(), "my-standalone");
-        assert!(skill.advice_for[0].references_crate("serde"));
+        assert!(skill.crates[0].references_crate("serde"));
         assert_eq!(skill.activation, Activation::Default);
         assert!(skill.body.contains("Standalone body."));
     }
 
     #[test]
-    fn validate_standalone_skill_bad_advice_for() {
+    fn validate_standalone_skill_bad_crates() {
         let tmp = tempfile::tempdir().unwrap();
         let skill_dir = tmp.path().join("bad-skill");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -955,7 +951,7 @@ mod tests {
             indoc! {"
                 ---
                 name: bad
-                advice-for: >=not_valid!!
+                crates: >=not_valid!!
                 ---
 
                 Body.
@@ -980,7 +976,7 @@ mod tests {
             indoc! {"
                 ---
                 name: bad
-                advice-for: serde
+                crates: serde
                 applies-when: >=garbage!!
                 ---
 
@@ -1006,7 +1002,7 @@ mod tests {
             indoc! {"
                 ---
                 name: bad
-                advice-for: serde
+                crates: serde
                 activation: bogus
                 ---
 
@@ -1031,7 +1027,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             indoc! {"
                 ---
-                advice-for: serde
+                crates: serde
                 ---
 
                 Body.
@@ -1047,16 +1043,16 @@ mod tests {
     }
 
     #[test]
-    fn standalone_skill_requires_advice_for() {
+    fn standalone_skill_requires_crates() {
         let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join("no-advice");
+        let skill_dir = tmp.path().join("no-crates");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("SKILL.md"),
             indoc! {"
                 ---
-                name: no-advice
-                description: Missing advice-for
+                name: no-crates
+                description: Missing crates
                 ---
 
                 Body.
@@ -1066,8 +1062,8 @@ mod tests {
 
         let err = load_standalone_skill(&skill_dir.join("SKILL.md")).unwrap_err();
         assert!(
-            err.to_string().contains("missing `advice-for`"),
-            "expected advice-for error, got: {err}"
+            err.to_string().contains("missing `crates`"),
+            "expected crates error, got: {err}"
         );
     }
 
@@ -1084,7 +1080,7 @@ mod tests {
                 ---
                 name: standalone-serde
                 description: Standalone serde skill
-                advice-for: serde
+                crates: serde
                 activation: default
                 ---
 
@@ -1104,7 +1100,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill.name(), "standalone-serde");
         // No group context for standalone skills
-        assert!(results[0].group_advice_for.is_empty());
+        assert!(results[0].group_crates.is_empty());
     }
 
     #[tokio::test]
@@ -1120,7 +1116,7 @@ mod tests {
                 ---
                 name: standalone-serde
                 description: Standalone serde skill
-                advice-for: serde
+                crates: serde
                 activation: default
                 ---
 
@@ -1158,7 +1154,7 @@ mod tests {
             indoc! {"
                 ---
                 name: tokio-skill
-                advice-for: tokio
+                crates: tokio
                 activation: default
                 ---
 
@@ -1194,7 +1190,7 @@ mod tests {
                 ---
                 name: my-skill
                 description: A discovered skill
-                advice-for: serde
+                crates: serde
                 ---
 
                 Discovered body.
@@ -1223,7 +1219,7 @@ mod tests {
             indoc! {"
                 ---
                 name: nested-skill
-                advice-for: tokio
+                crates: tokio
                 ---
 
                 Nested body.
@@ -1252,7 +1248,7 @@ mod tests {
             indoc! {"
                 ---
                 name: shallow
-                advice-for: serde
+                crates: serde
                 ---
 
                 Shallow.
@@ -1268,7 +1264,7 @@ mod tests {
             indoc! {"
                 ---
                 name: nested
-                advice-for: serde
+                crates: serde
                 ---
 
                 Nested.
@@ -1284,7 +1280,7 @@ mod tests {
             indoc! {"
                 ---
                 name: sibling
-                advice-for: tokio
+                crates: tokio
                 ---
 
                 Sibling.
@@ -1362,7 +1358,7 @@ mod tests {
                     ("compatibility".into(), "Requires Python 3.14+".into()),
                     ("allowed-tools".into(), "Bash(python:*)".into()),
                 ]),
-                advice_for: vec![],
+                crates: vec![],
                 applies_when: vec![],
                 activation: Activation::Optional,
                 body: String::new(),

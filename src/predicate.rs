@@ -1,82 +1,49 @@
-//! `advice-for` predicate language for matching crate dependencies.
+//! Crate predicate parsing for skill matching.
 //!
-//! Skills declare which crates they advise on using a mini predicate language:
+//! Skills declare which crates they advise on using a simple predicate syntax:
 //!
 //! ```text
 //! serde                          -- bare crate name (any version)
 //! serde>=1.0                     -- crate with version constraint
-//! any(serde, serde_json)         -- matches if any child matches
-//! all(tokio, tokio-stream>=0.1)  -- matches if all children match
-//! any(all(axum, tower), actix)   -- nesting allowed
 //! ```
 
 use anyhow::{Context, Result, bail};
 
-/// A predicate over workspace crate dependencies.
+/// A predicate matching a single crate dependency, optionally constrained by version.
 ///
-/// Serializes to/from its string representation (e.g., `"serde>=1.0"`,
-/// `"any(serde, tokio)"`).
+/// Serializes to/from its string representation (e.g., `"serde>=1.0"`).
 #[derive(Debug, Clone, PartialEq)]
-pub enum Predicate {
-    /// Matches a single crate, optionally constrained by version.
-    Crate {
-        name: String,
-        version_req: Option<semver::VersionReq>,
-    },
-    /// Matches if any child predicate matches.
-    Any(Vec<Predicate>),
-    /// Matches if all child predicates match.
-    All(Vec<Predicate>),
+pub struct Predicate {
+    pub name: String,
+    pub version_req: Option<semver::VersionReq>,
 }
 
 impl Predicate {
     /// Evaluate this predicate against a workspace dependency list.
     pub fn matches(&self, deps: &[(String, semver::Version)]) -> bool {
-        match self {
-            Predicate::Crate { name, version_req } => deps.iter().any(|(dep_name, dep_ver)| {
-                dep_name == name
-                    && version_req
-                        .as_ref()
-                        .map_or(true, |req| req.matches(dep_ver))
-            }),
-            Predicate::Any(children) => children.iter().any(|c| c.matches(deps)),
-            Predicate::All(children) => children.iter().all(|c| c.matches(deps)),
-        }
+        deps.iter().any(|(dep_name, dep_ver)| {
+            dep_name == &self.name
+                && self
+                    .version_req
+                    .as_ref()
+                    .map_or(true, |req| req.matches(dep_ver))
+        })
     }
 
-    /// Returns true if this predicate references the given crate name anywhere
-    /// in its tree. Used to filter skills to those relevant to a specific crate
-    /// query (e.g., `symposium crate serde` only shows serde-related skills).
+    /// Returns true if this predicate references the given crate name.
     pub fn references_crate(&self, name: &str) -> bool {
-        match self {
-            Predicate::Crate {
-                name: crate_name, ..
-            } => crate_name == name,
-            Predicate::Any(children) | Predicate::All(children) => {
-                children.iter().any(|c| c.references_crate(name))
-            }
-        }
+        self.name == name
     }
 
-    /// Collect all crate names referenced by this predicate into a set.
+    /// Collect the crate name referenced by this predicate into a set.
     pub fn collect_crate_names(&self, out: &mut std::collections::BTreeSet<String>) {
-        match self {
-            Predicate::Crate { name, .. } => {
-                out.insert(name.clone());
-            }
-            Predicate::Any(children) | Predicate::All(children) => {
-                for child in children {
-                    child.collect_crate_names(out);
-                }
-            }
-        }
+        out.insert(self.name.clone());
     }
 }
 
 /// Parse a list of predicate strings.
 ///
-/// Each string can be a bare crate name, a crate with version constraint,
-/// or a combinator like `any(...)` / `all(...)`.
+/// Each string can be a bare crate name or a crate with version constraint.
 pub fn parse_predicates(strings: &[String]) -> Result<Vec<Predicate>> {
     strings
         .iter()
@@ -84,10 +51,26 @@ pub fn parse_predicates(strings: &[String]) -> Result<Vec<Predicate>> {
         .collect()
 }
 
-/// Parse an `advice-for` predicate string.
-fn parse(input: &str) -> Result<Predicate> {
+/// Parse a comma-separated predicate string into multiple predicates.
+///
+/// Used for SKILL.md frontmatter where `crates: serde, tokio>=1.0` is a single line.
+pub fn parse_comma_separated(input: &str) -> Result<Vec<Predicate>> {
+    input
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| parse(s).with_context(|| format!("failed to parse predicate: {s:?}")))
+        .collect()
+}
+
+/// Parse a single predicate string.
+pub fn parse(input: &str) -> Result<Predicate> {
+    let input = input.trim();
+    if input.is_empty() {
+        bail!("empty predicate string");
+    }
     let mut parser = Parser::new(input);
-    let pred = parser.parse_predicate()?;
+    let pred = parser.parse_atom()?;
     parser.skip_whitespace();
     if parser.pos < parser.input.len() {
         bail!(
@@ -117,55 +100,6 @@ impl<'a> Parser<'a> {
 
     fn remaining(&self) -> &'a str {
         &self.input[self.pos..]
-    }
-
-    fn parse_predicate(&mut self) -> Result<Predicate> {
-        self.skip_whitespace();
-        if self.remaining().starts_with("any(") {
-            self.parse_combinator("any").map(Predicate::Any)
-        } else if self.remaining().starts_with("all(") {
-            self.parse_combinator("all").map(Predicate::All)
-        } else {
-            self.parse_atom()
-        }
-    }
-
-    fn parse_combinator(&mut self, keyword: &str) -> Result<Vec<Predicate>> {
-        self.pos += keyword.len() + 1; // skip "any(" or "all("
-        self.skip_whitespace();
-
-        if self.pos >= self.input.len() {
-            bail!("unexpected end of input after `{keyword}(`");
-        }
-
-        // Handle empty combinator: any() or all()
-        if self.remaining().starts_with(')') {
-            bail!("`{keyword}()` requires at least one argument");
-        }
-
-        let mut items = vec![self.parse_predicate()?];
-        loop {
-            self.skip_whitespace();
-            match self.input.as_bytes().get(self.pos) {
-                Some(b',') => {
-                    self.pos += 1;
-                    items.push(self.parse_predicate()?);
-                }
-                Some(b')') => {
-                    self.pos += 1;
-                    break;
-                }
-                Some(_) => {
-                    bail!(
-                        "expected ',' or ')' at position {}: {:?}",
-                        self.pos,
-                        self.remaining()
-                    );
-                }
-                None => bail!("unexpected end of input, expected ')' for `{keyword}`"),
-            }
-        }
-        Ok(items)
     }
 
     fn parse_atom(&mut self) -> Result<Predicate> {
@@ -198,10 +132,10 @@ impl<'a> Parser<'a> {
             let next = self.input.as_bytes()[self.pos];
             if matches!(next, b'>' | b'<' | b'=' | b'^' | b'~') {
                 let vstart = self.pos;
-                // Consume until delimiter: ',', ')', whitespace, or end
+                // Consume until delimiter: whitespace or end
                 while self.pos < self.input.len() {
                     let c = self.input.as_bytes()[self.pos];
-                    if matches!(c, b',' | b')') || c.is_ascii_whitespace() {
+                    if c.is_ascii_whitespace() {
                         break;
                     }
                     self.pos += 1;
@@ -225,7 +159,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(Predicate::Crate {
+        Ok(Predicate {
             name: name.to_string(),
             version_req,
         })
@@ -252,35 +186,11 @@ impl<'de> serde::Deserialize<'de> for Predicate {
 
 impl std::fmt::Display for Predicate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Predicate::Crate { name, version_req } => {
-                write!(f, "{name}")?;
-                if let Some(req) = version_req {
-                    write!(f, "{req}")?;
-                }
-                Ok(())
-            }
-            Predicate::Any(children) => {
-                write!(f, "any(")?;
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{child}")?;
-                }
-                write!(f, ")")
-            }
-            Predicate::All(children) => {
-                write!(f, "all(")?;
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{child}")?;
-                }
-                write!(f, ")")
-            }
+        write!(f, "{}", self.name)?;
+        if let Some(req) = &self.version_req {
+            write!(f, "{req}")?;
         }
+        Ok(())
     }
 }
 
@@ -308,7 +218,7 @@ mod tests {
         let p = parse("serde").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "serde".into(),
                 version_req: None,
             }
@@ -320,7 +230,7 @@ mod tests {
         let p = parse("tokio-stream").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "tokio-stream".into(),
                 version_req: None,
             }
@@ -332,7 +242,7 @@ mod tests {
         let p = parse("serde>=1.0").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "serde".into(),
                 version_req: Some(semver::VersionReq::parse(">=1.0").unwrap()),
             }
@@ -344,7 +254,7 @@ mod tests {
         let p = parse("tokio^1.40").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "tokio".into(),
                 version_req: Some(semver::VersionReq::parse("^1.40").unwrap()),
             }
@@ -357,7 +267,7 @@ mod tests {
         let p = parse("serde=1.2").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "serde".into(),
                 version_req: Some(semver::VersionReq::parse("^1.2").unwrap()),
             }
@@ -368,10 +278,7 @@ mod tests {
     fn parse_version_gte_not_rewritten() {
         // `>=1.0` stays as `>=1.0`, not rewritten to `^`
         let p = parse("serde>=1.0").unwrap();
-        let Predicate::Crate { version_req, .. } = &p else {
-            panic!("expected Crate");
-        };
-        let req = version_req.as_ref().unwrap();
+        let req = p.version_req.as_ref().unwrap();
         // >=1.0 matches 2.0, ^1.0 does not
         assert!(req.matches(&semver::Version::parse("2.0.0").unwrap()));
     }
@@ -395,7 +302,7 @@ mod tests {
         let p = parse("serde==1.2.0").unwrap();
         assert_eq!(
             p,
-            Predicate::Crate {
+            Predicate {
                 name: "serde".into(),
                 version_req: Some(semver::VersionReq::parse("=1.2.0").unwrap()),
             }
@@ -455,120 +362,11 @@ mod tests {
         assert!(!p.matches(&no));
     }
 
-    #[test]
-    fn parse_any() {
-        let p = parse("any(serde, serde_json)").unwrap();
-        assert_eq!(
-            p,
-            Predicate::Any(vec![
-                Predicate::Crate {
-                    name: "serde".into(),
-                    version_req: None,
-                },
-                Predicate::Crate {
-                    name: "serde_json".into(),
-                    version_req: None,
-                },
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_all_with_version() {
-        let p = parse("all(tokio, tokio-stream>=0.1.10)").unwrap();
-        assert_eq!(
-            p,
-            Predicate::All(vec![
-                Predicate::Crate {
-                    name: "tokio".into(),
-                    version_req: None,
-                },
-                Predicate::Crate {
-                    name: "tokio-stream".into(),
-                    version_req: Some(semver::VersionReq::parse(">=0.1.10").unwrap()),
-                },
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_nested() {
-        let p = parse("any(all(axum, tower), all(actix-web, actix-rt))").unwrap();
-        assert_eq!(
-            p,
-            Predicate::Any(vec![
-                Predicate::All(vec![
-                    Predicate::Crate {
-                        name: "axum".into(),
-                        version_req: None,
-                    },
-                    Predicate::Crate {
-                        name: "tower".into(),
-                        version_req: None,
-                    },
-                ]),
-                Predicate::All(vec![
-                    Predicate::Crate {
-                        name: "actix-web".into(),
-                        version_req: None,
-                    },
-                    Predicate::Crate {
-                        name: "actix-rt".into(),
-                        version_req: None,
-                    },
-                ]),
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_with_whitespace() {
-        let p = parse("  any( serde , serde_json )  ").unwrap();
-        assert_eq!(
-            p,
-            Predicate::Any(vec![
-                Predicate::Crate {
-                    name: "serde".into(),
-                    version_req: None,
-                },
-                Predicate::Crate {
-                    name: "serde_json".into(),
-                    version_req: None,
-                },
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_error_empty() {
-        assert!(parse("").is_err());
-    }
-
-    #[test]
-    fn parse_error_empty_any() {
-        assert!(parse("any()").is_err());
-    }
-
-    #[test]
-    fn parse_error_unclosed() {
-        assert!(parse("any(serde, serde_json").is_err());
-    }
-
-    #[test]
-    fn parse_error_trailing() {
-        assert!(parse("serde blah").is_err());
-    }
-
     // --- Display (round-trip) ---
 
     #[test]
     fn display_roundtrip() {
-        let cases = [
-            "serde",
-            "any(serde, serde_json)",
-            "all(tokio, tokio-stream>=0.1.10)",
-            "any(all(axum, tower), all(actix-web, actix-rt))",
-        ];
+        let cases = ["serde", "serde>=1.0"];
         for input in cases {
             let p = parse(input).unwrap();
             let displayed = p.to_string();
@@ -603,30 +401,6 @@ mod tests {
         assert!(!p.matches(&workspace()));
     }
 
-    #[test]
-    fn matches_any_one_present() {
-        let p = parse("any(serde, reqwest)").unwrap();
-        assert!(p.matches(&workspace()));
-    }
-
-    #[test]
-    fn matches_any_none_present() {
-        let p = parse("any(reqwest, hyper)").unwrap();
-        assert!(!p.matches(&workspace()));
-    }
-
-    #[test]
-    fn matches_all_both_present() {
-        let p = parse("all(serde, tokio)").unwrap();
-        assert!(p.matches(&workspace()));
-    }
-
-    #[test]
-    fn matches_all_one_missing() {
-        let p = parse("all(serde, reqwest)").unwrap();
-        assert!(!p.matches(&workspace()));
-    }
-
     // --- references_crate tests ---
 
     #[test]
@@ -636,12 +410,46 @@ mod tests {
         assert!(!p.references_crate("tokio"));
     }
 
+    // --- parse_comma_separated tests ---
+
     #[test]
-    fn references_crate_nested() {
-        let p = parse("any(all(serde, serde_json), tokio)").unwrap();
-        assert!(p.references_crate("serde"));
-        assert!(p.references_crate("serde_json"));
-        assert!(p.references_crate("tokio"));
-        assert!(!p.references_crate("anyhow"));
+    fn comma_separated_single() {
+        let preds = parse_comma_separated("serde").unwrap();
+        assert_eq!(preds.len(), 1);
+        assert_eq!(preds[0].name, "serde");
+    }
+
+    #[test]
+    fn comma_separated_multiple() {
+        let preds = parse_comma_separated("serde, tokio>=1.0, anyhow").unwrap();
+        assert_eq!(preds.len(), 3);
+        assert_eq!(preds[0].name, "serde");
+        assert_eq!(preds[1].name, "tokio");
+        assert!(preds[1].version_req.is_some());
+        assert_eq!(preds[2].name, "anyhow");
+    }
+
+    #[test]
+    fn comma_separated_empty() {
+        let preds = parse_comma_separated("").unwrap();
+        assert!(preds.is_empty());
+    }
+
+    #[test]
+    fn comma_separated_whitespace() {
+        let preds = parse_comma_separated("  serde  ,  tokio  ").unwrap();
+        assert_eq!(preds.len(), 2);
+    }
+
+    // --- Error tests ---
+
+    #[test]
+    fn parse_error_empty() {
+        assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn parse_error_trailing() {
+        assert!(parse("serde blah").is_err());
     }
 }

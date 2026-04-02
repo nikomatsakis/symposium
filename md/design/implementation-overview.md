@@ -12,8 +12,8 @@ Symposium is a single Rust binary crate. The source is in `src/`:
 | `crate_sources/` | Crate source fetching: version resolution, cache lookup, download+extraction. |
 | `plugins.rs` | Plugin registry: loads TOML manifests from configured plugin sources, produces `Vec<Plugin>` as a table of contents. Defines `SkillGroup`, `PluginSource`, `Hook` types. Does not load skill content — that is handled by the skills layer. |
 | `git_source.rs` | GitHub URL parsing, API client, and plugin cache manager. Downloads tarballs, extracts subdirectories, caches under `~/.symposium/cache/` with commit SHA freshness checking. Used by both plugin source fetching and skill source fetching. |
-| `skills.rs` | Skill model, frontmatter parsing, discovery, and crate advice output. Given loaded plugins, resolves skill group sources (fetching from git if needed), discovers `SKILL.md` files, evaluates `advice-for`/`applies-when` predicates, and formats output. Skills follow the [agentskills.io](https://agentskills.io/specification.md) format. Shared `list_output()` and `info_output()` helpers used by both CLI and MCP. |
-| `advice_for.rs` | Recursive descent parser and evaluator for predicates. Supports crate atoms (`serde`, `tokio>=1.0`) and combinators (`any(...)`, `all(...)`). Provides `parse_atoms()` for validating atom-only predicate lists. Both `advice-for` and `applies-when` use atoms only; the combinator support exists for potential future use. |
+| `skills.rs` | Skill model, frontmatter parsing, discovery, and crate advice output. Given loaded plugins, resolves skill group sources (fetching from git if needed), discovers `SKILL.md` files, evaluates `crates` predicates, and formats output. Skills follow the [agentskills.io](https://agentskills.io/specification.md) format. Shared `list_output()` and `info_output()` helpers used by both CLI and MCP. |
+| `predicate.rs` | Parser and evaluator for crate predicates. Supports crate atoms (`serde`, `tokio>=1.0`) with optional version constraints. |
 
 ## Key dependencies
 
