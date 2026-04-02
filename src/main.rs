@@ -83,9 +83,9 @@ enum PluginCommand {
         plugin: String,
     },
 
-    /// Validate a plugin manifest file
+    /// Validate a plugin manifest (.toml) or standalone skill directory
     Validate {
-        /// Path to the plugin TOML file
+        /// Path to a plugin TOML file or a directory containing SKILL.md
         path: std::path::PathBuf,
     },
 }
@@ -125,13 +125,13 @@ async fn main() -> ExitCode {
 
             if list {
                 let workspace = crate_sources::workspace_semver_pairs(&cwd);
-                let plugins = plugins::load_all_plugins();
-                print!("{}", skills::list_output(&plugins, &workspace).await);
+                let registry = plugins::load_registry();
+                print!("{}", skills::list_output(&registry, &workspace).await);
                 ExitCode::SUCCESS
             } else if let Some(name) = name {
                 let workspace = crate_sources::workspace_semver_pairs(&cwd);
-                let plugins = plugins::load_all_plugins();
-                match skills::info_output(&name, version.as_deref(), &plugins, &workspace).await {
+                let registry = plugins::load_registry();
+                match skills::info_output(&name, version.as_deref(), &registry, &workspace).await {
                     Ok(output) => {
                         print!("{output}");
                         ExitCode::SUCCESS
@@ -194,16 +194,55 @@ async fn main() -> ExitCode {
                 }
                 ExitCode::SUCCESS
             }
-            PluginCommand::Validate { path } => match plugins::load_plugin(&path) {
-                Ok(ParsedPlugin { path: _, plugin }) => {
-                    println!("{}", toml::to_string_pretty(&plugin).unwrap());
-                    ExitCode::SUCCESS
+            PluginCommand::Validate { path } => {
+                if path.is_dir() {
+                    let skill_md = path.join("SKILL.md");
+                    match skills::load_standalone_skill(&skill_md) {
+                        Ok(skill) => {
+                            println!("Valid standalone skill: {}", skill.name());
+                            if !skill.advice_for.is_empty() {
+                                println!(
+                                    "  advice-for: {}",
+                                    skill
+                                        .advice_for
+                                        .iter()
+                                        .map(|p| p.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                );
+                            }
+                            if !skill.applies_when.is_empty() {
+                                println!(
+                                    "  applies-when: {}",
+                                    skill
+                                        .applies_when
+                                        .iter()
+                                        .map(|p| p.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                );
+                            }
+                            println!("  activation: {:?}", skill.activation);
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("{}: {e}", skill_md.display());
+                            ExitCode::FAILURE
+                        }
+                    }
+                } else {
+                    match plugins::load_plugin(&path) {
+                        Ok(ParsedPlugin { path: _, plugin }) => {
+                            println!("{}", toml::to_string_pretty(&plugin).unwrap());
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("{}: {e}", path.display());
+                            ExitCode::FAILURE
+                        }
+                    }
                 }
-                Err(e) => {
-                    eprintln!("{}: {e}", path.display());
-                    ExitCode::FAILURE
-                }
-            },
+            }
             PluginCommand::Show { plugin } => match plugins::find_plugin(&plugin) {
                 Some(ParsedPlugin { path, plugin }) => {
                     println!("# Source: {}", path.display());
