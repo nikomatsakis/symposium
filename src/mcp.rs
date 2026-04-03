@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use sacp::mcp_server::{McpConnectionTo, McpServer};
 use sacp::role;
@@ -6,11 +8,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+use crate::config::Symposium;
 use crate::crate_sources;
 use crate::skills;
 
-pub async fn serve() -> Result<()> {
-    let server = build_server();
+pub async fn serve(sym: Arc<Symposium>) -> Result<()> {
+    let server = build_server(sym);
     let stdio = ByteStreams::new(
         tokio::io::stdout().compat_write(),
         tokio::io::stdin().compat(),
@@ -19,7 +22,10 @@ pub async fn serve() -> Result<()> {
     Ok(())
 }
 
-fn build_server() -> McpServer<role::mcp::Client, impl RunWithConnectionTo<role::mcp::Client>> {
+fn build_server(
+    sym: Arc<Symposium>,
+) -> McpServer<role::mcp::Client, impl RunWithConnectionTo<role::mcp::Client>> {
+    let sym_crate = sym.clone();
     McpServer::builder("symposium".to_string())
         .instructions(
             "Symposium — AI the Rust Way. \
@@ -44,14 +50,22 @@ fn build_server() -> McpServer<role::mcp::Client, impl RunWithConnectionTo<role:
 
                 let workspace = crate_sources::workspace_semver_pairs(&cwd);
 
-                let registry = crate::plugins::load_registry();
+                let registry = crate::plugins::load_registry(&sym_crate);
 
                 let output = match input {
-                    CrateToolInput::List => skills::list_output(&registry, &workspace).await,
+                    CrateToolInput::List => {
+                        skills::list_output(&sym_crate, &registry, &workspace).await
+                    }
                     CrateToolInput::Info { name, version } => {
-                        skills::info_output(&name, version.as_deref(), &registry, &workspace)
-                            .await
-                            .map_err(|e| sacp::util::internal_error(format!("{e}")))?
+                        skills::info_output(
+                            &sym_crate,
+                            &name,
+                            version.as_deref(),
+                            &registry,
+                            &workspace,
+                        )
+                        .await
+                        .map_err(|e| sacp::util::internal_error(format!("{e}")))?
                     }
                 };
 

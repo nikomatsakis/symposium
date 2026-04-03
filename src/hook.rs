@@ -3,6 +3,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::Symposium;
 use crate::plugins::ParsedPlugin;
 
 #[derive(Debug, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,7 +52,7 @@ pub struct PreToolUsePayload {
     pub tool_name: String,
 }
 
-pub async fn run(event: HookEvent) -> ExitCode {
+pub async fn run(sym: &Symposium, event: HookEvent) -> ExitCode {
     let mut input = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut input) {
         tracing::warn!(?event, error = %e, "failed to read hook stdin");
@@ -73,15 +74,15 @@ pub async fn run(event: HookEvent) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    dispatch_hook(payload).await
+    dispatch_hook(sym, payload).await
 }
 
 /// Handle hook dispatch for a parsed payload string. Separated from `run`
 /// so tests and other callers can invoke it without wiring stdin.
-pub async fn dispatch_hook(payload: HookPayload) -> ExitCode {
+pub async fn dispatch_hook(sym: &Symposium, payload: HookPayload) -> ExitCode {
     tracing::info!(?payload, "hook invoked");
 
-    let plugins = crate::plugins::load_all_plugins();
+    let plugins = crate::plugins::load_all_plugins(sym);
     let hooks = hooks_for_payload(&plugins, &payload);
 
     for (plugin_name, hook) in hooks {
@@ -175,13 +176,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path();
 
-        // Point HOME to our temp dir so plugins_dir() is under it.
-        unsafe {
-            std::env::set_var("HOME", home);
-        }
+        let sym = Symposium::from_dir(home);
 
         // Ensure plugins dir exists and get its path.
-        let plugins_dir = crate::config::plugins_dir();
+        let plugins_dir = sym.plugins_dir();
 
         // Prepare two output files that the hooks will create.
         let out1 = home.join("out1.txt");
@@ -243,7 +241,7 @@ mod tests {
             }),
             rest: serde_json::Map::new(),
         };
-        let _ = dispatch_hook(payload).await;
+        let _ = dispatch_hook(&sym, payload).await;
 
         // Verify files were created and contain expected contents.
         let got1 = fs::read_to_string(&out1).expect("read out1");
