@@ -93,7 +93,7 @@ Skills are matched to crate queries using two mechanisms:
 
 This can be declared at the `[[skills]]` group level (in the plugin manifest) and at the individual skill level (SKILL.md frontmatter). They compose as AND (specialization): both layers must match for a skill to be selected. A skill with its own `crates` narrows the group's scope; it cannot widen it.
 
-When `symposium crate <name>` or the MCP `crate` tool is invoked, matching skills are included in the output. Skills with `activation: default` have their body inlined; skills with `activation: optional` are listed with their frontmatter metadata and path so the agent can load them on demand.
+When `symposium crate <name>` or the MCP `crate` tool is invoked, matching skills are included in the output. Skills with `activation: always` have their body inlined; skills with `activation: optional` (the default) are listed with their frontmatter metadata and path so the agent can load them on demand.
 
 ## How to use it
 

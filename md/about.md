@@ -1,19 +1,28 @@
-# What Symposium is
+# What is Symposium?
 
-## Your agent writes more idiomatic, more reliable Rust
+AI coding assistants are pretty good at Rust — until they're not. They hallucinate trait methods, suggest deprecated patterns, and give generic advice where your specific crates have strong opinions about how things should be done.
 
-Coding agents do a pretty good job with Rust, but they sometimes copy patterns from other languages that don't fit Rust very well. And they are often working from out-of-date training data that doesn't know about the latest language features or libraries.
+The people who know best are the crate authors. They know the idioms, the pitfalls, the patterns that actually work. Symposium gets that knowledge into your AI assistant's hands.
 
-Symposium helps your agent write better Rust by connecting it with up-to-date language guidance. It looks at your dependencies and finds advice just for those crates, including custom lints and checks.
+## How it works
 
-## Fewer tokens, faster results
+Crate authors publish skills and other extensions to teach your AI assistant how to use their libraries well. Symposium scans your project's dependencies and automatically loads the right guidance for the crates you're actually using. No configuration needed.
 
-Symposium incorporates streamlined workflows that save you tokens and cut down round-trip times. We make sure the agent doesn't forget to format your code and run your tests.
+When you're working with axum, your assistant knows axum's conventions. When you're using sqlx, it knows the query patterns. The advice comes from the people who built the libraries — not from stale training data.
 
-## Harness the Rust ecosystem
+## What you get
 
-Symposium connects your agent with the Rust community's collective knowledge. We curate great projects like [RTK](https://www.rtk-ai.app/) and [agent-skills](https://agentskills.io/) that improve Rust development across the board. And crate authors can publish Symposium plugins with guidance, custom checks, and workflows specific to their libraries — when your project depends on a crate that ships a plugin, your agent gets crate-specific advice automatically.
+- **Crate-specific guidance** that activates automatically based on your `Cargo.toml`
+- **Custom checks and lints** that catch mistakes before they become bugs
+- **Up-to-date knowledge** that doesn't depend on when your model was trained
+- **Streamlined workflows** that handle formatting, testing, and other routine steps so you spend fewer tokens on boilerplate
+
+## For crate authors
+
+If you maintain a Rust crate, you can publish skills for Symposium so that every AI-assisted user of your library gets your best practices built in. Think of it as documentation that the AI actually reads.
+
+See [Supporting your crate](./crate-authors/supporting-your-crate.md) for how to get started.
 
 ## Works however you work
 
-Symposium is designed to integrate into just about any agent and any editor. We support plugins with various capabilities (e.g., hooks, ACP proxies, skills, etc) and we adapt those to your agent, gracefully degrading where there is not an exact match.
+Symposium integrates with various AI agents and editors. It supports multiple capability types — hooks, skills, proxies — and adapts them to your setup, gracefully degrading where there isn't an exact match.
