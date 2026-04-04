@@ -7,4 +7,5 @@ pub mod hook;
 pub mod mcp;
 pub mod plugins;
 pub mod skills;
+pub mod state;
 pub mod tutorial;

@@ -46,6 +46,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 bytes = "1.11.1"
+toasty = { version = "0.3.0", features = ["sqlite"] }
 
 [dev-dependencies]
 assert_matches = "1.5"
