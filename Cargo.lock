@@ -1885,6 +1885,7 @@ dependencies = [
  "serde",
  "serde_json",
  "symposium-schema",
+ "symposium-testlib",
  "tar",
  "tempfile",
  "tokio",
@@ -1910,6 +1911,15 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "symposium-testlib"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "symposium",
+ "tempfile",
 ]
 
 [[package]]

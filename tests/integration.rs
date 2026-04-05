@@ -1,19 +1,24 @@
-mod testlib;
+use std::path::Path;
 
 use expect_test::expect;
 use symposium::hook::{
     HookPayload, HookSubPayload, PostToolUsePayload, PreToolUsePayload, UserPromptSubmitPayload,
 };
+use symposium_testlib::{self, TestContext};
+
+fn fixtures() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
+}
 
 /// Replace temp directory paths with a stable placeholder for snapshot tests.
-fn normalize_paths(output: &str, ctx: &testlib::TestContext) -> String {
+fn normalize_paths(output: &str, ctx: &TestContext) -> String {
     let config_dir = ctx.sym.config_dir().to_string_lossy().to_string();
     output.replace(&config_dir, "$CONFIG_DIR")
 }
 
 #[tokio::test]
 async fn dispatch_help() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     // Clap handles "help" as a built-in, returning a parse error with help text.
     let result = ctx.invoke(&["help"]).await;
     assert!(result.is_err());
@@ -35,14 +40,14 @@ async fn dispatch_help() {
 
 #[tokio::test]
 async fn dispatch_unknown_command() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let result = ctx.invoke(&["nonsense"]).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn dispatch_start() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let output = ctx.invoke(&["start"]).await.unwrap();
     let output = normalize_paths(&output, &ctx);
     expect![[r#"
@@ -57,7 +62,7 @@ async fn dispatch_start() {
 
 #[tokio::test]
 async fn dispatch_crate_list_with_plugins() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let output = ctx.invoke(&["crate", "--list"]).await.unwrap();
     let output = normalize_paths(&output, &ctx);
     expect!["No skills available for crates in the current dependencies."]
@@ -66,7 +71,7 @@ async fn dispatch_crate_list_with_plugins() {
 
 #[tokio::test]
 async fn hook_pre_tool_use_builtin_empty() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let payload = HookPayload {
         sub_payload: HookSubPayload::PreToolUse(PreToolUsePayload {
             tool_name: "Bash".to_string(),
@@ -81,7 +86,7 @@ async fn hook_pre_tool_use_builtin_empty() {
 
 #[tokio::test]
 async fn hook_post_tool_use_records_bash_activation() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
@@ -99,7 +104,7 @@ async fn hook_post_tool_use_records_bash_activation() {
 
 #[tokio::test]
 async fn hook_post_tool_use_records_mcp_activation() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
@@ -121,7 +126,7 @@ async fn hook_post_tool_use_records_mcp_activation() {
 async fn hook_user_prompt_submit_nudges_about_available_skill() {
     // plugins0 has a standalone serde skill; workspace0 has serde as a dep.
     // The nudge fires because serde is both in the workspace and has a matching skill.
-    let ctx = testlib::with_fixture(&["plugins0", "workspace0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0", "workspace0"]);
     let cwd = ctx.workspace_root.as_ref().unwrap().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
@@ -150,7 +155,7 @@ async fn hook_user_prompt_submit_nudges_about_available_skill() {
 
 #[tokio::test]
 async fn hook_post_tool_use_no_session_returns_empty() {
-    let ctx = testlib::with_fixture(&["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
             tool_name: "Bash".to_string(),
@@ -169,7 +174,7 @@ async fn hook_post_tool_use_no_session_returns_empty() {
 async fn hook_activation_then_no_nudge() {
     // After activating a crate via post-tool-use, a subsequent prompt mention
     // should NOT nudge about that crate.
-    let ctx = testlib::with_fixture(&["plugins0", "workspace0"]);
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0", "workspace0"]);
     let cwd = ctx.workspace_root.as_ref().unwrap().to_string_lossy().to_string();
 
     // First: record activation via PostToolUse
