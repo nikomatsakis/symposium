@@ -95,19 +95,9 @@ async fn main() -> ExitCode {
         Some(Commands::Hook { event }) => hook::run(&sym, event).await,
         Some(Commands::Plugin { command }) => handle_plugin_command(&sym, command).await,
         None => {
-            println!("symposium — AI the Rust Way");
+            use clap::CommandFactory;
+            Cli::command().print_help().ok();
             println!();
-            println!("Usage: symposium <command>");
-            println!();
-            println!("Commands:");
-            println!("  start      Get Rust guidance and list available crate skills");
-            println!("  crate      Find crate sources and guidance");
-            println!("  plugin     Manage plugins");
-            println!("  mcp        Run as an MCP server (stdio transport)");
-            println!("  hook       Handle a hook event (invoked by editor plugins)");
-            println!("  help       Show this message");
-            println!();
-            println!("Run `symposium <command> --help` for more information.");
             ExitCode::SUCCESS
         }
     }

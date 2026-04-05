@@ -104,6 +104,9 @@ async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> Hoo
 }
 
 /// Detect if a Bash tool successfully ran `symposium crate <name>`.
+///
+/// Matches `symposium crate` or `symposium.sh crate` anywhere in the command,
+/// allowing for path prefixes like `/path/to/symposium.sh crate tokio`.
 fn detect_crate_activation_bash(post: &PostToolUsePayload) -> Option<String> {
     if post.tool_name != "Bash" {
         return None;
@@ -115,16 +118,13 @@ fn detect_crate_activation_bash(post: &PostToolUsePayload) -> Option<String> {
         return None;
     }
 
-    // Check if command contains "symposium crate <name>"
     let command = post.tool_input.get("command")?.as_str()?;
-    let trimmed = command.trim();
 
-    // Match patterns like "symposium crate tokio" or "symposium crate tokio --version 1.0"
-    let rest = trimmed
-        .strip_prefix("symposium crate ")
-        .or_else(|| trimmed.strip_prefix("symposium crate\t"))?;
+    // Find "symposium crate" or "symposium.sh crate" in the command,
+    // preceded by a path boundary (whitespace, /, \, or start-of-string).
+    let rest = find_symposium_crate_args(command)?;
 
-    // First word after "symposium crate " is the crate name (skip flags)
+    // First word after "crate " is the crate name (skip flags)
     let crate_name = rest.split_whitespace().find(|w| !w.starts_with('-'))?;
 
     if crate_name.is_empty() || crate_name == "--list" {
@@ -132,6 +132,29 @@ fn detect_crate_activation_bash(post: &PostToolUsePayload) -> Option<String> {
     }
 
     Some(crate_name.to_string())
+}
+
+/// Find the arguments after `symposium[.sh] crate` in a command string.
+///
+/// Returns the substring after "crate " if found, with the `symposium` or
+/// `symposium.sh` token preceded by a path boundary (start, whitespace, `/`, `\`).
+fn find_symposium_crate_args(command: &str) -> Option<&str> {
+    for needle in ["symposium.sh crate ", "symposium crate "] {
+        let mut search_from = 0;
+        while let Some(pos) = command[search_from..].find(needle) {
+            let abs_pos = search_from + pos;
+            // Check path boundary: start-of-string, whitespace, / or \
+            let boundary_ok = abs_pos == 0 || {
+                let prev = command.as_bytes()[abs_pos - 1];
+                prev == b' ' || prev == b'\t' || prev == b'/' || prev == b'\\'
+            };
+            if boundary_ok {
+                return Some(&command[abs_pos + needle.len()..]);
+            }
+            search_from = abs_pos + 1;
+        }
+    }
+    None
 }
 
 /// Detect if an MCP rust tool was called with ["crate", "<name>"].
@@ -626,6 +649,30 @@ mod tests {
             cwd: Some("/tmp".to_string()),
         };
         assert_eq!(detect_crate_activation_bash(&post), None);
+    }
+
+    #[test]
+    fn detect_bash_crate_activation_with_script_name() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium.sh crate tokio"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("tokio".to_string()));
+    }
+
+    #[test]
+    fn detect_bash_crate_activation_with_path_prefix() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "/home/user/.local/bin/symposium.sh crate serde"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("serde".to_string()));
     }
 
     #[test]

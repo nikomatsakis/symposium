@@ -12,13 +12,13 @@ use crate::config::Symposium;
 use crate::predicate::{self, Predicate};
 use crate::plugins::{ParsedPlugin, PluginRegistry, SkillGroup};
 
-/// Format the list of skills available for workspace crates as display text.
+/// Format the list of skills applicable to workspace crates as display text.
 pub async fn list_output(
     sym: &Symposium,
     registry: &PluginRegistry,
     workspace: &[(String, semver::Version)],
 ) -> String {
-    let skills = list(sym, registry, workspace).await;
+    let skills = resolve_skills(sym, registry, workspace).await;
     if skills.is_empty() {
         "No skills available for crates in the current dependencies.".to_string()
     } else {
@@ -235,17 +235,8 @@ async fn resolve_skills(
     results
 }
 
-/// List skills applicable to the given workspace crates.
-async fn list(
-    sym: &Symposium,
-    registry: &PluginRegistry,
-    workspace: &[(String, semver::Version)],
-) -> Vec<SkillWithGroupContext> {
-    resolve_skills(sym, registry, workspace).await
-}
-
-/// List skills with their group context (public, for workspace module).
-pub async fn list_output_raw(
+/// Resolve skills applicable to the given crates (public, for workspace module).
+pub async fn resolve_applicable_skills(
     sym: &Symposium,
     registry: &PluginRegistry,
     workspace: &[(String, semver::Version)],
@@ -1049,7 +1040,7 @@ mod tests {
 
         let sym = crate::config::Symposium::from_dir(tmp.path());
         let workspace = vec![("serde".to_string(), semver::Version::new(1, 0, 0))];
-        let results = list(&sym, &registry, &workspace).await;
+        let results = resolve_skills(&sym, &registry, &workspace).await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill.name(), "standalone-serde");
         // No group context for standalone skills
