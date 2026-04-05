@@ -39,8 +39,8 @@ impl TestContext {
     }
 
     /// Call the built-in hook logic with a typed payload, returning typed output.
-    pub async fn invoke_hook(&self, payload: &HookPayload) -> HookOutput {
-        hook::dispatch_builtin(&self.sym, payload).await
+    pub async fn invoke_hook(&self, payload: impl Into<HookPayload>) -> HookOutput {
+        hook::dispatch_builtin(&self.sym, &payload.into()).await
     }
 
     /// Replace temp directory paths with a stable placeholder for snapshot tests.

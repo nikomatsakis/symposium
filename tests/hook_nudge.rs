@@ -1,5 +1,5 @@
 use expect_test::expect;
-use symposium::hook::{HookPayload, PostToolUsePayload, UserPromptSubmitPayload};
+use symposium::hook::{PostToolUsePayload, UserPromptSubmitPayload};
 
 #[tokio::test]
 async fn nudges_about_available_skill() {
@@ -12,12 +12,13 @@ async fn nudges_about_available_skill() {
         .unwrap()
         .to_string_lossy()
         .to_string();
-    let payload = HookPayload::from(UserPromptSubmitPayload {
-        prompt: "I need to use `serde`".to_string(),
-        session_id: Some("s1".to_string()),
-        cwd: Some(cwd),
-    });
-    let output = ctx.invoke_hook(&payload).await;
+    let output = ctx
+        .invoke_hook(UserPromptSubmitPayload {
+            prompt: "I need to use `serde`".to_string(),
+            session_id: Some("s1".to_string()),
+            cwd: Some(cwd),
+        })
+        .await;
     let ctx_text = output
         .hook_specific_output
         .as_ref()
@@ -47,21 +48,22 @@ async fn activation_suppresses_nudge() {
         .to_string();
 
     // First: record activation via PostToolUse
-    let activate = HookPayload::from(PostToolUsePayload {
+    ctx.invoke_hook(PostToolUsePayload {
         tool_name: "Bash".to_string(),
         tool_input: serde_json::json!({"command": "symposium crate serde"}),
         tool_response: serde_json::json!({"exit_code": 0}),
         session_id: Some("s1".to_string()),
         cwd: Some(cwd.clone()),
-    });
-    ctx.invoke_hook(&activate).await;
+    })
+    .await;
 
     // Second: mention serde in a prompt — should not nudge since already activated
-    let prompt = HookPayload::from(UserPromptSubmitPayload {
-        prompt: "I need to use `serde` for serialization".to_string(),
-        session_id: Some("s1".to_string()),
-        cwd: Some(cwd),
-    });
-    let output = ctx.invoke_hook(&prompt).await;
+    let output = ctx
+        .invoke_hook(UserPromptSubmitPayload {
+            prompt: "I need to use `serde` for serialization".to_string(),
+            session_id: Some("s1".to_string()),
+            cwd: Some(cwd),
+        })
+        .await;
     assert!(output.hook_specific_output.is_none());
 }
