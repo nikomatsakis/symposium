@@ -91,6 +91,33 @@ pub struct UserPromptSubmitPayload {
     pub cwd: Option<String>,
 }
 
+impl From<HookSubPayload> for HookPayload {
+    fn from(sub_payload: HookSubPayload) -> Self {
+        Self {
+            sub_payload,
+            rest: serde_json::Map::new(),
+        }
+    }
+}
+
+impl From<PreToolUsePayload> for HookPayload {
+    fn from(payload: PreToolUsePayload) -> Self {
+        HookSubPayload::PreToolUse(payload).into()
+    }
+}
+
+impl From<PostToolUsePayload> for HookPayload {
+    fn from(payload: PostToolUsePayload) -> Self {
+        HookSubPayload::PostToolUse(payload).into()
+    }
+}
+
+impl From<UserPromptSubmitPayload> for HookPayload {
+    fn from(payload: UserPromptSubmitPayload) -> Self {
+        HookSubPayload::UserPromptSubmit(payload).into()
+    }
+}
+
 /// Structured output from hook handlers.
 ///
 /// Serialized to JSON on stdout for Claude Code to consume.
