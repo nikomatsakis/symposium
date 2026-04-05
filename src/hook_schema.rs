@@ -1,9 +1,4 @@
-//! Hook payload types for Symposium.
-//!
-//! This crate provides the schema types used for communication between
-//! Claude Code (or other editor plugins) and Symposium hook handlers.
-//! Extracting them into a separate crate allows other tools to produce
-//! or consume hook payloads without depending on the full Symposium binary.
+//! Hook payload types for communication between editor plugins and Symposium.
 
 use serde::{Deserialize, Serialize};
 

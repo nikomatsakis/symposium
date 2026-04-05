@@ -4,8 +4,8 @@ use std::process::{Command, ExitCode, Stdio};
 use crate::config::Symposium;
 use crate::plugins::ParsedPlugin;
 
-// Re-export hook schema types from the symposium-schema crate.
-pub use symposium_schema::{
+// Re-export hook schema types for convenience.
+pub use crate::hook_schema::{
     HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload, PostToolUsePayload,
     PreToolUsePayload, UserPromptSubmitPayload,
 };

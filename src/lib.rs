@@ -2,6 +2,7 @@ pub mod config;
 pub mod dispatch;
 pub mod git_source;
 pub mod hook;
+pub mod hook_schema;
 pub mod mcp;
 pub mod plugins;
 pub mod tutorial;
