@@ -41,16 +41,6 @@ impl Predicate {
     }
 }
 
-/// Parse a list of predicate strings.
-///
-/// Each string can be a bare crate name or a crate with version constraint.
-pub fn parse_predicates(strings: &[String]) -> Result<Vec<Predicate>> {
-    strings
-        .iter()
-        .map(|s| parse(s).with_context(|| format!("failed to parse predicate: {s:?}")))
-        .collect()
-}
-
 /// Parse a comma-separated predicate string into multiple predicates.
 ///
 /// Used for SKILL.md frontmatter where `crates: serde, tokio>=1.0` is a single line.

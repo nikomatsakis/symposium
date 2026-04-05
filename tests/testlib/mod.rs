@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 use symposium::config::Symposium;
-use symposium::dispatch::{self, DispatchResult, SharedArgs};
+use symposium::dispatch::{self, DispatchResult};
 use symposium::hook::{self, HookOutput, HookPayload};
+use symposium::mcp::McpArgs;
 
 /// Test context wrapping an isolated `Symposium` instance.
 pub struct TestContext {
@@ -25,8 +26,8 @@ impl TestContext {
     ///
     /// Args are parsed via Clap just as the MCP server would.
     pub async fn invoke(&self, args: &[&str]) -> Result<String, String> {
-        let parsed = SharedArgs::try_parse_from(args)
-            .map_err(|e| format!("failed to parse args: {e}"))?;
+        let parsed =
+            McpArgs::try_parse_from(args).map_err(|e| format!("failed to parse args: {e}"))?;
         let cwd = self
             .workspace_root
             .as_deref()
@@ -43,33 +44,42 @@ impl TestContext {
     }
 }
 
+/// Directories discovered while copying fixture files.
+struct FixtureScanResult {
+    /// Directories (relative to tempdir root) containing a `config.toml`.
+    config_dirs: Vec<PathBuf>,
+    /// Directories (relative to tempdir root) containing a `Cargo.toml`.
+    workspace_dirs: Vec<PathBuf>,
+}
+
 /// Create a test context by overlaying fixture fragments into a tempdir.
 ///
 /// Each fixture name corresponds to a directory under `tests/fixtures/`.
 /// Files are copied in order, so later fixtures override earlier ones.
 ///
-/// # Workspace root detection
-///
-/// The function scans each fixture for a `Cargo.toml`. If found at the fixture
-/// root, the tempdir root becomes `workspace_root`. If found in a subdirectory,
-/// that subdirectory path (under the tempdir) becomes `workspace_root`.
+/// After copying, `copy_dir_recursive` reports which directories contain
+/// `config.toml` and `Cargo.toml`. The `config.toml` directory becomes
+/// the Symposium config dir; the `Cargo.toml` directory becomes the
+/// workspace root. Panics if multiple of either are found.
 ///
 /// # Example
 ///
 /// ```text
 /// fixtures/
 ///     plugins0/
-///         config.toml
-///         plugins/my-skill/SKILL.md
+///         dot-symposium/
+///             config.toml
+///             plugins/my-skill/SKILL.md
 ///     workspace0/
 ///         Cargo.toml
 ///         src/lib.rs
 ///
 /// with_fixture(&["plugins0", "workspace0"])
 ///
-/// $tmpdir/                          <-- sym.config_dir()
-///     config.toml                   <-- from plugins0
-///     plugins/my-skill/SKILL.md     <-- from plugins0
+/// $tmpdir/
+///     dot-symposium/                <-- sym.config_dir()
+///         config.toml               <-- from plugins0
+///         plugins/my-skill/SKILL.md <-- from plugins0
 ///     Cargo.toml                    <-- from workspace0, workspace_root = $tmpdir
 ///     src/lib.rs                    <-- from workspace0
 /// ```
@@ -78,7 +88,10 @@ pub fn with_fixture(fixtures: &[&str]) -> TestContext {
     let root = tempdir.path();
 
     let fixtures_base = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let mut workspace_root: Option<PathBuf> = None;
+    let mut scan = FixtureScanResult {
+        config_dirs: Vec::new(),
+        workspace_dirs: Vec::new(),
+    };
 
     for fixture_name in fixtures {
         let fixture_dir = fixtures_base.join(fixture_name);
@@ -87,25 +100,30 @@ pub fn with_fixture(fixtures: &[&str]) -> TestContext {
             "fixture not found: {}",
             fixture_dir.display()
         );
-        copy_dir_recursive(&fixture_dir, root);
-
-        // Detect workspace root: check fixture root and subdirectories
-        if fixture_dir.join("Cargo.toml").exists() {
-            workspace_root = Some(root.to_path_buf());
-        } else {
-            // Scan one level of subdirectories for Cargo.toml
-            if let Ok(entries) = std::fs::read_dir(&fixture_dir) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() && entry.path().join("Cargo.toml").exists() {
-                        workspace_root =
-                            Some(root.join(entry.file_name()));
-                    }
-                }
-            }
-        }
+        copy_dir_recursive(&fixture_dir, root, &mut scan);
     }
 
-    let sym = Symposium::from_dir(root);
+    // Resolve config dir
+    assert!(
+        scan.config_dirs.len() <= 1,
+        "multiple config.toml found in fixtures: {:?}",
+        scan.config_dirs
+    );
+    let config_dir = scan
+        .config_dirs
+        .first()
+        .cloned()
+        .unwrap_or_else(|| root.to_path_buf());
+
+    // Resolve workspace root
+    assert!(
+        scan.workspace_dirs.len() <= 1,
+        "multiple Cargo.toml found in fixtures: {:?}",
+        scan.workspace_dirs
+    );
+    let workspace_root = scan.workspace_dirs.first().cloned();
+
+    let sym = Symposium::from_dir(&config_dir);
 
     TestContext {
         sym,
@@ -114,17 +132,25 @@ pub fn with_fixture(fixtures: &[&str]) -> TestContext {
     }
 }
 
-/// Recursively copy a directory tree, overwriting existing files.
-fn copy_dir_recursive(src: &Path, dst: &Path) {
+/// Recursively copy a directory tree, tracking directories containing
+/// `config.toml` and `Cargo.toml`.
+fn copy_dir_recursive(src: &Path, dst: &Path, scan: &mut FixtureScanResult) {
     std::fs::create_dir_all(dst).unwrap();
     for entry in std::fs::read_dir(src).unwrap() {
         let entry = entry.unwrap();
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path);
+            copy_dir_recursive(&src_path, &dst_path, scan);
         } else {
             std::fs::copy(&src_path, &dst_path).unwrap();
+
+            let filename = entry.file_name();
+            if filename == "config.toml" {
+                scan.config_dirs.push(dst.to_path_buf());
+            } else if filename == "Cargo.toml" {
+                scan.workspace_dirs.push(dst.to_path_buf());
+            }
         }
     }
 }

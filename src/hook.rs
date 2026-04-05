@@ -77,7 +77,7 @@ async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> Hoo
     };
 
     let cwd = std::path::Path::new(cwd_str);
-    let mut session = crate::state::load_session(sym.config_dir(), session_id);
+    let mut session = crate::session_state::load_session(sym, session_id);
 
     // Detect activation via symposium crate command (Bash tool)
     if let Some(crate_name) = detect_crate_activation_bash(post) {
@@ -90,7 +90,7 @@ async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> Hoo
     }
 
     // Detect activation via file path matching available skills
-    let available = crate::workspace::compute_available_skills(sym, cwd)
+    let available = crate::workspace::compute_skills_applicable_to_workspace(sym, cwd)
         .await
         .unwrap_or_default();
     if let Some(crate_names) = detect_path_activation(&available, post) {
@@ -99,7 +99,7 @@ async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> Hoo
         }
     }
 
-    crate::state::save_session(sym.config_dir(), session_id, &session);
+    crate::session_state::save_session(sym, session_id, &session);
     HookOutput::empty()
 }
 
@@ -154,7 +154,7 @@ fn detect_crate_activation_mcp(post: &PostToolUsePayload) -> Option<String> {
 
 /// Detect if Read tool accessed a path matching an available skill directory.
 fn detect_path_activation(
-    available: &[crate::workspace::AvailableSkill],
+    available: &[crate::workspace::ApplicableSkill],
     post: &PostToolUsePayload,
 ) -> Option<Vec<String>> {
     let target_path = match post.tool_name.as_str() {
@@ -182,7 +182,7 @@ async fn handle_user_prompt_submit(
     sym: &Symposium,
     prompt_payload: &UserPromptSubmitPayload,
 ) -> HookOutput {
-    let nudge_interval = sym.settings.hooks.nudge_interval;
+    let nudge_interval = sym.config.hooks.nudge_interval;
 
     // If nudge-interval is 0, disable nudges entirely
     if nudge_interval == 0 {
@@ -199,7 +199,7 @@ async fn handle_user_prompt_submit(
     let cwd = std::path::Path::new(cwd_str);
 
     // Compute available skills for this workspace (no caching)
-    let available = crate::workspace::compute_available_skills(sym, cwd)
+    let available = crate::workspace::compute_skills_applicable_to_workspace(sym, cwd)
         .await
         .unwrap_or_default();
 
@@ -219,10 +219,10 @@ async fn handle_user_prompt_submit(
     }
 
     // Load session, increment prompt count, compute nudges
-    let mut session = crate::state::load_session(sym.config_dir(), session_id);
+    let mut session = crate::session_state::load_session(sym, session_id);
     session.increment_prompt_count();
     let nudge_crates = session.compute_nudges(&mentioned, nudge_interval);
-    crate::state::save_session(sym.config_dir(), session_id, &session);
+    crate::session_state::save_session(sym, session_id, &session);
 
     if nudge_crates.is_empty() {
         return HookOutput::empty();

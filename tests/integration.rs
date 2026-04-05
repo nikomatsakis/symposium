@@ -1,8 +1,15 @@
 mod testlib;
 
+use expect_test::expect;
 use symposium::hook::{
     HookPayload, HookSubPayload, PostToolUsePayload, PreToolUsePayload, UserPromptSubmitPayload,
 };
+
+/// Replace temp directory paths with a stable placeholder for snapshot tests.
+fn normalize_paths(output: &str, ctx: &testlib::TestContext) -> String {
+    let config_dir = ctx.sym.config_dir().to_string_lossy().to_string();
+    output.replace(&config_dir, "$CONFIG_DIR")
+}
 
 #[tokio::test]
 async fn dispatch_help() {
@@ -11,8 +18,19 @@ async fn dispatch_help() {
     let result = ctx.invoke(&["help"]).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("start"), "help should mention 'start': {err}");
-    assert!(err.contains("crate"), "help should mention 'crate': {err}");
+    expect![[r#"
+        failed to parse args: 
+        Usage: symposium <COMMAND>
+
+        Commands:
+          start  Get Rust guidance and list available crate skills for the workspace
+          crate  Find crate sources and guidance
+          help   Print this message or the help of the given subcommand(s)
+
+        Options:
+          -h, --help  Print help
+    "#]]
+    .assert_eq(&err);
 }
 
 #[tokio::test]
@@ -23,20 +41,27 @@ async fn dispatch_unknown_command() {
 }
 
 #[tokio::test]
-async fn dispatch_start_includes_tutorial() {
+async fn dispatch_start() {
     let ctx = testlib::with_fixture(&["plugins0"]);
     let output = ctx.invoke(&["start"]).await.unwrap();
-    // The start output includes the tutorial content
-    assert!(!output.is_empty());
+    let output = normalize_paths(&output, &ctx);
+    expect![[r#"
+        # Symposium — AI the Rust Way
+
+        Symposium helps agents write better Rust by providing up-to-date language guidance and integration with the Rust ecosystem.
+
+
+        No skills available for crates in the current dependencies."#]]
+    .assert_eq(&output);
 }
 
 #[tokio::test]
 async fn dispatch_crate_list_with_plugins() {
     let ctx = testlib::with_fixture(&["plugins0"]);
-    // Without a workspace, the crate list should still work (empty workspace)
     let output = ctx.invoke(&["crate", "--list"]).await.unwrap();
-    // May say "No skills available" since no workspace deps match
-    assert!(!output.is_empty());
+    let output = normalize_paths(&output, &ctx);
+    expect!["No skills available for crates in the current dependencies."]
+    .assert_eq(&output);
 }
 
 #[tokio::test]
@@ -68,7 +93,6 @@ async fn hook_post_tool_use_records_bash_activation() {
         }),
         rest: serde_json::Map::new(),
     };
-    // PostToolUse records the activation but returns empty output
     let output = ctx.invoke_hook(&payload).await;
     assert!(output.hook_specific_output.is_none());
 }
@@ -95,10 +119,10 @@ async fn hook_post_tool_use_records_mcp_activation() {
 
 #[tokio::test]
 async fn hook_user_prompt_submit_nudges_about_available_skill() {
-    // plugins0 has a standalone serde skill (activation: always), so mentioning
-    // serde in a prompt should trigger a nudge even without workspace deps.
-    let ctx = testlib::with_fixture(&["plugins0"]);
-    let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
+    // plugins0 has a standalone serde skill; workspace0 has serde as a dep.
+    // The nudge fires because serde is both in the workspace and has a matching skill.
+    let ctx = testlib::with_fixture(&["plugins0", "workspace0"]);
+    let cwd = ctx.workspace_root.as_ref().unwrap().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
             prompt: "I need to use `serde`".to_string(),
@@ -117,6 +141,11 @@ async fn hook_user_prompt_submit_nudges_about_available_skill() {
         ctx_text.contains("serde"),
         "nudge should mention serde: {ctx_text}"
     );
+    expect![[r#"
+        The `serde` crate has specialized guidance available.
+        To load it, run: `symposium crate serde`
+    "#]]
+    .assert_eq(&format!("{ctx_text}\n"));
 }
 
 #[tokio::test]
@@ -140,8 +169,8 @@ async fn hook_post_tool_use_no_session_returns_empty() {
 async fn hook_activation_then_no_nudge() {
     // After activating a crate via post-tool-use, a subsequent prompt mention
     // should NOT nudge about that crate.
-    let ctx = testlib::with_fixture(&["plugins0"]);
-    let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
+    let ctx = testlib::with_fixture(&["plugins0", "workspace0"]);
+    let cwd = ctx.workspace_root.as_ref().unwrap().to_string_lossy().to_string();
 
     // First: record activation via PostToolUse
     let activate = HookPayload {

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::process::ExitCode;
@@ -10,7 +8,6 @@ use symposium::git_source;
 use symposium::hook;
 use symposium::mcp;
 use symposium::plugins::{self, ParsedPlugin};
-use symposium::tutorial;
 
 #[derive(Parser)]
 #[command(name = "symposium", version, about = "AI the Rust Way")]
@@ -28,9 +25,6 @@ enum Commands {
     /// Commands shared with MCP (start, crate, help)
     #[command(flatten)]
     Shared(SharedCommand),
-
-    /// Show the Symposium tutorial (static text only, no workspace scanning)
-    Tutorial,
 
     /// Run as an MCP server (stdio transport)
     Mcp,
@@ -78,7 +72,7 @@ enum PluginCommand {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let sym = Arc::new(config::Symposium::from_environment());
+    let sym = config::Symposium::from_environment();
     sym.init_logging();
 
     let cli = Cli::parse();
@@ -91,11 +85,7 @@ async fn main() -> ExitCode {
             let cwd = std::env::current_dir().expect("failed to get current directory");
             dispatch_and_print(&sym, cmd, &cwd).await
         }
-        Some(Commands::Tutorial) => {
-            print!("{}", tutorial::render_cli());
-            ExitCode::SUCCESS
-        }
-        Some(Commands::Mcp) => match mcp::serve(sym.clone()).await {
+        Some(Commands::Mcp) => match mcp::serve(&sym).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("MCP server error: {e}");
@@ -111,7 +101,6 @@ async fn main() -> ExitCode {
             println!();
             println!("Commands:");
             println!("  start      Get Rust guidance and list available crate skills");
-            println!("  tutorial   Show the Symposium tutorial for agents and humans");
             println!("  crate      Find crate sources and guidance");
             println!("  plugin     Manage plugins");
             println!("  mcp        Run as an MCP server (stdio transport)");

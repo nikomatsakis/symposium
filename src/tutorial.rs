@@ -1,4 +1,4 @@
-const TEMPLATE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/md/tutorial.md"));
+const TEMPLATE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/md/start.md"));
 
 pub fn render_cli() -> String {
     TEMPLATE.to_string()

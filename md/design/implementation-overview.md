@@ -5,15 +5,14 @@ Symposium is a Rust crate with both a library (`src/lib.rs`) and binary (`src/ma
 | File | Purpose |
 |------|---------|
 | `lib.rs` | Library root, re-exports all modules for integration tests. |
-| `main.rs` | CLI entry point using clap. Defines subcommands: `start`, `tutorial`, `mcp`, `hook`, `crate`, `plugin`. Creates `Symposium` context, initializes logging, ensures plugin sources. |
-| `config.rs` | Reads `~/.symposium/config.toml`. Defines `Settings` (TOML config), `Config` (settings + resolved paths), and `Symposium` (Config wrapper via `Deref<Target=Config>`). Two constructors: `from_environment()` (production) and `from_dir(path)` (tests). |
-| `dispatch.rs` | Shared dispatch logic for CLI and MCP. Both route through `dispatch()` which handles `start`, `crate`, and `help` commands. |
-| `hook.rs` | Handles hook events. Built-in handlers for PostToolUse (activation detection) and UserPromptSubmit (crate mention scanning). Plugin hook dispatch for PreToolUse. Delegates all DB operations to `state::session`. |
-| `state/mod.rs` | Per-session state persistence via JSON files at `<config_dir>/sessions/<session-id>.json`. Atomic writes via temp+rename. |
-| `state/session.rs` | `SessionData` struct (prompt count, activations set, nudge map) with methods: `record_activation`, `increment_prompt_count`, `compute_nudges`. |
-| `workspace.rs` | On-demand computation of available skills for the workspace. `compute_available_skills()` scans workspace deps and resolves matching plugin skill groups (no caching). |
-| `tutorial.rs` | Renders the tutorial template (`md/tutorial.md`). |
-| `mcp.rs` | MCP server over stdio using `sacp`. Exposes a single `rust` tool taking `args: Vec<String>`, dispatched through the shared dispatch layer. |
+| `main.rs` | CLI entry point using clap. Defines subcommands: `start`, `mcp`, `hook`, `crate`, `plugin`. Creates `Symposium` context, initializes logging, ensures plugin sources. |
+| `config.rs` | Reads `~/.symposium/config.toml`. Defines `Config` (TOML-deserialized settings) and `Symposium` (Config + resolved paths). Two constructors: `from_environment()` (production) and `from_dir(path)` (tests). |
+| `dispatch.rs` | Shared dispatch logic for CLI and MCP. Defines `SharedCommand` (Clap-derived enum) and `dispatch()` which handles `start` and `crate` commands. |
+| `hook.rs` | Handles hook events. Built-in handlers for PostToolUse (activation detection) and UserPromptSubmit (crate mention scanning). Plugin hook dispatch for PreToolUse. Delegates session persistence to `session_state`. |
+| `session_state.rs` | Per-session state: `SessionData` struct (prompt count, activations set, nudge map) with persistence via JSON files at `<config_dir>/sessions/<session-id>.json`. Atomic writes via temp+rename. |
+| `workspace.rs` | On-demand computation of skills applicable to the workspace. `compute_skills_applicable_to_workspace()` scans workspace deps and resolves matching plugin skill groups (no caching). |
+| `tutorial.rs` | Renders the start template (`md/start.md`). |
+| `mcp.rs` | MCP server over stdio using `sacp`. Exposes a single `rust` tool taking `args: Vec<String>`, dispatched through the shared dispatch layer. Defines `McpArgs` for Clap parsing of MCP tool arguments. |
 | `crate_sources/` | Crate source fetching: version resolution, cache lookup, download+extraction. |
 | `plugins.rs` | Plugin registry: loads TOML manifests from configured plugin sources, produces `Vec<Plugin>` as a table of contents. Defines `SkillGroup`, `PluginSource`, `Hook` types. Does not load skill content — that is handled by the skills layer. |
 | `git_source.rs` | GitHub URL parsing, API client, and plugin cache manager. Downloads tarballs, extracts subdirectories, caches under `~/.symposium/cache/` with commit SHA freshness checking. |
@@ -34,6 +33,7 @@ Symposium is a Rust crate with both a library (`src/lib.rs`) and binary (`src/ma
 - **crates_io_api** — Crates.io version lookup
 - **semver** — Version constraint parsing
 - **expect-test** — Snapshot testing (dev dependency)
+- **indoc** — Indented string literals
 
 ## Build and test
 
@@ -41,7 +41,6 @@ Symposium is a Rust crate with both a library (`src/lib.rs`) and binary (`src/ma
 cargo check
 cargo test
 cargo run -- start             # Rust guidance + crate skill list
-cargo run -- tutorial          # print the tutorial (static only)
 cargo run -- hook pre-tool-use # reads event JSON from stdin
 cargo run -- crate tokio       # find crate source location
 cargo run -- crate --list      # list skills available for workspace crates
@@ -59,9 +58,9 @@ The plugin at `agent-plugins/claude-code/` contains:
 
 ## Integration tests
 
-Integration tests are in `tests/` using composable fixtures:
+Integration tests are in `tests/` using composable fixtures and `expect-test` snapshots:
 
-- `tests/testlib/mod.rs` — `TestContext` harness with `with_fixture()` helper
+- `tests/testlib/mod.rs` — `TestContext` harness with `with_fixture()` helper. Discovers `config.toml` and `Cargo.toml` locations automatically.
 - `tests/fixtures/workspace0/` — Minimal Cargo workspace with tokio/serde deps
-- `tests/fixtures/plugins0/` — Local plugin with serde skill, no network required
-- `tests/integration.rs` — Smoke tests for dispatch and hook handling
+- `tests/fixtures/plugins0/` — Local plugin with serde skill under `dot-symposium/`, no network required
+- `tests/integration.rs` — Smoke tests for dispatch and hook handling using `expect-test` snapshots

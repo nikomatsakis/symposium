@@ -8,6 +8,6 @@ pub mod tutorial;
 
 pub(crate) mod crate_sources;
 pub(crate) mod predicate;
+pub(crate) mod session_state;
 pub(crate) mod skills;
-pub(crate) mod state;
 pub(crate) mod workspace;

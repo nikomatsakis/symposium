@@ -2,26 +2,16 @@
 //!
 //! Defines `SharedCommand` (the subset of commands common to CLI and MCP)
 //! with Clap derive. The CLI flattens these into its own command enum.
-//! The MCP parses incoming args via `SharedArgs::try_parse_from`.
+//! The MCP parses incoming args via `McpArgs::try_parse_from` (in `mcp.rs`).
 
 use std::path::Path;
 
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 
 use crate::config::Symposium;
 use crate::crate_sources;
 use crate::plugins;
 use crate::skills;
-
-/// Wrapper for parsing shared commands from a `Vec<String>`.
-///
-/// Used by the MCP server: `SharedArgs::try_parse_from(args)`.
-#[derive(Debug, Parser)]
-#[command(name = "symposium", no_binary_name = true)]
-pub struct SharedArgs {
-    #[command(subcommand)]
-    pub command: SharedCommand,
-}
 
 /// Commands shared between CLI and MCP.
 #[derive(Debug, Clone, Subcommand)]

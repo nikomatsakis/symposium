@@ -1,7 +1,6 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use clap::Parser;
+use indoc::indoc;
 use sacp::mcp_server::{McpConnectionTo, McpServer};
 use sacp::role;
 use sacp::{ByteStreams, ConnectTo, RunWithConnectionTo};
@@ -10,10 +9,17 @@ use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::config::Symposium;
-use crate::dispatch::{self, DispatchResult, SharedArgs};
+use crate::dispatch::{self, DispatchResult, SharedCommand};
 
-pub async fn serve(sym: Arc<Symposium>) -> Result<()> {
-    let server = build_server(sym);
+#[derive(Debug, Parser)]
+#[command(name = "symposium", no_binary_name = true, about = "")]
+pub struct McpArgs {
+    #[command(subcommand)]
+    pub command: SharedCommand,
+}
+
+pub async fn serve(sym: &Symposium) -> Result<()> {
+    let server = build_server(sym.clone());
     let stdio = ByteStreams::new(
         tokio::io::stdout().compat_write(),
         tokio::io::stdin().compat(),
@@ -23,7 +29,7 @@ pub async fn serve(sym: Arc<Symposium>) -> Result<()> {
 }
 
 fn build_server(
-    sym: Arc<Symposium>,
+    sym: Symposium,
 ) -> McpServer<role::mcp::Client, impl RunWithConnectionTo<role::mcp::Client>> {
     McpServer::builder("symposium".to_string())
         .instructions(
@@ -38,7 +44,7 @@ fn build_server(
                     .map_err(|e| sacp::util::internal_error(format!("failed to get cwd: {e}")))?;
 
                 // Parse args using the shared Clap definitions
-                let parsed = SharedArgs::try_parse_from(&input.args).map_err(|e| {
+                let parsed = McpArgs::try_parse_from(&input.args).map_err(|e| {
                     sacp::util::internal_error(format!("invalid arguments: {e}"))
                 })?;
 
@@ -54,14 +60,15 @@ fn build_server(
         .build()
 }
 
-const RUST_TOOL_DESCRIPTION: &str = "\
-Critical. Invoke this tool with [\"start\"] as argument before authoring or working with Rust code.\n\n\
-Commands:\n\
-  [\"start\"] — Rust guidance + available crate skills for this workspace\n\
-  [\"crate\", \"--list\"] — list workspace crates with available skills\n\
-  [\"crate\", \"<name>\"] — get crate info and guidance\n\
-  [\"crate\", \"<name>\", \"--version\", \"<ver>\"] — specific version\n\
-  [\"help\"] — show help";
+const RUST_TOOL_DESCRIPTION: &str = indoc! {"
+    Critical. Invoke this tool with [\"start\"] before authoring Rust code.
+
+    Commands:
+      [\"start\"]          — Rust guidance + applicable crate skills
+      [\"crate\", \"--list\"] — list workspace crates with skills
+      [\"crate\", \"<name>\"] — get crate guidance
+      [\"help\"]           — show help
+"};
 
 #[derive(Deserialize, JsonSchema)]
 struct RustToolInput {

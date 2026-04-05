@@ -191,8 +191,8 @@ impl PluginCacheManager {
     ///
     /// Use `"plugins"` for individual skill git sources,
     /// `"plugin-sources"` for plugin source repositories.
-    pub fn new(cache_root: &std::path::Path, subdir: &str) -> Self {
-        let cache_dir = cache_root.join(subdir);
+    pub fn new(sym: &crate::config::Symposium, subdir: &str) -> Self {
+        let cache_dir = sym.cache_dir().join(subdir);
         Self {
             cache_dir,
             client: GitHubClient::new(),
