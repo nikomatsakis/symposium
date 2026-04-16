@@ -1284,4 +1284,5 @@ mod tests {
         assert!(settings["hooks"]["BeforeTool"].is_array());
         assert!(settings["hooks"]["AfterTool"].is_array());
     }
+
 }
