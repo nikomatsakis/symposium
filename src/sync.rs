@@ -167,11 +167,11 @@ pub async fn sync_agent(sym: &Symposium, project_root: Option<&Path>, out: &Outp
 
             if is_project_agent {
                 agent
-                    .register_project_hooks(root, out)
+                    .register_project_hooks(root, sym, out)
                     .context("failed to register project hooks")?;
             } else {
                 agent
-                    .register_global_hooks(sym.home_dir(), out)
+                    .register_global_hooks(sym.home_dir(), sym, out)
                     .context("failed to register global hooks")?;
             }
 
@@ -180,7 +180,7 @@ pub async fn sync_agent(sym: &Symposium, project_root: Option<&Path>, out: &Outp
             }
         } else {
             agent
-                .register_global_hooks(sym.home_dir(), out)
+                .register_global_hooks(sym.home_dir(), sym, out)
                 .context("failed to register global hooks")?;
         }
     }
@@ -189,9 +189,9 @@ pub async fn sync_agent(sym: &Symposium, project_root: Option<&Path>, out: &Outp
     for &agent in Agent::all() {
         if !agent_names.contains(&agent.config_name().to_string()) {
             if let Some(root) = project_root {
-                agent.unregister_project_hooks(root, out);
+                agent.unregister_project_hooks(root, sym, out);
             }
-            agent.unregister_global_hooks(sym.home_dir(), out);
+            agent.unregister_global_hooks(sym.home_dir(), sym, out);
         }
     }
 
