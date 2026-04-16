@@ -4,6 +4,8 @@
 //! configured and where skill files are placed. This module centralizes
 //! that knowledge.
 
+mod mcp_server_registration;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
