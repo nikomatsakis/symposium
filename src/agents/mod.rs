@@ -151,7 +151,7 @@ impl Agent {
 
         // Register MCP server
         self.register_project_mcp_server(project_root, sym, out)?;
-
+        
         hook_result
     }
 
@@ -184,7 +184,7 @@ impl Agent {
 
         // Register MCP server
         self.register_global_mcp_server(home, sym, out)?;
-
+        
         hook_result
     }
 
@@ -999,6 +999,7 @@ fn unregister_flat_hooks(config_path: &Path, command_key: &str, out: &Output) {
         }
     }
 }
+
 
 // ---------------------------------------------------------------------------
 // Helpers
