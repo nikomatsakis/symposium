@@ -321,24 +321,32 @@ fn collect_skills_applicable_to(
     }
 }
 
-/// Check whether a skill matches any of the target crates.
+/// Check whether a skill matches the target crates.
 ///
-/// Uses skill-level `crates` if present, otherwise falls back to group-level.
-/// Returns false if neither level has any crate predicates (nothing to match).
+/// If both skill-level and group-level `crates` are present, BOTH must match
+/// (AND composition). If only one level has `crates`, that level alone decides.
+/// Returns false if neither level has any crate predicates.
 fn skill_matches(
     skill: &Skill,
     group_crates: &[Predicate],
     for_crates: &[(String, semver::Version)],
 ) -> bool {
-    let effective_preds = if !skill.crates.is_empty() {
-        &skill.crates
+    let skill_ok = if skill.crates.is_empty() {
+        None
     } else {
-        group_crates
+        Some(skill.crates.iter().any(|p| p.matches(for_crates)))
     };
-    if effective_preds.is_empty() {
-        return false;
+    let group_ok = if group_crates.is_empty() {
+        None
+    } else {
+        Some(group_crates.iter().any(|p| p.matches(for_crates)))
+    };
+    match (skill_ok, group_ok) {
+        (Some(s), Some(g)) => s && g, // AND: both must match
+        (Some(s), None) => s,
+        (None, Some(g)) => g,
+        (None, None) => false,
     }
-    effective_preds.iter().any(|p| p.matches(for_crates))
 }
 
 /// Raw frontmatter fields extracted from a SKILL.md file.
@@ -1024,5 +1032,81 @@ mod tests {
         let defaults = SkillGroup::default();
         let skills = discover_skills(tmp.path(), &defaults);
         assert!(skills.is_empty());
+    }
+
+    // --- AND composition tests for skill_matches ---
+
+    fn v(s: &str) -> semver::Version {
+        semver::Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn skill_matches_and_both_present_both_satisfied() {
+        // Skill crates: tokio, Group crates: serde → requires BOTH
+        let skill = Skill {
+            frontmatter: BTreeMap::new(),
+            crates: vec![pred("tokio")],
+            body: String::new(),
+            path: PathBuf::new(),
+        };
+        let group = vec![pred("serde")];
+        let ws = vec![
+            ("serde".into(), v("1.0.0")),
+            ("tokio".into(), v("1.0.0")),
+        ];
+        assert!(skill_matches(&skill, &group, &ws));
+    }
+
+    #[test]
+    fn skill_matches_and_skill_missing_from_workspace() {
+        // Skill crates: tokio, Group crates: serde, workspace has only serde → AND fails
+        let skill = Skill {
+            frontmatter: BTreeMap::new(),
+            crates: vec![pred("tokio")],
+            body: String::new(),
+            path: PathBuf::new(),
+        };
+        let group = vec![pred("serde")];
+        let ws = vec![("serde".into(), v("1.0.0"))];
+        assert!(!skill_matches(&skill, &group, &ws));
+    }
+
+    #[test]
+    fn skill_matches_no_skill_crates_uses_group() {
+        // Skill has no crates, group has serde → only serde required
+        let skill = Skill {
+            frontmatter: BTreeMap::new(),
+            crates: vec![],
+            body: String::new(),
+            path: PathBuf::new(),
+        };
+        let group = vec![pred("serde")];
+        let ws = vec![("serde".into(), v("1.0.0"))];
+        assert!(skill_matches(&skill, &group, &ws));
+    }
+
+    #[test]
+    fn skill_matches_skill_crates_no_group() {
+        // Skill has serde, group has nothing → only serde required
+        let skill = Skill {
+            frontmatter: BTreeMap::new(),
+            crates: vec![pred("serde")],
+            body: String::new(),
+            path: PathBuf::new(),
+        };
+        let ws = vec![("serde".into(), v("1.0.0"))];
+        assert!(skill_matches(&skill, &[], &ws));
+    }
+
+    #[test]
+    fn skill_matches_neither_level_returns_false() {
+        let skill = Skill {
+            frontmatter: BTreeMap::new(),
+            crates: vec![],
+            body: String::new(),
+            path: PathBuf::new(),
+        };
+        let ws = vec![("serde".into(), v("1.0.0"))];
+        assert!(!skill_matches(&skill, &[], &ws));
     }
 }
