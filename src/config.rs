@@ -46,9 +46,6 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
 
-    /// Override the cache directory.
-    pub cache_dir: Option<PathBuf>,
-
     /// Default plugin sources that are always included unless disabled.
     #[serde(default)]
     pub defaults: DefaultsConfig,
@@ -86,7 +83,6 @@ impl Default for Config {
             hook_scope: HookScope::default(),
             agents: Vec::new(),
             logging: LoggingConfig::default(),
-            cache_dir: None,
             defaults: DefaultsConfig::default(),
             plugin_source: Vec::new(),
         }
@@ -174,7 +170,7 @@ impl Symposium {
 
         let config = load_config_from(&config_dir);
 
-        let cache_dir = resolve_cache_dir(&config, &config_dir);
+        let cache_dir = resolve_cache_dir(&config_dir);
         let _ = fs::create_dir_all(&cache_dir);
 
         Self {
@@ -194,11 +190,7 @@ impl Symposium {
 
         let config = load_config_from(&config_dir);
 
-        let cache_dir = if let Some(ref dir) = config.cache_dir {
-            dir.clone()
-        } else {
-            config_dir.join("cache")
-        };
+        let cache_dir = config_dir.join("cache");
         let _ = fs::create_dir_all(&cache_dir);
 
         // In test mode, use the root as the home directory so that
@@ -337,11 +329,8 @@ fn resolve_config_dir_from_env() -> PathBuf {
     }
 }
 
-/// Resolve cache dir from config and environment.
-fn resolve_cache_dir(config: &Config, config_dir: &Path) -> PathBuf {
-    if let Some(ref dir) = config.cache_dir {
-        return dir.clone();
-    }
+/// Resolve cache dir from environment.
+fn resolve_cache_dir(config_dir: &Path) -> PathBuf {
     if let Ok(home) = env::var("SYMPOSIUM_HOME") {
         return PathBuf::from(home).join("cache");
     }
