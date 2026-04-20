@@ -12,17 +12,6 @@ use crate::config::Symposium;
 use crate::plugins::{ParsedPlugin, PluginRegistry, SkillGroup};
 use crate::predicate::{self, Predicate};
 
-/// Activation mode for a skill.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Activation {
-    /// Skill content is printed inline with crate output.
-    Always,
-    /// Skill is listed with its path for on-demand loading.
-    #[default]
-    Optional,
-}
-
 /// A parsed skill from a SKILL.md file.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -30,8 +19,6 @@ pub struct Skill {
     pub frontmatter: BTreeMap<String, String>,
     /// Crate predicates this skill advises on (skill-level; ANDed with group-level).
     pub crates: Vec<Predicate>,
-    /// Activation mode.
-    pub activation: Activation,
     /// The body content (everything after frontmatter).
     pub body: String,
     /// Path to the SKILL.md file on disk.
@@ -107,6 +94,11 @@ pub async fn skills_applicable_to(
     // because we lazily load skill groups, so there
     // is extra logic.
     for ParsedPlugin { path, plugin } in &registry.plugins {
+        // First check if plugin applies to these crates
+        if !plugin.applies_to_crates(for_crates) {
+            continue;
+        }
+
         for group in &plugin.skills {
             let (group_crates, skills) = load_skills_for_group(sym, path, group, for_crates).await;
 
@@ -245,8 +237,8 @@ async fn resolve_skill_dir(
 
 /// Load a standalone skill from a SKILL.md file (no plugin group context).
 ///
-/// Standalone skills must be self-contained: all metadata (crates,
-/// activation) comes from the SKILL.md frontmatter.
+/// Standalone skills must be self-contained: all metadata (crates)
+/// comes from the SKILL.md frontmatter.
 /// Returns an error if `crates` is missing (standalone skills have
 /// no group to inherit from).
 pub fn load_standalone_skill(skill_md_path: &Path) -> Result<Skill> {
@@ -303,17 +295,9 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
         );
     }
 
-    // Resolve activation: frontmatter overrides group-level
-    let activation = if let Some(act) = frontmatter.get("activation") {
-        parse_activation(act)?
-    } else {
-        group.activation.clone().unwrap_or_default()
-    };
-
     Ok(Skill {
         frontmatter,
         crates,
-        activation,
         body: fm.body,
         path: skill_md_path.to_path_buf(),
     })
@@ -416,14 +400,6 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
         crates,
         body: body.to_string(),
     })
-}
-
-fn parse_activation(s: &str) -> Result<Activation> {
-    match s.trim().to_lowercase().as_str() {
-        "always" => Ok(Activation::Always),
-        "optional" => Ok(Activation::Optional),
-        other => bail!("unknown activation mode: {other:?} (expected \"always\" or \"optional\")"),
-    }
 }
 
 #[cfg(test)]
@@ -667,7 +643,6 @@ mod tests {
                 name: my-standalone
                 description: A standalone skill
                 crates: serde
-                activation: always
                 ---
 
                 Standalone body.
@@ -678,7 +653,6 @@ mod tests {
         let skill = load_standalone_skill(&skill_dir.join("SKILL.md")).unwrap();
         assert_eq!(skill.name(), "my-standalone");
         assert!(skill.crates[0].references_crate("serde"));
-        assert_eq!(skill.activation, Activation::Always);
         assert!(skill.body.contains("Standalone body."));
     }
 
@@ -707,30 +681,138 @@ mod tests {
         );
     }
 
-    #[test]
-    fn validate_standalone_skill_bad_activation() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join("bad-skill");
+    // --- Multi-level crate filtering tests ---
+
+    #[tokio::test]
+    async fn test_plugin_level_filtering_blocks_skills() {
+        use crate::plugins::{Plugin, SkillGroup, PluginSource, ParsedPlugin, PluginRegistry};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let sym = crate::config::Symposium::from_dir(tmp.path());
+
+        // Create a plugin that only applies to "other-crate"
+        let plugin = Plugin {
+            name: "other-crate-plugin".to_string(),
+            crates: Some(vec!["other-crate".to_string()]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![SkillGroup {
+                crates: Some(vec![pred("serde")]), // Group targets serde
+                source: PluginSource::default(),
+            }],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+
+        let registry = PluginRegistry {
+            plugins: vec![ParsedPlugin {
+                path: tmp.path().join("plugin.toml"),
+                plugin,
+            }],
+            standalone_skills: vec![],
+        };
+
+        // Query for serde - should find no skills because plugin doesn't apply
+        let workspace_crates = vec![("serde".to_string(), semver::Version::new(1, 0, 0))];
+        let skills = skills_applicable_to(&sym, &registry, &workspace_crates).await;
+        
+        assert!(skills.is_empty(), "Plugin should be filtered out at plugin level");
+    }
+
+    #[tokio::test]
+    async fn test_group_level_filtering_blocks_skills() {
+        use crate::plugins::{Plugin, SkillGroup, PluginSource, ParsedPlugin, PluginRegistry};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let sym = crate::config::Symposium::from_dir(tmp.path());
+
+        // Create a plugin with wildcard that has a group targeting different crate
+        let plugin = Plugin {
+            name: "wildcard-plugin".to_string(),
+            crates: Some(vec!["*".to_string()]), // Plugin applies to all
+            installation: None,
+            hooks: vec![],
+            skills: vec![SkillGroup {
+                crates: Some(vec![pred("other-crate")]), // But group targets other-crate
+                source: PluginSource::default(),
+            }],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+
+        let registry = PluginRegistry {
+            plugins: vec![ParsedPlugin {
+                path: tmp.path().join("plugin.toml"),
+                plugin,
+            }],
+            standalone_skills: vec![],
+        };
+
+        // Query for serde - should find no skills because group doesn't match
+        let workspace_crates = vec![("serde".to_string(), semver::Version::new(1, 0, 0))];
+        let skills = skills_applicable_to(&sym, &registry, &workspace_crates).await;
+        
+        assert!(skills.is_empty(), "Skills should be filtered out at group level");
+    }
+
+    #[tokio::test]
+    async fn test_all_levels_match_allows_skills() {
+        use crate::plugins::{Plugin, SkillGroup, PluginSource, ParsedPlugin, PluginRegistry};
+        use tempfile::TempDir;
+        use std::fs;
+
+        let tmp = TempDir::new().unwrap();
+        let sym = crate::config::Symposium::from_dir(tmp.path());
+
+        // Create skill directory and file
+        let skill_dir = tmp.path().join("serde-skill");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("SKILL.md"),
             indoc! {"
                 ---
-                name: bad
+                name: serde-basics
+                description: Basic serde usage
                 crates: serde
-                activation: bogus
                 ---
 
-                Body.
+                Use derive macros.
             "},
-        )
-        .unwrap();
+        ).unwrap();
 
-        let err = load_standalone_skill(&skill_dir.join("SKILL.md")).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown activation mode"),
-            "expected activation error, got: {err}"
-        );
+        // Create a plugin where all levels match serde
+        let plugin = Plugin {
+            name: "serde-plugin".to_string(),
+            crates: Some(vec!["serde".to_string()]), // Plugin targets serde
+            installation: None,
+            hooks: vec![],
+            skills: vec![SkillGroup {
+                crates: Some(vec![pred("serde")]), // Group also targets serde
+                source: PluginSource {
+                    path: Some(skill_dir.to_path_buf()),
+                    git: None,
+                },
+            }],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+
+        let registry = PluginRegistry {
+            plugins: vec![ParsedPlugin {
+                path: tmp.path().join("plugin.toml"),
+                plugin,
+            }],
+            standalone_skills: vec![],
+        };
+
+        // Query for serde - should find the skill because all levels match
+        let workspace_crates = vec![("serde".to_string(), semver::Version::new(1, 0, 0))];
+        let skills = skills_applicable_to(&sym, &registry, &workspace_crates).await;
+        
+        assert_eq!(skills.len(), 1, "Should find one skill when all levels match");
+        assert_eq!(skills[0].skill.name(), "serde-basics");
     }
 
     #[test]

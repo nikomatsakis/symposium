@@ -34,8 +34,6 @@ pub struct SkillGroup {
     /// Crate predicates this group advises on (e.g., `"serde"` or `["serde", "serde_json>=1.0"]`).
     #[serde(default, deserialize_with = "deserialize_string_or_vec_opt")]
     pub crates: Option<Vec<crate::predicate::Predicate>>,
-    /// Activation mode for skills in this group.
-    pub activation: Option<crate::skills::Activation>,
     /// Remote source for skills.
     #[serde(default)]
     pub source: PluginSource,
@@ -103,6 +101,9 @@ pub struct ParsedPlugin {
 #[derive(Debug, Clone, Serialize)]
 pub struct Plugin {
     pub name: String,
+    /// Crate predicates this plugin applies to. Use "*" for all crates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crates: Option<Vec<String>>,
     pub installation: Option<Installation>,
     pub hooks: Vec<Hook>,
     pub skills: Vec<SkillGroup>,
@@ -112,6 +113,30 @@ pub struct Plugin {
     /// Text to inject as additional context at session start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_start_context: Option<String>,
+}
+
+impl Plugin {
+    /// Check if this plugin applies to the given crates.
+    /// Returns true if plugin has no crates filter, crates contains "*", or any crate matches.
+    pub fn applies_to_crates(&self, workspace_crates: &[(String, semver::Version)]) -> bool {
+        let Some(ref plugin_crates) = self.crates else {
+            return true; // No filter means applies to all
+        };
+
+        // Check for wildcard
+        if plugin_crates.iter().any(|c| c == "*") {
+            return true;
+        }
+
+        // Check if any workspace crate matches plugin crates
+        for workspace_crate in workspace_crates {
+            if plugin_crates.iter().any(|pc| pc == &workspace_crate.0) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -208,6 +233,8 @@ struct SourceDirContents {
 #[derive(Debug, Deserialize)]
 struct PluginManifest {
     name: String,
+    #[serde(default)]
+    crates: Option<Vec<String>>,
     #[serde(default)]
     installation: Option<Installation>,
     #[serde(default)]
@@ -463,58 +490,109 @@ pub fn load_registry(sym: &Symposium) -> PluginRegistry {
 
 /// Scan a plugin source directory for TOML plugin manifests and standalone skills.
 ///
-/// Plugins are `.toml` files at the top level. Standalone skills are discovered
-/// by recursively searching for `SKILL.md` files, then pruning nested candidates
-/// (if `A/SKILL.md` exists, `A/B/SKILL.md` is excluded).
+/// Discovery rules:
+/// 1. Plugin = directory with `SYMPOSIUM.toml` file (or any .toml for backward compatibility)
+/// 2. Skill = directory with `SKILL.md` file
+/// 3. Plugin takes precedence over skill in the same directory
+/// 4. Once a directory is claimed as plugin/skill, don't recurse into it
 fn scan_source_dir<P: AsRef<Path>>(dir: P) -> Result<SourceDirContents> {
     let mut plugins = Vec::new();
-    let dir = dir.as_ref();
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SourceDirContents {
-                plugins,
-                skill_files: Vec::new(),
-            });
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.extension().is_some_and(|ext| ext == "toml") {
-            let plugin = load_plugin(&path)
-                .with_context(|| format!("loading plugin from `{}`", path.display()));
-
-            tracing::debug!(
-                path = %path.display(),
-                plugin = ?plugin,
-                "loaded plugin entry",
-            );
-
-            plugins.push(plugin);
-        }
-    }
-
-    // Recursively find all SKILL.md files, then prune nested ones.
     let mut skill_files = Vec::new();
-    crate::skills::find_skill_files_recursive(dir, &mut skill_files);
-    crate::skills::prune_nested_skills(&mut skill_files);
-
-    for path in &skill_files {
-        tracing::debug!(
-            path = %path.display(),
-            "found standalone skill",
-        );
-    }
+    
+    discover_in_directory(dir.as_ref(), &mut plugins, &mut skill_files)?;
 
     Ok(SourceDirContents {
         plugins,
         skill_files,
     })
+}
+
+/// Recursively discover plugins and skills with precedence and pruning.
+fn discover_in_directory(
+    dir: &Path,
+    plugins: &mut Vec<Result<ParsedPlugin>>,
+    skill_files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Check what this directory contains (plugin takes precedence)
+        if let Some(discovered) = discover_directory_type(&path)? {
+            match discovered {
+                DirectoryType::Plugin(toml_path) => {
+                    let plugin = load_plugin(&toml_path)
+                        .with_context(|| format!("loading plugin from `{}`", toml_path.display()));
+
+                    tracing::debug!(
+                        path = %toml_path.display(),
+                        plugin = ?plugin,
+                        "loaded plugin",
+                    );
+
+                    plugins.push(plugin);
+                }
+                DirectoryType::Skill(skill_md_path) => {
+                    tracing::debug!(
+                        path = %skill_md_path.display(),
+                        "found standalone skill",
+                    );
+                    skill_files.push(skill_md_path);
+                }
+            }
+            // Don't recurse - directory is claimed
+        } else {
+            // Directory doesn't contain plugin/skill, recurse into it
+            discover_in_directory(&path, plugins, skill_files)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// What type of directory this is (plugin or skill).
+enum DirectoryType {
+    Plugin(PathBuf), // Path to SYMPOSIUM.toml or other .toml file
+    Skill(PathBuf),  // Path to SKILL.md file
+}
+
+/// Determine if a directory contains a plugin or skill.
+/// Returns None if it contains neither.
+/// SYMPOSIUM.toml takes precedence, then any .toml file, then SKILL.md.
+fn discover_directory_type(dir: &Path) -> Result<Option<DirectoryType>> {
+    // First check for SYMPOSIUM.toml (preferred)
+    let symposium_toml = dir.join("SYMPOSIUM.toml");
+    if symposium_toml.is_file() {
+        return Ok(Some(DirectoryType::Plugin(symposium_toml)));
+    }
+
+    // Then check for any .toml file (backward compatibility)
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(None),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
+            return Ok(Some(DirectoryType::Plugin(path)));
+        }
+    }
+
+    // Finally check for SKILL.md
+    let skill_md = dir.join("SKILL.md");
+    if skill_md.is_file() {
+        return Ok(Some(DirectoryType::Skill(skill_md)));
+    }
+
+    Ok(None)
 }
 
 /// Result of validating a single item in a plugin source directory.
@@ -554,7 +632,10 @@ pub fn validate_source_dir(dir: &Path) -> Result<Vec<ValidationResult>> {
 
     for plugin_result in contents.plugins {
         let (path, result) = match plugin_result {
-            Ok(parsed) => (parsed.path, Ok(())),
+            Ok(parsed) => {
+                let validation_result = validate_plugin_has_crates(&parsed.plugin);
+                (parsed.path, validation_result)
+            },
             Err(e) => {
                 // Extract the path from the error context if possible,
                 // otherwise use a placeholder.
@@ -579,6 +660,33 @@ pub fn validate_source_dir(dir: &Path) -> Result<Vec<ValidationResult>> {
     }
 
     Ok(results)
+}
+
+/// Validate that a plugin has crates specified somewhere.
+/// 
+/// Checks that the plugin has `crates` at the plugin level, in skill groups, 
+/// or in MCP servers. Returns an error if no crate targeting is found anywhere.
+fn validate_plugin_has_crates(plugin: &Plugin) -> Result<()> {
+    // Check plugin-level crates
+    if plugin.crates.is_some() {
+        return Ok(());
+    }
+
+    // Check skill groups for crates
+    for skill_group in &plugin.skills {
+        if skill_group.crates.is_some() {
+            return Ok(());
+        }
+    }
+
+    // Check MCP servers for crates (if they support it in the future)
+    // For now, MCP servers don't have crates field in the sacp::McpServer struct
+    // This is a placeholder for when we add that capability
+
+    anyhow::bail!(
+        "Plugin '{}' must specify 'crates' at the plugin level, in [[skills]] groups, or in [[mcp_servers]] entries",
+        plugin.name
+    );
 }
 
 /// Collect all crate names referenced in predicates across a plugin source directory.
@@ -635,6 +743,7 @@ pub fn load_plugin(manifest_path: &Path) -> Result<ParsedPlugin> {
         path: manifest_path.to_path_buf(),
         plugin: Plugin {
             name: manifest.name,
+            crates: manifest.crates,
             installation: manifest.installation,
             hooks: manifest.hooks,
             skills: manifest.skills,
@@ -653,6 +762,7 @@ mod tests {
         let manifest: PluginManifest = toml::from_str(s)?;
         Ok(Plugin {
             name: manifest.name,
+            crates: manifest.crates,
             installation: manifest.installation,
             hooks: manifest.hooks,
             skills: manifest.skills,
@@ -720,13 +830,15 @@ mod tests {
     }
 
     #[test]
-    fn scan_source_dir_finds_toml_and_standalone_skills() {
+    fn scan_source_dir_finds_plugins_and_standalone_skills() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
-        // Create a TOML plugin
+        // Create a plugin directory
+        let plugin_dir = dir.join("my-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(
-            dir.join("my-plugin.toml"),
+            plugin_dir.join("SYMPOSIUM.toml"),
             indoc! {r#"
                 name = "my-plugin"
 
@@ -748,7 +860,6 @@ mod tests {
                 name: assert-struct
                 description: Check struct layout
                 crates: serde
-                activation: always
                 ---
 
                 Use this skill.
@@ -756,8 +867,8 @@ mod tests {
         )
         .unwrap();
 
-        // Create a random directory without SKILL.md (should be ignored)
-        std::fs::create_dir_all(dir.join("not-a-skill")).unwrap();
+        // Create a random directory without SYMPOSIUM.toml or SKILL.md (should be ignored)
+        std::fs::create_dir_all(dir.join("not-a-plugin-or-skill")).unwrap();
 
         let contents = scan_source_dir(dir).unwrap();
         assert_eq!(contents.plugins.len(), 1);
@@ -808,6 +919,175 @@ mod tests {
         assert!(contents.plugins.is_empty());
         assert_eq!(contents.skill_files.len(), 1);
         assert!(contents.skill_files[0].ends_with("SKILL.md"));
+    }
+
+    #[test]
+    fn scan_source_dir_plugin_takes_precedence_over_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // Create a directory with both SYMPOSIUM.toml and SKILL.md
+        let mixed_dir = dir.join("mixed");
+        std::fs::create_dir_all(&mixed_dir).unwrap();
+        
+        // SYMPOSIUM.toml should take precedence
+        std::fs::write(
+            mixed_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "mixed-plugin"
+            "#},
+        )
+        .unwrap();
+
+        // This SKILL.md should be ignored due to SYMPOSIUM.toml precedence
+        std::fs::write(
+            mixed_dir.join("SKILL.md"),
+            indoc! {"
+                ---
+                name: ignored-skill
+                crates: serde
+                ---
+
+                This should be ignored.
+            "},
+        )
+        .unwrap();
+
+        let contents = scan_source_dir(dir).unwrap();
+        assert_eq!(contents.plugins.len(), 1);
+        assert_eq!(
+            contents.plugins[0].as_ref().unwrap().plugin.name,
+            "mixed-plugin"
+        );
+        assert!(contents.skill_files.is_empty(), "Skill should be ignored due to SYMPOSIUM.toml precedence");
+    }
+
+    #[test]
+    fn scan_source_dir_symposium_toml_precedence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // Create a directory with both SYMPOSIUM.toml and other .toml files
+        let plugin_dir = dir.join("precedence-test");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        
+        // SYMPOSIUM.toml should take precedence
+        std::fs::write(
+            plugin_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "preferred-plugin"
+            "#},
+        )
+        .unwrap();
+
+        // This other .toml should be ignored due to SYMPOSIUM.toml precedence
+        std::fs::write(
+            plugin_dir.join("other.toml"),
+            indoc! {r#"
+                name = "ignored-plugin"
+            "#},
+        )
+        .unwrap();
+
+        let contents = scan_source_dir(dir).unwrap();
+        assert_eq!(contents.plugins.len(), 1);
+        assert_eq!(
+            contents.plugins[0].as_ref().unwrap().plugin.name,
+            "preferred-plugin"
+        );
+        assert!(contents.skill_files.is_empty());
+    }
+
+    #[test]
+    fn scan_source_dir_pruning_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // Create the example structure:
+        // foo/
+        //     PLUGIN.toml
+        //     bar/
+        //         SKILL.md
+        // baz/
+        //     SKILL.md
+        //     qux/
+        //         PLUGIN.toml
+        //         SKILL.md
+
+        let foo_dir = dir.join("foo");
+        std::fs::create_dir_all(&foo_dir).unwrap();
+        std::fs::write(
+            foo_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "foo-plugin"
+            "#},
+        )
+        .unwrap();
+
+        let foo_bar_dir = foo_dir.join("bar");
+        std::fs::create_dir_all(&foo_bar_dir).unwrap();
+        std::fs::write(
+            foo_bar_dir.join("SKILL.md"),
+            indoc! {"
+                ---
+                name: foo-bar-skill
+                crates: serde
+                ---
+
+                Should be pruned.
+            "},
+        )
+        .unwrap();
+
+        let baz_dir = dir.join("baz");
+        std::fs::create_dir_all(&baz_dir).unwrap();
+        std::fs::write(
+            baz_dir.join("SKILL.md"),
+            indoc! {"
+                ---
+                name: baz-skill
+                crates: tokio
+                ---
+
+                Should be found.
+            "},
+        )
+        .unwrap();
+
+        let baz_qux_dir = baz_dir.join("qux");
+        std::fs::create_dir_all(&baz_qux_dir).unwrap();
+        std::fs::write(
+            baz_qux_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "qux-plugin"
+            "#},
+        )
+        .unwrap();
+        std::fs::write(
+            baz_qux_dir.join("SKILL.md"),
+            indoc! {"
+                ---
+                name: qux-skill
+                crates: anyhow
+                ---
+
+                Should be pruned.
+            "},
+        )
+        .unwrap();
+
+        let contents = scan_source_dir(dir).unwrap();
+        
+        // Should find foo/PLUGIN.toml as a plugin
+        assert_eq!(contents.plugins.len(), 1);
+        assert_eq!(
+            contents.plugins[0].as_ref().unwrap().plugin.name,
+            "foo-plugin"
+        );
+        
+        // Should find only baz/SKILL.md (foo/bar/SKILL.md and baz/qux/* are pruned)
+        assert_eq!(contents.skill_files.len(), 1);
+        assert!(contents.skill_files[0].ends_with("baz/SKILL.md"));
     }
 
     #[test]
@@ -970,6 +1250,203 @@ mod tests {
         assert_eq!(plugin.skills.len(), 2);
         assert!(plugin.skills[0].crates.as_ref().unwrap()[0].references_crate("serde"));
         assert!(plugin.skills[1].crates.as_ref().unwrap()[0].references_crate("tokio"));
+    }
+
+    #[test]
+    fn plugin_crate_filtering() {
+        let workspace_crates = vec![
+            ("serde".to_string(), semver::Version::new(1, 0, 0)),
+            ("tokio".to_string(), semver::Version::new(1, 0, 0)),
+        ];
+
+        // Plugin with no crates filter - should apply to all
+        let plugin_no_filter = Plugin {
+            name: "no-filter".to_string(),
+            crates: None,
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(plugin_no_filter.applies_to_crates(&workspace_crates));
+
+        // Plugin with wildcard - should apply to all
+        let plugin_wildcard = Plugin {
+            name: "wildcard".to_string(),
+            crates: Some(vec!["*".to_string()]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(plugin_wildcard.applies_to_crates(&workspace_crates));
+
+        // Plugin targeting serde - should apply
+        let plugin_serde = Plugin {
+            name: "serde-plugin".to_string(),
+            crates: Some(vec!["serde".to_string()]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(plugin_serde.applies_to_crates(&workspace_crates));
+
+        // Plugin targeting non-existent crate - should not apply
+        let plugin_other = Plugin {
+            name: "other-plugin".to_string(),
+            crates: Some(vec!["other-crate".to_string()]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(!plugin_other.applies_to_crates(&workspace_crates));
+    }
+
+    #[test]
+    fn validate_plugin_requires_crates_somewhere() {
+        // Plugin with no crates anywhere - should fail
+        let plugin_no_crates = Plugin {
+            name: "no-crates".to_string(),
+            crates: None,
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(validate_plugin_has_crates(&plugin_no_crates).is_err());
+
+        // Plugin with top-level crates - should pass
+        let plugin_top_level = Plugin {
+            name: "top-level".to_string(),
+            crates: Some(vec!["serde".to_string()]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(validate_plugin_has_crates(&plugin_top_level).is_ok());
+
+        // Plugin with skill group crates - should pass
+        let plugin_skill_crates = Plugin {
+            name: "skill-crates".to_string(),
+            crates: None,
+            installation: None,
+            hooks: vec![],
+            skills: vec![SkillGroup {
+                crates: Some(vec![crate::predicate::parse("serde").unwrap()]),
+                source: PluginSource::default(),
+            }],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(validate_plugin_has_crates(&plugin_skill_crates).is_ok());
+    }
+
+    #[test]
+    fn validate_source_dir_enforces_crates_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // Create plugin with no crates anywhere
+        let plugin_dir = dir.join("no-crates-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "no-crates-plugin"
+                
+                [[hooks]]
+                name = "some-hook"
+                event = "PreToolUse"
+                command = "echo test"
+            "#},
+        )
+        .unwrap();
+
+        // Create plugin with top-level crates
+        let good_plugin_dir = dir.join("good-plugin");
+        std::fs::create_dir_all(&good_plugin_dir).unwrap();
+        std::fs::write(
+            good_plugin_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "good-plugin"
+                crates = ["serde"]
+                
+                [[hooks]]
+                name = "some-hook"
+                event = "PreToolUse"
+                command = "echo test"
+            "#},
+        )
+        .unwrap();
+
+        // Create plugin with skill-level crates
+        let skill_plugin_dir = dir.join("skill-plugin");
+        std::fs::create_dir_all(&skill_plugin_dir).unwrap();
+        std::fs::write(
+            skill_plugin_dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "skill-plugin"
+                
+                [[skills]]
+                crates = ["tokio"]
+                source.path = "skills"
+            "#},
+        )
+        .unwrap();
+
+        let results = validate_source_dir(dir).unwrap();
+        
+        // Should have 3 validation results
+        assert_eq!(results.len(), 3);
+        
+        // Find results by plugin name
+        let no_crates_result = results.iter()
+            .find(|r| r.path.to_string_lossy().contains("no-crates-plugin"))
+            .unwrap();
+        let good_result = results.iter()
+            .find(|r| r.path.to_string_lossy().contains("good-plugin"))
+            .unwrap();
+        let skill_result = results.iter()
+            .find(|r| r.path.to_string_lossy().contains("skill-plugin"))
+            .unwrap();
+
+        // Check validation results
+        assert!(no_crates_result.result.is_err(), "Plugin without crates should fail validation");
+        assert!(no_crates_result.result.as_ref().unwrap_err().to_string().contains("must specify 'crates'"));
+        
+        assert!(good_result.result.is_ok(), "Plugin with top-level crates should pass");
+        assert!(skill_result.result.is_ok(), "Plugin with skill-level crates should pass");
+    }
+
+    #[test]
+    fn validate_plugin_crates_error_message() {
+        let plugin = Plugin {
+            name: "test-plugin".to_string(),
+            crates: None,
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        
+        let err = validate_plugin_has_crates(&plugin).unwrap_err();
+        let error_msg = err.to_string();
+        
+        assert!(error_msg.contains("test-plugin"));
+        assert!(error_msg.contains("must specify 'crates'"));
+        assert!(error_msg.contains("plugin level"));
+        assert!(error_msg.contains("[[skills]] groups"));
+        assert!(error_msg.contains("[[mcp_servers]] entries"));
     }
 
     #[test]

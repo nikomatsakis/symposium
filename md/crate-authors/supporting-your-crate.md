@@ -1,12 +1,20 @@
 # Supporting your crate
 
-If you maintain a Rust crate, you can teach AI assistants how to use your library well. Think of it as documentation that the AI actually reads.
+If you maintain a Rust crate, you can extend Symposium with skills, MCP servers, or other extensions that will teach agents the best way to use your crate.
+
+## Support begins with skills
+
+The easiest way to extend symposium is by adding **custom skills** for your crate. [If this is all you want to do, read the instructions for uploading skills here.](./publishing-skills.md).
+
+## Symposium plugins give you more power
+
+If you want more power, you can author a Symposium plugin. A plugin lets you configure skills, yes, but also hooks (callbacks at particular likes, like before or after tool use), MCP servers, and so forth. The instructions for authoring a plugin are found here.
 
 ## What you can provide
 
 There are three kinds of extensions you can publish:
 
-- **Skills** — guidance documents that AI assistants receive automatically when a user's project depends on your crate.
+- **Standalone skills** — guidance documents that AI assistants receive automatically when a user's project depends on your crate.
 - **Hooks** — checks and transformations that run when the AI performs certain actions, like writing code or running commands.
 - **MCP servers** — tools and resources exposed to agents via the Model Context Protocol.
 
