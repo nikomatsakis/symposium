@@ -687,7 +687,7 @@ mod tests {
         // Create a plugin that only applies to "other-crate"
         let plugin = Plugin {
             name: "other-crate-plugin".to_string(),
-            crates: Some(vec!["other-crate".to_string()]),
+            crates: Some(vec![pred("other-crate")]),
             installation: None,
             hooks: vec![],
             skills: vec![SkillGroup {
@@ -724,7 +724,7 @@ mod tests {
         // Create a plugin with wildcard that has a group targeting different crate
         let plugin = Plugin {
             name: "wildcard-plugin".to_string(),
-            crates: Some(vec!["*".to_string()]), // Plugin applies to all
+            crates: Some(vec![pred("*")]), // Plugin applies to all
             installation: None,
             hooks: vec![],
             skills: vec![SkillGroup {
@@ -778,7 +778,7 @@ mod tests {
         // Create a plugin where all levels match serde
         let plugin = Plugin {
             name: "serde-plugin".to_string(),
-            crates: Some(vec!["serde".to_string()]), // Plugin targets serde
+            crates: Some(vec![pred("serde")]), // Plugin targets serde
             installation: None,
             hooks: vec![],
             skills: vec![SkillGroup {

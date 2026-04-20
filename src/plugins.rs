@@ -100,9 +100,9 @@ pub struct ParsedPlugin {
 #[derive(Debug, Clone, Serialize)]
 pub struct Plugin {
     pub name: String,
-    /// Crate predicates this plugin applies to. Use "*" for all crates.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crates: Option<Vec<String>>,
+    /// Crate predicates this plugin applies to. `["*"]` for all crates.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_string_or_vec_opt")]
+    pub crates: Option<Vec<crate::predicate::Predicate>>,
     pub installation: Option<Installation>,
     pub hooks: Vec<Hook>,
     pub skills: Vec<SkillGroup>,
@@ -115,26 +115,13 @@ pub struct Plugin {
 }
 
 impl Plugin {
-    /// Check if this plugin applies to the given crates.
-    /// Returns true if plugin has no crates filter, crates contains "*", or any crate matches.
+    /// Check if this plugin applies to the given workspace crates.
+    /// Returns true if plugin has no crates filter, or any predicate matches.
     pub fn applies_to_crates(&self, workspace_crates: &[(String, semver::Version)]) -> bool {
-        let Some(ref plugin_crates) = self.crates else {
-            return true; // No filter means applies to all
-        };
-
-        // Check for wildcard
-        if plugin_crates.iter().any(|c| c == "*") {
+        let Some(ref preds) = self.crates else {
             return true;
-        }
-
-        // Check if any workspace crate matches plugin crates
-        for workspace_crate in workspace_crates {
-            if plugin_crates.iter().any(|pc| pc == &workspace_crate.0) {
-                return true;
-            }
-        }
-
-        false
+        };
+        preds.iter().any(|p| p.matches(workspace_crates))
     }
 }
 
@@ -232,8 +219,8 @@ struct SourceDirContents {
 #[derive(Debug, Deserialize)]
 struct PluginManifest {
     name: String,
-    #[serde(default)]
-    crates: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec_opt")]
+    crates: Option<Vec<crate::predicate::Predicate>>,
     #[serde(default)]
     installation: Option<Installation>,
     #[serde(default)]
@@ -693,6 +680,11 @@ pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
     let mut names = std::collections::BTreeSet::new();
 
     for plugin_result in contents.plugins.into_iter().flatten() {
+        if let Some(preds) = &plugin_result.plugin.crates {
+            for pred in preds {
+                pred.collect_crate_names(&mut names);
+            }
+        }
         for group in &plugin_result.plugin.skills {
             if let Some(preds) = &group.crates {
                 for pred in preds {
@@ -751,6 +743,10 @@ pub fn load_plugin(manifest_path: &Path) -> Result<ParsedPlugin> {
 mod tests {
     use super::*;
     use indoc::indoc;
+
+    fn pred(s: &str) -> crate::predicate::Predicate {
+        crate::predicate::parse(s).unwrap()
+    }
 
     fn from_str(s: &str) -> Result<Plugin> {
         let manifest: PluginManifest = toml::from_str(s)?;
@@ -1277,7 +1273,7 @@ mod tests {
         // Plugin with wildcard - should apply to all
         let plugin_wildcard = Plugin {
             name: "wildcard".to_string(),
-            crates: Some(vec!["*".to_string()]),
+            crates: Some(vec![pred("*")]),
             installation: None,
             hooks: vec![],
             skills: vec![],
@@ -1289,7 +1285,7 @@ mod tests {
         // Plugin targeting serde - should apply
         let plugin_serde = Plugin {
             name: "serde-plugin".to_string(),
-            crates: Some(vec!["serde".to_string()]),
+            crates: Some(vec![pred("serde")]),
             installation: None,
             hooks: vec![],
             skills: vec![],
@@ -1301,7 +1297,7 @@ mod tests {
         // Plugin targeting non-existent crate - should not apply
         let plugin_other = Plugin {
             name: "other-plugin".to_string(),
-            crates: Some(vec!["other-crate".to_string()]),
+            crates: Some(vec![pred("other-crate")]),
             installation: None,
             hooks: vec![],
             skills: vec![],
@@ -1309,6 +1305,18 @@ mod tests {
             session_start_context: None,
         };
         assert!(!plugin_other.applies_to_crates(&workspace_crates));
+
+        // Plugin with version predicate - should reject wrong version
+        let plugin_version = Plugin {
+            name: "version-plugin".to_string(),
+            crates: Some(vec![pred("tokio>=2.0")]),
+            installation: None,
+            hooks: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            session_start_context: None,
+        };
+        assert!(!plugin_version.applies_to_crates(&workspace_crates));
     }
 
     #[test]
@@ -1328,7 +1336,7 @@ mod tests {
         // Plugin with top-level crates - should pass
         let plugin_top_level = Plugin {
             name: "top-level".to_string(),
-            crates: Some(vec!["serde".to_string()]),
+            crates: Some(vec![pred("serde")]),
             installation: None,
             hooks: vec![],
             skills: vec![],
