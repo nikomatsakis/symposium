@@ -109,9 +109,6 @@ pub struct Plugin {
     /// MCP servers to register for this plugin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServerEntry>,
-    /// Text to inject as additional context at session start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_start_context: Option<String>,
 }
 
 impl Plugin {
@@ -229,8 +226,6 @@ struct PluginManifest {
     skills: Vec<SkillGroup>,
     #[serde(default)]
     mcp_servers: Vec<McpServerEntry>,
-    #[serde(default, rename = "session-start-context")]
-    session_start_context: Option<String>,
 }
 
 /// Fetch/update git-based plugin sources.
@@ -734,7 +729,6 @@ pub fn load_plugin(manifest_path: &Path) -> Result<ParsedPlugin> {
             hooks: manifest.hooks,
             skills: manifest.skills,
             mcp_servers: manifest.mcp_servers,
-            session_start_context: manifest.session_start_context,
         },
     })
 }
@@ -757,7 +751,6 @@ mod tests {
             hooks: manifest.hooks,
             skills: manifest.skills,
             mcp_servers: manifest.mcp_servers,
-            session_start_context: manifest.session_start_context,
         })
     }
 
@@ -1266,7 +1259,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(plugin_no_filter.applies_to_crates(&workspace_crates));
 
@@ -1278,7 +1270,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(plugin_wildcard.applies_to_crates(&workspace_crates));
 
@@ -1290,7 +1281,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(plugin_serde.applies_to_crates(&workspace_crates));
 
@@ -1302,7 +1292,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(!plugin_other.applies_to_crates(&workspace_crates));
 
@@ -1314,7 +1303,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(!plugin_version.applies_to_crates(&workspace_crates));
     }
@@ -1329,7 +1317,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(validate_plugin_has_crates(&plugin_no_crates).is_err());
 
@@ -1341,7 +1328,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(validate_plugin_has_crates(&plugin_top_level).is_ok());
 
@@ -1356,7 +1342,6 @@ mod tests {
                 source: PluginSource::default(),
             }],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         assert!(validate_plugin_has_crates(&plugin_skill_crates).is_ok());
     }
@@ -1447,7 +1432,6 @@ mod tests {
             hooks: vec![],
             skills: vec![],
             mcp_servers: vec![],
-            session_start_context: None,
         };
         
         let err = validate_plugin_has_crates(&plugin).unwrap_err();

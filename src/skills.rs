@@ -695,7 +695,6 @@ mod tests {
                 source: PluginSource::default(),
             }],
             mcp_servers: vec![],
-            session_start_context: None,
         };
 
         let registry = PluginRegistry {
@@ -732,7 +731,6 @@ mod tests {
                 source: PluginSource::default(),
             }],
             mcp_servers: vec![],
-            session_start_context: None,
         };
 
         let registry = PluginRegistry {
@@ -789,7 +787,6 @@ mod tests {
                 },
             }],
             mcp_servers: vec![],
-            session_start_context: None,
         };
 
         let registry = PluginRegistry {
