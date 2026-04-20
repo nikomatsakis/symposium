@@ -14,6 +14,18 @@ use sacp::schema::McpServer;
 /// An MCP server entry in a plugin manifest.
 pub type McpServerEntry = McpServer;
 
+/// An MCP server entry with optional crate filtering.
+///
+/// When `crates` is present, the server is only registered if the workspace
+/// matches those predicates (ANDed with plugin-level `crates`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PluginMcpServer {
+    #[serde(default, deserialize_with = "deserialize_string_or_vec_opt")]
+    pub crates: Option<Vec<crate::predicate::Predicate>>,
+    #[serde(flatten)]
+    pub server: McpServerEntry,
+}
+
 /// Source declaration for remote plugin artifacts.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct PluginSource {
@@ -108,7 +120,7 @@ pub struct Plugin {
     pub skills: Vec<SkillGroup>,
     /// MCP servers to register for this plugin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mcp_servers: Vec<McpServerEntry>,
+    pub mcp_servers: Vec<PluginMcpServer>,
 }
 
 impl Plugin {
@@ -119,6 +131,26 @@ impl Plugin {
             return true;
         };
         preds.iter().any(|p| p.matches(workspace_crates))
+    }
+
+    /// Return MCP servers applicable to the given workspace crates.
+    ///
+    /// A server matches if its own `crates` predicates match (or are absent,
+    /// meaning it inherits from the plugin level which is already checked).
+    pub fn applicable_mcp_servers(
+        &self,
+        workspace_crates: &[(String, semver::Version)],
+    ) -> Vec<McpServerEntry> {
+        self.mcp_servers
+            .iter()
+            .filter(|s| {
+                let Some(ref preds) = s.crates else {
+                    return true;
+                };
+                preds.iter().any(|p| p.matches(workspace_crates))
+            })
+            .map(|s| s.server.clone())
+            .collect()
     }
 }
 
@@ -225,7 +257,7 @@ struct PluginManifest {
     #[serde(default)]
     skills: Vec<SkillGroup>,
     #[serde(default)]
-    mcp_servers: Vec<McpServerEntry>,
+    mcp_servers: Vec<PluginMcpServer>,
 }
 
 /// Fetch/update git-based plugin sources.
@@ -655,9 +687,12 @@ fn validate_plugin_has_crates(plugin: &Plugin) -> Result<()> {
         }
     }
 
-    // Check MCP servers for crates (if they support it in the future)
-    // For now, MCP servers don't have crates field in the sacp::McpServer struct
-    // This is a placeholder for when we add that capability
+    // Check MCP servers for crates
+    for mcp_server in &plugin.mcp_servers {
+        if mcp_server.crates.is_some() {
+            return Ok(());
+        }
+    }
 
     anyhow::bail!(
         "Plugin '{}' must specify 'crates' at the plugin level, in [[skills]] groups, or in [[mcp_servers]] entries",
@@ -682,6 +717,13 @@ pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
         }
         for group in &plugin_result.plugin.skills {
             if let Some(preds) = &group.crates {
+                for pred in preds {
+                    pred.collect_crate_names(&mut names);
+                }
+            }
+        }
+        for mcp in &plugin_result.plugin.mcp_servers {
+            if let Some(preds) = &mcp.crates {
                 for pred in preds {
                     pred.collect_crate_names(&mut names);
                 }
