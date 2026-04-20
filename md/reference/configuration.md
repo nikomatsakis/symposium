@@ -84,7 +84,7 @@ User-wide data lives under `~/.symposium/` by default. Override with environment
 | | Config | Cache | Logs |
 |---|---|---|---|
 | `SYMPOSIUM_HOME` | `$SYMPOSIUM_HOME/` | `$SYMPOSIUM_HOME/cache/` | `$SYMPOSIUM_HOME/logs/` |
-| XDG | `$XDG_CONFIG_HOME/symposium/` | `$XDG_CACHE_HOME/symposium/` | `$XDG_DATA_HOME/symposium/logs/` |
+| XDG | `$XDG_CONFIG_HOME/symposium/` | `$XDG_CACHE_HOME/symposium/` | `$XDG_STATE_HOME/symposium/logs/` |
 | Default | `~/.symposium/` | `~/.symposium/cache/` | `~/.symposium/logs/` |
 
 `SYMPOSIUM_HOME` takes precedence over XDG variables.

@@ -10,7 +10,7 @@ You could define a plugin definition with inline skills by having a directory st
 
 ```
 myplugin/
-  SYMPSOSIUM.toml
+  SYMPOSIUM.toml
   skills/
     skill-a/
       SKILL.md
@@ -22,7 +22,7 @@ where `myplugin/SYMPOSIUM.toml` is as follows:
 
 ```toml
 name = "example"
-crates = "*"
+crates = ["*"]
 
 [[skills]]
 source.path = "skills"
@@ -73,6 +73,7 @@ Each `[[hooks]]` entry declares a hook that responds to agent events.
 | `event` | string | Event type to match (e.g., `PreToolUse`). |
 | `matcher` | string | Which tool invocations to match (e.g., `Bash`). Omit to match all. |
 | `command` | string | Command to run when the hook fires. Resolved relative to the plugin directory. |
+| `format` | string | Wire format for hook input/output. One of: `symposium` (default), `claude`, `codex`, `copilot`, `gemini`, `kiro`. Controls how the hook receives input and returns output. |
 
 ### Supported hook events
 
@@ -222,4 +223,4 @@ env = []
 symposium plugin validate path/to/symposium.toml
 ```
 
-This parses the manifest and reports any errors. Use `--check-crates` to also verify that crate names exist on crates.io.
+This parses the manifest and reports any errors. Crate name checking against crates.io is on by default; use `--no-check-crates` to skip it.
