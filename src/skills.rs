@@ -278,6 +278,21 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
         .get("name")
         .context("SKILL.md frontmatter missing required `name` field")?;
 
+    // Validate description: required, non-empty, max 1024 chars.
+    let desc = frontmatter
+        .get("description")
+        .context("SKILL.md frontmatter missing required `description` field")?;
+    let trimmed_desc = desc.trim();
+    if trimmed_desc.is_empty() {
+        bail!("SKILL.md `description` must not be empty");
+    }
+    if trimmed_desc.len() > 1024 {
+        bail!(
+            "SKILL.md `description` exceeds 1024 characters ({} chars)",
+            trimmed_desc.len()
+        );
+    }
+
     // Parse skill-level crates predicates (comma-separated).
     // This is independent of group-level — both layers are ANDed at match time.
     let crates = if let Some(ref crates_str) = fm.crates {
@@ -508,6 +523,7 @@ mod tests {
             indoc! {"
                 ---
                 name: multi-crate
+                description: Multi-crate skill
                 crates: serde, tokio>=1.0
                 ---
 
@@ -560,6 +576,7 @@ mod tests {
             indoc! {"
                 ---
                 name: override
+                description: Override skill
                 crates: serde
                 ---
 
@@ -667,6 +684,7 @@ mod tests {
             indoc! {"
                 ---
                 name: bad
+                description: Bad crates skill
                 crates: >=not_valid!!
                 ---
 
@@ -943,6 +961,7 @@ mod tests {
             indoc! {"
                 ---
                 name: nested-skill
+                description: Nested skill
                 crates: tokio
                 ---
 
@@ -972,6 +991,7 @@ mod tests {
             indoc! {"
                 ---
                 name: shallow
+                description: Shallow skill
                 crates: serde
                 ---
 
@@ -988,6 +1008,7 @@ mod tests {
             indoc! {"
                 ---
                 name: nested
+                description: Nested skill
                 crates: serde
                 ---
 
@@ -1004,6 +1025,7 @@ mod tests {
             indoc! {"
                 ---
                 name: sibling
+                description: Sibling skill
                 crates: tokio
                 ---
 

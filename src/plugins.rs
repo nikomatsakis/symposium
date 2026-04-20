@@ -1103,6 +1103,7 @@ mod tests {
             indoc! {"
                 ---
                 name: my-skill
+                description: A skill
                 crates: serde
                 ---
 
@@ -1118,6 +1119,7 @@ mod tests {
             bad_skill.join("SKILL.md"),
             indoc! {"
                 ---
+                description: No name
                 crates: serde
                 ---
 
@@ -1161,6 +1163,7 @@ mod tests {
             indoc! {"
                 ---
                 name: my-skill
+                description: A skill
                 crates: anyhow
                 ---
 
@@ -1192,6 +1195,7 @@ mod tests {
             indoc! {"
                 ---
                 name: good
+                description: Good skill
                 crates: serde
                 ---
 
