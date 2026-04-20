@@ -238,6 +238,7 @@ pub struct PluginRegistry {
 }
 
 /// Raw scan results from a plugin source directory.
+#[derive(Debug)]
 struct SourceDirContents {
     plugins: Vec<Result<ParsedPlugin>>,
     /// Paths to discovered `SKILL.md` files (after recursive search and pruning).
@@ -514,13 +515,21 @@ fn scan_source_dir<P: AsRef<Path>>(dir: P) -> Result<SourceDirContents> {
 
     let dir = dir.as_ref();
 
-    // Check the root directory itself for a SKILL.md (single-skill source).
-    let root_skill = dir.join("SKILL.md");
-    if root_skill.is_file() && !dir.join("SYMPOSIUM.toml").is_file() {
-        skill_files.push(root_skill);
-    } else {
-        discover_in_directory(dir, &mut plugins, &mut skill_files)?;
+    // A plugin source should *contain* plugins/skills, not *be* one.
+    if dir.join("SYMPOSIUM.toml").is_file() {
+        anyhow::bail!(
+            "plugin source root contains SYMPOSIUM.toml — it should contain subdirectories with plugins, not be a plugin itself: {}",
+            dir.display()
+        );
     }
+    if dir.join("SKILL.md").is_file() {
+        anyhow::bail!(
+            "plugin source root contains SKILL.md — it should contain subdirectories with skills, not be a skill itself: {}",
+            dir.display()
+        );
+    }
+
+    discover_in_directory(dir, &mut plugins, &mut skill_files)?;
 
     Ok(SourceDirContents {
         plugins,
@@ -921,12 +930,10 @@ mod tests {
     }
 
     #[test]
-    fn scan_source_dir_finds_root_level_skill() {
+    fn scan_source_dir_rejects_root_level_skill() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
-        // A single skill directory used as a plugin source:
-        // the SKILL.md is at the root level.
         std::fs::write(
             dir.join("SKILL.md"),
             indoc! {"
@@ -940,10 +947,32 @@ mod tests {
         )
         .unwrap();
 
-        let contents = scan_source_dir(dir).unwrap();
-        assert!(contents.plugins.is_empty());
-        assert_eq!(contents.skill_files.len(), 1);
-        assert!(contents.skill_files[0].ends_with("SKILL.md"));
+        let err = scan_source_dir(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("plugin source root contains SKILL.md"),
+            "expected root SKILL.md error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn scan_source_dir_rejects_root_level_plugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        std::fs::write(
+            dir.join("SYMPOSIUM.toml"),
+            indoc! {r#"
+                name = "root-plugin"
+                crates = ["*"]
+            "#},
+        )
+        .unwrap();
+
+        let err = scan_source_dir(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("plugin source root contains SYMPOSIUM.toml"),
+            "expected root SYMPOSIUM.toml error, got: {err}"
+        );
     }
 
     #[test]
