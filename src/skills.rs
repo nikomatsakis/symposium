@@ -475,7 +475,6 @@ mod tests {
                 name: test-skill
                 description: Test
                 crates: serde
-                activation: always
                 ---
 
                 Use serde like this.
@@ -489,7 +488,6 @@ mod tests {
         assert_eq!(skill.frontmatter.get("name").unwrap(), "test-skill");
         assert_eq!(skill.crates.len(), 1);
         assert!(skill.crates[0].references_crate("serde"));
-        assert_eq!(skill.activation, Activation::Always);
         assert!(skill.body.contains("Use serde like this."));
     }
 
@@ -536,7 +534,6 @@ mod tests {
 
         let defaults = SkillGroup {
             crates: Some(vec![pred("tokio")]),
-            activation: Some(Activation::Always),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
@@ -544,7 +541,6 @@ mod tests {
         // Skill has no crates in frontmatter, so it's empty at skill level.
         // The plugin default provides the crates scope.
         assert!(skill.crates.is_empty());
-        assert_eq!(skill.activation, Activation::Always);
     }
 
     #[test]
@@ -557,7 +553,6 @@ mod tests {
                 ---
                 name: override
                 crates: serde
-                activation: optional
                 ---
 
                 Body.
@@ -567,7 +562,6 @@ mod tests {
 
         let defaults = SkillGroup {
             crates: Some(vec![pred("tokio")]),
-            activation: Some(Activation::Always),
             ..Default::default()
         };
         let skill = load_skill(&skill_md, &defaults).unwrap();
@@ -576,7 +570,6 @@ mod tests {
         assert_eq!(skill.crates.len(), 1);
         assert!(skill.crates[0].references_crate("serde"));
         assert!(!skill.crates[0].references_crate("tokio"));
-        assert_eq!(skill.activation, Activation::Optional);
     }
 
     #[test]
@@ -878,7 +871,6 @@ mod tests {
                 name: standalone-serde
                 description: Standalone serde skill
                 crates: serde
-                activation: always
                 ---
 
                 Body.

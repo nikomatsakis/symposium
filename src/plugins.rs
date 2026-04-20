@@ -26,9 +26,8 @@ pub struct PluginSource {
 
 /// A `[[skills]]` entry from a plugin manifest.
 ///
-/// Each group declares which crates it advises on (`crates`), workspace
-/// an activation mode, and optionally a remote
-/// source for the skill files.
+/// Each group declares which crates it advises on (`crates`) and
+/// optionally a remote source for the skill files.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillGroup {
     /// Crate predicates this group advises on (e.g., `"serde"` or `["serde", "serde_json>=1.0"]`).
@@ -491,15 +490,23 @@ pub fn load_registry(sym: &Symposium) -> PluginRegistry {
 /// Scan a plugin source directory for TOML plugin manifests and standalone skills.
 ///
 /// Discovery rules:
-/// 1. Plugin = directory with `SYMPOSIUM.toml` file (or any .toml for backward compatibility)
+/// 1. Plugin = directory with `SYMPOSIUM.toml` file
 /// 2. Skill = directory with `SKILL.md` file
 /// 3. Plugin takes precedence over skill in the same directory
 /// 4. Once a directory is claimed as plugin/skill, don't recurse into it
 fn scan_source_dir<P: AsRef<Path>>(dir: P) -> Result<SourceDirContents> {
     let mut plugins = Vec::new();
     let mut skill_files = Vec::new();
-    
-    discover_in_directory(dir.as_ref(), &mut plugins, &mut skill_files)?;
+
+    let dir = dir.as_ref();
+
+    // Check the root directory itself for a SKILL.md (single-skill source).
+    let root_skill = dir.join("SKILL.md");
+    if root_skill.is_file() && !dir.join("SYMPOSIUM.toml").is_file() {
+        skill_files.push(root_skill);
+    } else {
+        discover_in_directory(dir, &mut plugins, &mut skill_files)?;
+    }
 
     Ok(SourceDirContents {
         plugins,
@@ -559,34 +566,21 @@ fn discover_in_directory(
 
 /// What type of directory this is (plugin or skill).
 enum DirectoryType {
-    Plugin(PathBuf), // Path to SYMPOSIUM.toml or other .toml file
+    Plugin(PathBuf), // Path to SYMPOSIUM.toml
     Skill(PathBuf),  // Path to SKILL.md file
 }
 
 /// Determine if a directory contains a plugin or skill.
 /// Returns None if it contains neither.
-/// SYMPOSIUM.toml takes precedence, then any .toml file, then SKILL.md.
+/// SYMPOSIUM.toml takes precedence over SKILL.md.
 fn discover_directory_type(dir: &Path) -> Result<Option<DirectoryType>> {
-    // First check for SYMPOSIUM.toml (preferred)
+    // Check for SYMPOSIUM.toml (the only valid plugin manifest)
     let symposium_toml = dir.join("SYMPOSIUM.toml");
     if symposium_toml.is_file() {
         return Ok(Some(DirectoryType::Plugin(symposium_toml)));
     }
 
-    // Then check for any .toml file (backward compatibility)
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(None),
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
-            return Ok(Some(DirectoryType::Plugin(path)));
-        }
-    }
-
-    // Finally check for SKILL.md
+    // Check for SKILL.md
     let skill_md = dir.join("SKILL.md");
     if skill_md.is_file() {
         return Ok(Some(DirectoryType::Skill(skill_md)));
@@ -1095,17 +1089,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
-        // Valid TOML plugin
+        // Valid TOML plugin in subdirectory
+        let good_dir = dir.join("good-plugin");
+        std::fs::create_dir_all(&good_dir).unwrap();
         std::fs::write(
-            dir.join("good.toml"),
+            good_dir.join("SYMPOSIUM.toml"),
             indoc! {r#"
                 name = "good-plugin"
+                crates = ["serde"]
             "#},
         )
         .unwrap();
 
-        // Invalid TOML plugin
-        std::fs::write(dir.join("bad.toml"), "not valid toml {{{").unwrap();
+        // Invalid TOML plugin in subdirectory
+        let bad_dir = dir.join("bad-plugin");
+        std::fs::create_dir_all(&bad_dir).unwrap();
+        std::fs::write(bad_dir.join("SYMPOSIUM.toml"), "not valid toml {{{").unwrap();
 
         // Valid standalone skill
         let skill_dir = dir.join("my-skill");
@@ -1151,9 +1150,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
-        // TOML plugin with skill groups referencing crates
+        // TOML plugin with skill groups referencing crates (in subdirectory)
+        let plugin_dir = dir.join("my-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(
-            dir.join("my-plugin.toml"),
+            plugin_dir.join("SYMPOSIUM.toml"),
             indoc! {r#"
                 name = "my-plugin"
 
@@ -1189,8 +1190,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
-        // Invalid TOML (skipped)
-        std::fs::write(dir.join("bad.toml"), "not valid {{{").unwrap();
+        // Invalid TOML in subdirectory (skipped)
+        let bad_dir = dir.join("bad-plugin");
+        std::fs::create_dir_all(&bad_dir).unwrap();
+        std::fs::write(bad_dir.join("SYMPOSIUM.toml"), "not valid {{{").unwrap();
 
         // Valid standalone skill
         let skill_dir = dir.join("good-skill");
