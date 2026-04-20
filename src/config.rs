@@ -298,7 +298,7 @@ impl Symposium {
     }
 
     fn logs_dir(&self) -> PathBuf {
-        let dir = self.config_dir.join("logs");
+        let dir = resolve_logs_dir(&self.config_dir);
         let _ = fs::create_dir_all(&dir);
         dir
     }
@@ -327,6 +327,19 @@ fn resolve_config_dir_from_env() -> PathBuf {
     } else {
         default_home()
     }
+}
+
+/// Resolve logs dir from environment.
+///
+/// Resolution: SYMPOSIUM_HOME/logs → XDG_STATE_HOME/symposium/logs → config_dir/logs.
+fn resolve_logs_dir(config_dir: &Path) -> PathBuf {
+    if let Ok(home) = env::var("SYMPOSIUM_HOME") {
+        return PathBuf::from(home).join("logs");
+    }
+    if let Ok(xdg) = env::var("XDG_STATE_HOME") {
+        return PathBuf::from(xdg).join("symposium").join("logs");
+    }
+    config_dir.join("logs")
 }
 
 /// Resolve cache dir from environment.
@@ -507,5 +520,36 @@ mod tests {
         let config: Config = toml::from_str("").unwrap();
         assert!(config.agents.is_empty());
         assert!(config.auto_sync); // default true
+    }
+
+    #[test]
+    fn resolve_logs_dir_uses_xdg_state_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg_state = tmp.path().join("state");
+        std::fs::create_dir_all(&xdg_state).unwrap();
+
+        // Temporarily set XDG_STATE_HOME and unset SYMPOSIUM_HOME
+        let old_state = env::var("XDG_STATE_HOME").ok();
+        let old_home = env::var("SYMPOSIUM_HOME").ok();
+        unsafe {
+            env::set_var("XDG_STATE_HOME", &xdg_state);
+            env::remove_var("SYMPOSIUM_HOME");
+        }
+
+        let result = resolve_logs_dir(tmp.path());
+
+        // Restore
+        unsafe {
+            match old_state {
+                Some(v) => env::set_var("XDG_STATE_HOME", v),
+                None => env::remove_var("XDG_STATE_HOME"),
+            }
+            match old_home {
+                Some(v) => env::set_var("SYMPOSIUM_HOME", v),
+                None => env::remove_var("SYMPOSIUM_HOME"),
+            }
+        }
+
+        assert_eq!(result, xdg_state.join("symposium").join("logs"));
     }
 }
