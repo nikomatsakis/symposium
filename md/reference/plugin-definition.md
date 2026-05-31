@@ -169,7 +169,7 @@ install_commands = [
 
 ## `[[hooks]]`
 
-Each `[[hooks]]` entry declares a hook that responds to agent events.
+Each `[[hooks]]` entry declares a hook that responds to agent events. For the JSON schemas that symposium-format hooks receive and produce, see [Symposium hook events](./hook-events.md).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -182,7 +182,7 @@ Each `[[hooks]]` entry declares a hook that responds to agent events.
 | `args` | array (optional) | Invocation arguments. Forbidden when the installation also declares `args`. |
 | `requirements` | array (optional) | Installations to acquire before running. Same shape as `command` (string name or inline declaration). |
 | `agent` | string (optional) | Restrict the hook to a specific agent (`claude`, `copilot`, `gemini`, `kiro`, …). |
-| `format` | string | Wire format for hook input/output. One of: `symposium` (default), `claude`, `codex`, `copilot`, `gemini`, `kiro`. |
+| `format` | string | Hook delivery mode. `symposium` (default): symposium converts agent events to its canonical format and delivers the hook at runtime. Any agent name (`claude`, `codex`, `copilot`, `gemini`, `kiro`): the hook is registered natively into that agent's config at sync time and invoked directly by the agent — symposium skips delivery at runtime. See [Hooks](../crate-authors/authoring-a-plugin.md#hooks). |
 
 ### Examples
 
@@ -260,6 +260,28 @@ event = "PreToolUse"
 command = "rtk"
 args = ["rewrite"]
 ```
+
+### Native hooks (agent-specific)
+
+A native hook is registered directly into an agent's configuration and invoked by the agent itself. Use this when you need full access to an agent's event schema. Symposium skips delivery for any plugin that has a native hook matching the current agent.
+
+A plugin with a native Claude hook and a symposium fallback:
+
+```toml
+[[hooks]]
+name = "check-claude"
+event = "PreToolUse"
+format = "claude"
+command = { script = "hooks/check-claude.sh" }
+
+[[hooks]]
+name = "check-portable"
+event = "PreToolUse"
+format = "symposium"
+command = { script = "hooks/check-generic.sh" }
+```
+
+On Claude, only `check-claude` runs (invoked natively by Claude Code). On other agents, only `check-portable` runs (delivered by symposium). Requirements and installations work the same way for native hooks — they are acquired at sync time rather than at dispatch time.
 
 ### Requirements
 

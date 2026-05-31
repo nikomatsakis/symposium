@@ -21,7 +21,9 @@ Scans workspace dependencies, installs applicable skills into agent directories,
 
 7. **Reap stale skills** — across every known agent's skills parent directory, remove any subdirectory that contains the `.symposium` marker but wasn't installed this sync. Directories without the marker (user-managed) are left untouched.
 
-8. **Register hooks** — ensure global hooks and MCP servers are registered for all configured agents. Unregister hooks for agents no longer in the config.
+8. **Register hooks** — ensure global hooks and MCP servers are registered for all configured agents. Unregister hooks for agents no longer in the config. This includes:
+   - Symposium's own global hook handler (e.g., `cargo-agents hook claude pre-tool-use`).
+   - **Native plugin hooks**: for each plugin that declares a hook with a non-symposium `format` (e.g., `format = "claude"`), register the hook's command directly into that agent's configuration using the agent's native hook format. These hooks are invoked by the agent itself — symposium is not in the loop at runtime. See [Hooks](./hooks.md) for the conceptual model.
 
 ## Marker file
 

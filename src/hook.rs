@@ -313,6 +313,7 @@ pub async fn dispatch_builtin(
             handle_user_prompt_submit(sym, prompt).await
         }
         symposium::InputEvent::SessionStart(session) => handle_session_start(sym, session),
+        _ => symposium::OutputEvent::empty_for(HookEvent::PreToolUse),
     }
 }
 
@@ -601,12 +602,12 @@ mod tests {
     async fn builtin_pre_tool_use_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let sym = Symposium::from_dir(tmp.path());
-        let input = symposium::InputEvent::PreToolUse(symposium::PreToolUseInput {
-            tool_name: "Bash".to_string(),
-            tool_input: serde_json::Value::default(),
-            session_id: None,
-            cwd: None,
-        });
+        let input = symposium::InputEvent::PreToolUse(symposium::PreToolUseInput::new(
+            "Bash".to_string(),
+            serde_json::Value::default(),
+            None,
+            None,
+        ));
         let output = dispatch_builtin(&sym, &input).await;
         assert!(output.additional_context().is_none());
     }
@@ -615,13 +616,13 @@ mod tests {
     async fn builtin_post_tool_use_returns_empty_for_now() {
         let tmp = tempfile::tempdir().unwrap();
         let sym = Symposium::from_dir(tmp.path());
-        let input = symposium::InputEvent::PostToolUse(symposium::PostToolUseInput {
-            tool_name: "Bash".to_string(),
-            tool_input: serde_json::json!({"command": "ls"}),
-            tool_response: serde_json::json!({"stdout": "file.rs"}),
-            session_id: Some("test-session".to_string()),
-            cwd: Some("/tmp".to_string()),
-        });
+        let input = symposium::InputEvent::PostToolUse(symposium::PostToolUseInput::new(
+            "Bash".to_string(),
+            serde_json::json!({"command": "ls"}),
+            serde_json::json!({"stdout": "file.rs"}),
+            Some("test-session".to_string()),
+            Some("/tmp".to_string()),
+        ));
         let output = dispatch_builtin(&sym, &input).await;
         assert!(output.additional_context().is_none());
     }
@@ -630,11 +631,11 @@ mod tests {
     async fn builtin_user_prompt_submit_returns_empty_for_now() {
         let tmp = tempfile::tempdir().unwrap();
         let sym = Symposium::from_dir(tmp.path());
-        let input = symposium::InputEvent::UserPromptSubmit(symposium::UserPromptSubmitInput {
-            prompt: "Use tokio for async".to_string(),
-            session_id: Some("test-session".to_string()),
-            cwd: Some("/tmp".to_string()),
-        });
+        let input = symposium::InputEvent::UserPromptSubmit(symposium::UserPromptSubmitInput::new(
+            "Use tokio for async".to_string(),
+            Some("test-session".to_string()),
+            Some("/tmp".to_string()),
+        ));
         let output = dispatch_builtin(&sym, &input).await;
         assert!(output.additional_context().is_none());
     }
