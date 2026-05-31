@@ -67,7 +67,12 @@ macro_rules! copilot_output_impl {
                 out
             }
             fn to_symposium(&self) -> symposium::OutputEvent {
+                let decision = match self.permission_decision.as_deref() {
+                    Some("deny") => symposium_hook::Decision::Deny,
+                    _ => symposium_hook::Decision::Allow,
+                };
                 symposium::OutputEvent::PreToolUse(symposium::PreToolUseOutput::new(
+                    decision,
                     self.additional_context.clone(),
                     None,
                 ))

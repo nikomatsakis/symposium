@@ -163,7 +163,12 @@ impl AgentHookOutput for CodexPreToolUseOutput {
             .unwrap_or_default()
     }
     fn to_symposium(&self) -> symposium::OutputEvent {
+        let decision = match self.decision.as_deref() {
+            Some("block") | Some("deny") => symposium_hook::Decision::Deny,
+            _ => symposium_hook::Decision::Allow,
+        };
         symposium::OutputEvent::PreToolUse(symposium::PreToolUseOutput::new(
+            decision,
             self.hook_specific_output
                 .as_ref()
                 .and_then(|h| h.additional_context.clone()),

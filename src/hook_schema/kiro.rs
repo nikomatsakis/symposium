@@ -72,6 +72,7 @@ macro_rules! kiro_output_impl {
             }
             fn to_symposium(&self) -> symposium::OutputEvent {
                 symposium::OutputEvent::PreToolUse(symposium::PreToolUseOutput::new(
+                    Default::default(),
                     self.additional_context.clone(),
                     None,
                 ))

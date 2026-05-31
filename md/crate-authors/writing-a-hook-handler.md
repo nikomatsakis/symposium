@@ -4,9 +4,16 @@ This guide walks through writing a symposium hook handler in Rust using the `sym
 
 ## Step 1. Create a new binary crate
 
+Create your new crate:
+
 ```bash
 cargo new my-hook-handler
 cd my-hook-handler
+```
+
+And then add symposium-hook to your dependencies:
+
+```bash
 cargo add symposium-hook
 ```
 
@@ -19,16 +26,16 @@ Implement `HookHandler` and override the methods for the events you care about:
 ```rust
 // src/main.rs
 use std::process::ExitCode;
-use symposium_hook::{HookHandler, PreToolUseInput, Response, run};
+use symposium_hook::{HookHandler, PreToolUseInput, PreToolUseOutput, run};
 
 struct MyHook;
 
 impl HookHandler for MyHook {
-    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<Response> {
+    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<PreToolUseOutput> {
         if event.tool_name == "Bash" {
-            Ok(Response::context("Remember: prefer non-destructive commands"))
+            Ok(PreToolUseOutput::context("Remember: prefer non-destructive commands"))
         } else {
-            Ok(Response::empty())
+            Ok(PreToolUseOutput::default())
         }
     }
 }
@@ -43,9 +50,9 @@ The `run()` function:
 1. Reads symposium canonical JSON from stdin.
 2. Deserializes it into an `Input` event.
 3. Calls `handler.handle_event()`, which dispatches to the appropriate method.
-4. Serializes the response to stdout (or writes to stderr and exits with code 2 for blocks).
+4. Serializes the output to stdout.
 
-You only need to override the methods you care about — unimplemented methods default to `Ok(Response::empty())`.
+You only need to override the methods you care about — unimplemented methods return the default (empty) output for their event type.
 
 ## Step 3. Register it in your plugin manifest
 
@@ -61,28 +68,35 @@ event = "PreToolUse"
 command = { source = "cargo", crate = "my-hook-handler", executable = "my-hook-handler" }
 ```
 
-## Response types
+## Output types
 
-Your handler methods return `anyhow::Result<Response>`:
+Each handler method returns its event-specific output type:
 
-| Return value | Effect |
-|-------------|--------|
-| `Ok(Response::empty())` | No-op. Action proceeds, no output. |
-| `Ok(Response::context("..."))` | Inject text into the agent's context for this event. |
-| `Ok(Response::update_input(value))` | Replace the tool input (only for `PreToolUse`). |
-| `Ok(Response::context_and_input("...", value))` | Inject context and replace tool input. |
-| `Ok(Response::block("reason"))` | Block the action. Exits with code 2, reason on stderr. |
-| `Err(...)` | Error. Exits with code 1, error message on stderr. |
+| Method | Return type | Key fields |
+|--------|-------------|------------|
+| `pre_tool_use` | `PreToolUseOutput` | `additional_context`, `updated_input` |
+| `post_tool_use` | `PostToolUseOutput` | `additional_context` |
+| `user_prompt_submit` | `UserPromptSubmitOutput` | `additional_context` |
+| `session_start` | `SessionStartOutput` | `additional_context` |
+
+Each output type has convenience constructors:
+
+- `::default()` — empty output, no-op.
+- `::context("...")` — inject text into the agent's context.
+- `PreToolUseOutput::with_updated_input(value)` — replace the tool input.
+- `PreToolUseOutput::deny("reason")` — block the tool call with a reason.
+
+Return `Err(...)` from any method to report an error (exit code 1, message on stderr).
 
 ## The `HookHandler` trait
 
 ```rust
 pub trait HookHandler {
-    fn handle_event(&self, input: &Input) -> anyhow::Result<Response> { /* dispatches */ }
-    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<Response> { /* empty */ }
-    fn post_tool_use(&self, event: &PostToolUseInput) -> anyhow::Result<Response> { /* empty */ }
-    fn user_prompt_submit(&self, event: &UserPromptSubmitInput) -> anyhow::Result<Response> { /* empty */ }
-    fn session_start(&self, event: &SessionStartInput) -> anyhow::Result<Response> { /* empty */ }
+    fn handle_event(&self, input: &Input) -> anyhow::Result<Output> { /* dispatches */ }
+    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<PreToolUseOutput> { /* default */ }
+    fn post_tool_use(&self, event: &PostToolUseInput) -> anyhow::Result<PostToolUseOutput> { /* default */ }
+    fn user_prompt_submit(&self, event: &UserPromptSubmitInput) -> anyhow::Result<UserPromptSubmitOutput> { /* default */ }
+    fn session_start(&self, event: &SessionStartInput) -> anyhow::Result<SessionStartOutput> { /* default */ }
 }
 ```
 
@@ -109,20 +123,22 @@ echo '{"PreToolUse":{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"ses
 
 ```rust
 use std::process::ExitCode;
-use symposium_hook::{HookHandler, PreToolUseInput, Response, run};
+use symposium_hook::{HookHandler, PreToolUseInput, PreToolUseOutput, run};
 
 struct BlockDestructive;
 
 impl HookHandler for BlockDestructive {
-    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<Response> {
+    fn pre_tool_use(&self, event: &PreToolUseInput) -> anyhow::Result<PreToolUseOutput> {
         if event.tool_name == "Bash" {
             if let Some(cmd) = event.tool_input.get("command").and_then(|v| v.as_str()) {
                 if cmd.contains("rm -rf") {
-                    return Ok(Response::block("Destructive rm -rf commands are not allowed"));
+                    return Ok(PreToolUseOutput::deny(
+                        "Destructive rm -rf commands are not allowed"
+                    ));
                 }
             }
         }
-        Ok(Response::empty())
+        Ok(PreToolUseOutput::default())
     }
 }
 
@@ -135,13 +151,13 @@ fn main() -> ExitCode {
 
 ```rust
 use std::process::ExitCode;
-use symposium_hook::{HookHandler, SessionStartInput, Response, run};
+use symposium_hook::{HookHandler, SessionStartInput, SessionStartOutput, run};
 
 struct InjectContext;
 
 impl HookHandler for InjectContext {
-    fn session_start(&self, _event: &SessionStartInput) -> anyhow::Result<Response> {
-        Ok(Response::context(
+    fn session_start(&self, _event: &SessionStartInput) -> anyhow::Result<SessionStartOutput> {
+        Ok(SessionStartOutput::context(
             "This project uses tokio 1.x for async. Prefer spawn over block_on."
         ))
     }

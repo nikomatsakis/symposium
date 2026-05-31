@@ -169,7 +169,12 @@ impl AgentHookOutput for ClaudePreToolUseOutput {
     }
     fn to_symposium(&self) -> symposium::OutputEvent {
         let h = self.hook_specific_output.as_ref();
+        let decision = match h.and_then(|h| h.permission_decision.as_deref()) {
+            Some("deny") => symposium_hook::Decision::Deny,
+            _ => symposium_hook::Decision::Allow,
+        };
         symposium::OutputEvent::PreToolUse(symposium::PreToolUseOutput::new(
+            decision,
             h.and_then(|h| h.additional_context.clone()),
             h.and_then(|h| h.updated_input.clone()),
         ))

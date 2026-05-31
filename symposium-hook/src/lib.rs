@@ -244,9 +244,23 @@ impl Output {
 }
 
 /// Output for a `PreToolUse` event.
+/// Decision for a `PreToolUse` hook.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Decision {
+    /// Allow the tool call to proceed (default).
+    #[default]
+    Allow,
+    /// Block the tool call.
+    Deny,
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PreToolUseOutput {
+    #[serde(default, skip_serializing_if = "Decision::is_allow")]
+    pub decision: Decision,
     #[serde(
         rename = "additionalContext",
         default,
@@ -261,13 +275,21 @@ pub struct PreToolUseOutput {
     pub updated_input: Option<serde_json::Value>,
 }
 
+impl Decision {
+    fn is_allow(&self) -> bool {
+        *self == Decision::Allow
+    }
+}
+
 impl PreToolUseOutput {
     /// Create an output with all fields specified.
     pub fn new(
+        decision: Decision,
         additional_context: Option<String>,
         updated_input: Option<serde_json::Value>,
     ) -> Self {
         Self {
+            decision,
             additional_context,
             updated_input,
         }
@@ -275,12 +297,27 @@ impl PreToolUseOutput {
 
     /// Create an output that injects additional context.
     pub fn context(text: impl Into<String>) -> Self {
-        Self::new(Some(text.into()), None)
+        Self {
+            additional_context: Some(text.into()),
+            ..Default::default()
+        }
     }
 
     /// Create an output that replaces the tool input.
     pub fn with_updated_input(input: serde_json::Value) -> Self {
-        Self::new(None, Some(input))
+        Self {
+            updated_input: Some(input),
+            ..Default::default()
+        }
+    }
+
+    /// Deny the tool call with a reason.
+    pub fn deny(reason: impl Into<String>) -> Self {
+        Self {
+            decision: Decision::Deny,
+            additional_context: Some(reason.into()),
+            ..Default::default()
+        }
     }
 }
 

@@ -108,6 +108,7 @@ Your hook writes a JSON object to stdout. The object is wrapped in an enum tag m
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `decision` | `"allow"` or `"deny"` | Whether to allow or block the tool call. Defaults to `"allow"` and may be omitted. |
 | `additionalContext` | string or null | Text injected into the agent's context for this tool call. |
 | `updatedInput` | object or null | Replacement tool input. If set, overrides the original `tool_input`. |
 
