@@ -302,7 +302,17 @@ pub async fn sync(sym: &Symposium, cwd: &Path, out: &Output) -> Result<()> {
                         out.warn(format!("failed to mark {}: {e}", display_path(&dest_dir)));
                     }
                     installed_dirs.insert(dest_dir.clone());
-                    tracing::info!(skill = %dir_name, agent = %agent_name, dest = %dest_dir.display(), "installed skill");
+                    tracing::info!(
+                        skill = %dir_name,
+                        agent = %agent_name,
+                        dest = %dest_dir.display(),
+                        report = %crate::report::SyncReportEvent::SkillInstalled {
+                            skill: dir_name.clone(),
+                            agent: agent_name.clone(),
+                            dest: display_path(&dest_dir),
+                        },
+                        "installed skill"
+                    );
                     out.done(format!(
                         "installed skill {dir_name} → {}",
                         display_path(&dest_dir)
@@ -384,7 +394,13 @@ pub async fn sync(sym: &Symposium, cwd: &Path, out: &Output) -> Result<()> {
             }
             match fs::remove_dir_all(&path) {
                 Ok(()) => {
-                    tracing::info!(path = %path.display(), "removed stale skill");
+                    tracing::info!(
+                        path = %path.display(),
+                        report = %crate::report::SyncReportEvent::SkillRemoved {
+                            path: display_path(&path),
+                        },
+                        "removed stale skill"
+                    );
                     out.removed(format!("removed {}", display_path(&path)));
                 }
                 Err(e) => {

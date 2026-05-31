@@ -5,8 +5,17 @@ Synchronize skills with workspace dependencies.
 ## Usage
 
 ```bash
-cargo agents sync
+cargo agents sync [OPTIONS]
 ```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-v`, `--verbose` | Print detailed information about each plugin and skill considered, including why skills were included or skipped. |
+| `--json` | Output a structured JSON report instead of human-readable text. Combine with `-v` to include the full decision trace. |
+
+Without flags, sync prints only the final actions (installs, removals). With `-v`, it additionally shows each plugin, skill group, and skill that was evaluated. With `--json`, stdout receives a JSON array of event objects; human output is suppressed.
 
 ## Behavior
 

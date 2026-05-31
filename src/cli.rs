@@ -56,7 +56,15 @@ pub enum Commands {
     },
 
     /// Synchronize skills with workspace dependencies
-    Sync,
+    Sync {
+        /// Print detailed information about each skill considered
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Output structured JSON report instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Hook entry point invoked by your agent (internal)
     #[command(hide = true)]
@@ -144,7 +152,7 @@ pub async fn run(sym: &mut Symposium, cmd: Commands, cwd: &Path, out: &Output) -
             init::init(sym, out, &opts).await
         }
 
-        Commands::Sync => sync::sync(sym, cwd, out).await,
+        Commands::Sync { .. } => sync::sync(sym, cwd, out).await,
 
         Commands::SelfUpdate => self_update::self_update(sym, out),
 

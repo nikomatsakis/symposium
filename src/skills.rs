@@ -12,6 +12,15 @@ use crate::config::Symposium;
 use crate::plugins::{ParsedPlugin, PluginRegistry, PluginSource, SkillGroup};
 use crate::predicate::{self, Predicate, PredicateSet};
 
+fn source_display(source: &PluginSource) -> String {
+    match source {
+        PluginSource::None => "none".into(),
+        PluginSource::Path(p) => format!("path:{}", p.display()),
+        PluginSource::Git(url) => format!("git:{url}"),
+        PluginSource::CratePath(cp) => format!("crate_path:{}", cp.as_str()),
+    }
+}
+
 /// A parsed skill from a SKILL.md file.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -170,8 +179,23 @@ pub async fn skills_applicable_to(
         let plugin = &parsed.plugin;
         // First check if plugin applies to these crates
         if !plugin.applies_to_crates(&for_crates) {
+            tracing::debug!(
+                report = %crate::report::SyncReportEvent::PluginConsidered {
+                    plugin: plugin.name.clone(),
+                    matched: false,
+                    reason: Some("plugin-level crate predicates not satisfied".into()),
+                },
+            );
             continue;
         }
+
+        tracing::debug!(
+            report = %crate::report::SyncReportEvent::PluginConsidered {
+                plugin: plugin.name.clone(),
+                matched: true,
+                reason: None,
+            },
+        );
 
         for group in &plugin.skills {
             let (group_crates, skills) =
@@ -181,6 +205,7 @@ pub async fn skills_applicable_to(
                 collect_skill_applicable_to(
                     &skill,
                     origin,
+                    &plugin.name,
                     &plugin.crates,
                     &group_crates,
                     &for_crates,
@@ -192,11 +217,21 @@ pub async fn skills_applicable_to(
 
     // Standalone skills already carry their own `SkillOrigin` (computed
     // from the plugin source name and the skill's path within that source).
+    if !registry.standalone_skills.is_empty() {
+        tracing::debug!(
+            report = %crate::report::SyncReportEvent::PluginConsidered {
+                plugin: "(standalone skills)".into(),
+                matched: true,
+                reason: None,
+            },
+        );
+    }
     let empty = PredicateSet { predicates: vec![] };
     for entry in &registry.standalone_skills {
         collect_skill_applicable_to(
             &entry.skill,
             entry.origin.clone(),
+            "(standalone skills)",
             &empty,
             &empty,
             &for_crates,
@@ -238,6 +273,22 @@ async fn load_skills_for_group(
     // Pre-fetch filtering: skip groups whose crate predicates don't match any target.
     if !group_crates.predicates.is_empty() && !group_crates.matches(for_crates) {
         tracing::debug!(plugin = %plugin_path.display(), "skill group crates don't match, skipping");
+        let crates_display = group_crates
+            .predicates
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        tracing::debug!(
+            report = %crate::report::SyncReportEvent::SkillGroupConsidered {
+                plugin: plugin.name.clone(),
+                group_crates: Some(crates_display),
+                source: Some(source_display(&group.source)),
+                matched: false,
+                skills_found: None,
+                reason: Some("group crate predicates not satisfied".into()),
+            },
+        );
         return (group_crates, Vec::new());
     }
 
@@ -260,11 +311,26 @@ async fn load_skills_for_group(
             load_path_skills(&dir, group, parsed)
         }
         PluginSource::None => {
-            // No source — nothing to discover. Kept distinct from the
-            // path branch so we don't synthesize a bogus skill dir.
             Vec::new()
         }
     };
+
+    let crates_display = group_crates
+        .predicates
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    tracing::debug!(
+        report = %crate::report::SyncReportEvent::SkillGroupConsidered {
+            plugin: plugin.name.clone(),
+            group_crates: if crates_display.is_empty() { None } else { Some(crates_display) },
+            source: Some(source_display(&group.source)),
+            matched: true,
+            skills_found: Some(skills.len()),
+            reason: None,
+        },
+    );
 
     (group_crates, skills)
 }
@@ -310,7 +376,16 @@ async fn load_crate_path_skills(
                     version,
                 };
                 let dir = result.path.join(crate_path);
-                for skill_result in discover_skills(&dir, group) {
+                let discovered = discover_skills(&dir, group);
+                tracing::debug!(
+                    report = %crate::report::SyncReportEvent::SkillSourceSearched {
+                        plugin: format!("crate:{}", result.name),
+                        source: format!("crate_path:{crate_path}"),
+                        path: dir.display().to_string(),
+                        skills_found: discovered.iter().filter(|r| r.is_ok()).count(),
+                    },
+                );
+                for skill_result in discovered {
                     match skill_result {
                         Ok(skill) => skills.push((skill, origin.clone())),
                         Err(e) => tracing::warn!(
@@ -345,8 +420,17 @@ async fn load_git_skills(
     let Some((gh, cache_dir, commit_sha)) = fetch_git_skill_source(sym, url).await else {
         return Vec::new();
     };
+    let discovered = discover_skills(&cache_dir, group);
+    tracing::debug!(
+        report = %crate::report::SyncReportEvent::SkillSourceSearched {
+            plugin: format!("{}/{}", gh.owner, gh.repo),
+            source: format!("git:{url}"),
+            path: cache_dir.display().to_string(),
+            skills_found: discovered.iter().filter(|r| r.is_ok()).count(),
+        },
+    );
     let mut skills = Vec::new();
-    for result in discover_skills(&cache_dir, group) {
+    for result in discovered {
         match result {
             Ok(skill) => {
                 let skill_path = skill_path_within_repo(&cache_dir, &skill.path, &gh.path);
@@ -374,8 +458,17 @@ fn load_path_skills(
     group: &SkillGroup,
     parsed: &ParsedPlugin,
 ) -> Vec<(Skill, SkillOrigin)> {
+    let discovered = discover_skills(dir, group);
+    tracing::debug!(
+        report = %crate::report::SyncReportEvent::SkillSourceSearched {
+            plugin: parsed.plugin.name.clone(),
+            source: format!("path:{}", dir.strip_prefix(&parsed.source_dir).unwrap_or(dir).display()),
+            path: dir.display().to_string(),
+            skills_found: discovered.iter().filter(|r| r.is_ok()).count(),
+        },
+    );
     let mut skills = Vec::new();
-    for result in discover_skills(dir, group) {
+    for result in discovered {
         match result {
             Ok(skill) => {
                 let origin = SkillOrigin::Source {
@@ -615,6 +708,7 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
 fn collect_skill_applicable_to(
     skill: &Skill,
     origin: SkillOrigin,
+    plugin_name: &str,
     plugin_crates: &PredicateSet,
     group_crates: &PredicateSet,
     for_crates: &[(String, semver::Version)],
@@ -640,8 +734,25 @@ fn collect_skill_applicable_to(
     };
 
     if !entry.matches_workspace(for_crates) {
+        tracing::debug!(
+            report = %crate::report::SyncReportEvent::SkillConsidered {
+                skill: skill.name().to_string(),
+                plugin: plugin_name.to_string(),
+                matched: false,
+                reason: Some("skill-level crate predicates not satisfied".into()),
+            },
+        );
         return;
     }
+
+    tracing::debug!(
+        report = %crate::report::SyncReportEvent::SkillConsidered {
+            skill: skill.name().to_string(),
+            plugin: plugin_name.to_string(),
+            matched: true,
+            reason: None,
+        },
+    );
     results.push(entry);
 }
 

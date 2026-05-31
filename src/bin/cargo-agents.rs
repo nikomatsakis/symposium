@@ -6,13 +6,13 @@ use symposium::config;
 use symposium::hook;
 use symposium::output::Output;
 use symposium::plugins;
+use symposium::report;
 use symposium::self_update;
 use symposium::state;
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let mut sym = config::Symposium::from_environment();
-    sym.init_logging();
 
     // When invoked as `cargo agents`, cargo passes "agents" as the first arg.
     // Strip it so clap sees the real arguments.
@@ -26,10 +26,30 @@ async fn main() -> ExitCode {
     };
     let cli = Cli::parse_from(filtered);
 
+    // Build the report layer if sync --verbose or --json was requested.
+    let (report_layer, report_handle) = match &cli.command {
+        Some(Commands::Sync { verbose, json }) if *verbose || *json => {
+            let mode = if *json {
+                report::ReportMode::Json
+            } else {
+                report::ReportMode::Verbose
+            };
+            let level = if *verbose {
+                tracing::Level::DEBUG
+            } else {
+                tracing::Level::INFO
+            };
+            let (layer, handle) = report::ReportLayer::new(mode, level);
+            (Some(layer), Some(handle))
+        }
+        _ => (None, None),
+    };
+    sym.init_logging(report_layer);
+
     // Log the command being invoked
     match &cli.command {
         Some(Commands::Init { .. }) => tracing::info!("cargo agents init"),
-        Some(Commands::Sync) => tracing::info!("cargo agents sync"),
+        Some(Commands::Sync { .. }) => tracing::info!("cargo agents sync"),
         Some(Commands::Plugin { command }) => {
             tracing::info!(subcommand = ?command, "cargo agents plugin");
         }
@@ -46,9 +66,11 @@ async fn main() -> ExitCode {
     // Stamp state.toml with the running binary version (silently updates on mismatch).
     state::ensure_current(sym.config_dir());
 
-    // Hook commands are quiet by default (they're invoked by the agent, not the user)
+    // Hook commands are quiet by default (they're invoked by the agent, not the user).
+    // JSON mode also suppresses human output (only JSON goes to stdout).
     let is_hook = matches!(cli.command, Some(Commands::Hook { .. }));
-    let out = if cli.quiet || is_hook {
+    let is_json = matches!(cli.command, Some(Commands::Sync { json: true, .. }));
+    let out = if cli.quiet || is_hook || is_json {
         Output::quiet()
     } else {
         Output::normal()
@@ -88,7 +110,15 @@ async fn main() -> ExitCode {
 
         // Everything else delegates to the library
         Some(cmd) => match symposium::cli::run(&mut sym, cmd, &cwd, &out).await {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(()) => {
+                if let Some(handle) = report_handle {
+                    let events = handle.drain();
+                    if !events.is_empty() {
+                        println!("{}", serde_json::to_string_pretty(&events).unwrap());
+                    }
+                }
+                ExitCode::SUCCESS
+            }
             Err(e) => {
                 eprintln!("Error: {e:#}");
                 ExitCode::FAILURE

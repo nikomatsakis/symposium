@@ -7,6 +7,7 @@ pub mod hook_schema;
 pub mod init;
 pub mod output;
 pub mod plugins;
+pub mod report;
 pub mod self_update;
 pub mod state;
 pub mod sync;
