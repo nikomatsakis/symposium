@@ -24,7 +24,7 @@ We currently require an entry in our central [recommendations repository][rr] be
 
 With your manifest in place, you can add any combination of the extension types below.
 
-## Skills
+### Skills
 
 Skills are guidance documents that teach AI assistants how to use a crate. Each skill is a directory containing a `SKILL.md` file with YAML frontmatter and a markdown body:
 
@@ -40,11 +40,11 @@ Always call `.validate()` before passing widgets to the runtime.
 
 See the [Skill definition reference](../reference/skill-definition.md) for the full format and the [agentskills.io quickstart](https://agentskills.io/skill-creation/quickstart) for writing effective skills.
 
-### Embedding skills in your crate (recommended)
+#### Embedding skills in your crate (recommended)
 
 If you maintain the crate, we recommend shipping skills directly in your source tree. This way users always get skills matching the exact version they have installed.
 
-#### 1. Put skills in your crate sources under `skills/`
+##### 1. Put skills in your crate sources under `skills/`
 
 ```
 my-crate/
@@ -58,7 +58,7 @@ my-crate/
             SKILL.md
 ```
 
-#### 2. Add `source = "crate"` to your manifest
+##### 2. Add `source = "crate"` to your manifest
 
 ```toml
 # `my-crate/SYMPOSIUM.toml` on the symposium-dev/recommendations repository
@@ -71,7 +71,7 @@ source = "crate"
 
 Symposium fetches the crate source (from the local cargo cache or crates.io) and discovers skills in the `skills/` directory.
 
-#### Prefer a directory other than `skills/`?
+##### Prefer a directory other than `skills/`?
 
 Use `source.crate_path` to specify a custom path:
 
@@ -80,7 +80,7 @@ Use `source.crate_path` to specify a custom path:
 source.crate_path = "docs/agent-skills"
 ```
 
-### Standalone skills (on the recommendations repo)
+#### Standalone skills (on the recommendations repo)
 
 You can also upload skills directly to the [recommendations repo][rr] — without embedding them in the crate source. This is the right approach when you're writing skills for a crate you don't maintain.
 
@@ -117,7 +117,7 @@ crates: widgetlib=1.0
 Guidance body here.
 ```
 
-### Skills from a git repository
+#### Skills from a git repository
 
 Symposium also supports fetching skills from a GitHub URL:
 
@@ -128,7 +128,7 @@ source.git = "https://github.com/org/my-crate/tree/main/symposium/skills"
 
 This is useful for hosting skills in a dedicated repository or a subdirectory of a monorepo. Note that the central recommendations repository does not currently accept `source.git` entries by policy — use `source = "crate"` or `source.path` for submissions there.
 
-## Installations
+### Installations
 
 An **installation** tells symposium how to obtain a binary that your hooks or MCP servers will run. The recommended approach is a `cargo` installation, which installs a crate binary from crates.io:
 
@@ -140,15 +140,15 @@ crate = "my-crate-hooks"
 executable = "my-crate-hooks"
 ```
 
-Symposium caches the binary under `~/.symposium/cache/` — it's only installed once (or when the version changes).
+Symposium caches the binary under `~/.symposium/cache/`. Binaries are updated automatically when new versions are available on [crates.io](https://crates.io/).
 
 See the [plugin definition reference](../reference/plugin-definition.md#installations) for other installation sources (GitHub repositories, local paths) and advanced options like `install_commands`.
 
-## Hooks
+### Hooks
 
 Hooks run when the AI performs certain actions — invoking a tool, starting a session, or submitting a prompt. They receive JSON on stdin describing the event and can return guidance, inject context, or block the action.
 
-### Symposium hooks (portable across agents)
+#### Symposium hooks (portable across agents)
 
 A hook references an installation by name via its `command` field:
 
@@ -170,7 +170,7 @@ The hook binary receives symposium canonical JSON on stdin and writes symposium 
 
 See [Writing a hook handler](./writing-a-hook-handler.md) for how to implement the binary using the `symposium-hook` crate, and [Symposium hook events](../reference/hook-events.md) for input/output JSON schemas.
 
-### Native hooks (agent-specific)
+#### Native hooks (agent-specific)
 
 You can also provide hooks specialized for a particular agent by setting `format` to an agent name. These are registered directly into the agent's own configuration and invoked by the agent itself — giving you full access to agent-specific features (e.g., Claude Code's `updatedInput`, Copilot's `modifiedArgs`). On agents without a native hook, symposium falls back to delivering any symposium-format hook the plugin declares.
 
@@ -190,7 +190,7 @@ command = "my-crate-hooks"
 
 On Claude, only `check-usage-claude` runs (natively). On other agents, only `check-usage` runs (delivered by symposium). See the [plugin definition reference](../reference/plugin-definition.md#hooks) for the full `[[hooks]]` manifest syntax.
 
-## MCP servers
+### MCP servers
 
 MCP servers expose tools and resources to agents via the [Model Context Protocol](https://modelcontextprotocol.io/). Symposium registers them into each agent's configuration during sync — you declare the server once and it works across all agents.
 
