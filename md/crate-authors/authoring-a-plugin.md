@@ -128,25 +128,47 @@ source.git = "https://github.com/org/my-crate/tree/main/symposium/skills"
 
 This is useful for hosting skills in a dedicated repository or a subdirectory of a monorepo. Note that the central recommendations repository does not currently accept `source.git` entries by policy — use `source = "crate"` or `source.path` for submissions there.
 
+## Installations
+
+An **installation** tells symposium how to obtain a binary that your hooks or MCP servers will run. The recommended approach is a `cargo` installation, which installs a crate binary from crates.io:
+
+```toml
+[[installations]]
+name = "my-crate-hooks"
+source = "cargo"
+crate = "my-crate-hooks"
+executable = "my-crate-hooks"
+```
+
+Symposium caches the binary under `~/.symposium/cache/` — it's only installed once (or when the version changes).
+
+See the [plugin definition reference](../reference/plugin-definition.md#installations) for other installation sources (GitHub repositories, local paths) and advanced options like `install_commands`.
+
 ## Hooks
 
 Hooks run when the AI performs certain actions — invoking a tool, starting a session, or submitting a prompt. They receive JSON on stdin describing the event and can return guidance, inject context, or block the action.
 
 ### Symposium hooks (portable across agents)
 
-Add a `[[hooks]]` entry to your manifest:
+A hook references an installation by name via its `command` field:
 
 ```toml
+[[installations]]
+name = "my-crate-hooks"
+source = "cargo"
+crate = "my-crate-hooks"
+executable = "my-crate-hooks"
+
 [[hooks]]
 name = "check-usage"
 event = "PreToolUse"
 matcher = "Bash"
-command = { script = "scripts/check.sh" }
+command = "my-crate-hooks"
 ```
 
-The hook script receives symposium canonical JSON on stdin and writes symposium canonical JSON to stdout. Symposium handles converting to and from each agent's wire format, so a single hook implementation works across all supported agents.
+The hook binary receives symposium canonical JSON on stdin and writes symposium canonical JSON to stdout. Symposium handles converting to and from each agent's wire format, so a single implementation works across all supported agents.
 
-See the [Symposium hook events](../reference/hook-events.md) reference for input/output JSON schemas and the [plugin definition reference](../reference/plugin-definition.md#hooks) for the full `[[hooks]]` manifest syntax.
+See [Writing a hook handler](./writing-a-hook-handler.md) for how to implement the binary using the `symposium-hook` crate, and [Symposium hook events](../reference/hook-events.md) for input/output JSON schemas.
 
 ### Native hooks (agent-specific)
 
@@ -157,26 +179,34 @@ You can also provide hooks specialized for a particular agent by setting `format
 name = "check-usage-claude"
 event = "PreToolUse"
 format = "claude"
-command = { script = "scripts/check-claude.sh" }
+command = "my-crate-hooks"
+args = ["--claude"]
 
 [[hooks]]
 name = "check-usage"
 event = "PreToolUse"
-command = { script = "scripts/check-generic.sh" }
+command = "my-crate-hooks"
 ```
 
-On Claude, only `check-usage-claude` runs (natively). On other agents, only `check-usage` runs (delivered by symposium).
+On Claude, only `check-usage-claude` runs (natively). On other agents, only `check-usage` runs (delivered by symposium). See the [plugin definition reference](../reference/plugin-definition.md#hooks) for the full `[[hooks]]` manifest syntax.
 
 ## MCP servers
 
 MCP servers expose tools and resources to agents via the [Model Context Protocol](https://modelcontextprotocol.io/). Symposium registers them into each agent's configuration during sync — you declare the server once and it works across all agents.
 
+An MCP server typically uses the same installation as your hooks:
+
 ```toml
+[[installations]]
+name = "my-crate-mcp"
+source = "cargo"
+crate = "my-crate-mcp"
+executable = "my-crate-mcp"
+
 [[mcp_servers]]
 name = "my-crate-tools"
-command = "my-crate-mcp-server"
+command = "my-crate-mcp"
 args = ["--stdio"]
-env = []
 ```
 
 See the [plugin definition reference](../reference/plugin-definition.md#mcp_servers) for HTTP and SSE transports, crate filtering, and registration details.
