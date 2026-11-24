@@ -79,6 +79,7 @@ async fn hook_setup_respects_the_total_budget() {
 }
 
 /// The calls run at once, so the test waits for the time limit only once.
+/// anchorbook: A-hook-results#timeout
 #[tokio::test(flavor = "multi_thread")]
 async fn timed_out_hook_fails_open() {
     with_fixture(TestMode::SimulationOnly, &["hook-timeout0"], async |ctx| {

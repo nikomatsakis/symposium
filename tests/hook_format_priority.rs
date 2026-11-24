@@ -11,6 +11,7 @@ use symposium_testlib::{HookStep, TestMode, with_fixture};
 
 /// When running on Claude and the plugin has both `format = "claude"` and
 /// `format = "symposium"` hooks, the claude hook fires (native priority).
+/// anchorbook: A-hook-selection#native
 #[tokio::test(flavor = "multi_thread")]
 async fn native_hook_takes_priority_over_symposium() {
     with_fixture(
@@ -47,6 +48,7 @@ async fn native_hook_takes_priority_over_symposium() {
 /// When running on Copilot and the plugin has both `format = "claude"` and
 /// `format = "symposium"` hooks, the symposium hook fires (no native match).
 /// Copilot names its shell tool `bash`, not Claude's `Bash`.
+/// anchorbook: A-hook-selection#fallback
 #[tokio::test(flavor = "multi_thread")]
 async fn symposium_hook_fires_when_no_native_match() {
     with_fixture(
@@ -182,6 +184,7 @@ async fn agent_restricted_hook_fires_only_on_its_agent() {
     .unwrap();
 }
 
+/// anchorbook: A-hook-selection#gated
 #[tokio::test(flavor = "multi_thread")]
 async fn symposium_hook_fires_when_native_hook_predicates_fail() {
     with_fixture(

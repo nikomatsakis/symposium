@@ -89,6 +89,7 @@ async fn native_plain_text_is_context() {
 }
 
 /// Antigravity is left out: it reads no context on `PostToolUse` at all.
+/// anchorbook: A-hook-results#context
 #[tokio::test(flavor = "multi_thread")]
 async fn post_tool_use_keeps_every_plugin_context() {
     with_fixture(TestMode::SimulationOnly, &["context-merge0"], async |ctx| {

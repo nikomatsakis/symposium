@@ -422,6 +422,7 @@ async fn try_edits_reach_the_agents_on_the_next_sync() {
     .unwrap();
 }
 
+/// anchorbook: A-config-ownership#trial
 #[tokio::test]
 async fn try_remove_preserves_preexisting_dormant_enablement() {
     with_fixture(

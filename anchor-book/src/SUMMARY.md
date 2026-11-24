@@ -1,0 +1,15 @@
+# Summary
+
+- [Design anchors](design.md)
+  - [Plugin managers](design/plugin-managers.md)
+    - [Cargo](design/cargo.md)
+    - [Path registries](design/path.md)
+    - [Git registries](design/git.md)
+  - [Plugins](design/plugins.md)
+  - [Predicates](design/predicates.md)
+  - [Hooks](design/hooks.md)
+  - [Agent support](design/agents.md)
+  - [Configuration storage](design/configuration.md)
+  - [Installation](design/installation.md)
+- [Design basis](authority.md)
+- [Reviewing this draft](review.md)

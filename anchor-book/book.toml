@@ -1,0 +1,13 @@
+[book]
+title = "Symposium Design Anchors"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../target/anchorbook"
+create-missing = false
+
+[preprocessor.anchorbook]
+command = "anchorbook md"
+config = "../anchorbook.toml"
+after = ["links"]

@@ -93,6 +93,7 @@ async fn assert_dependency_script_runs(from_metadata: bool) {
     .unwrap();
 }
 
+/// anchorbook: A-installation-runnable#crate-script
 #[tokio::test(flavor = "multi_thread")]
 async fn relative_script_in_dependency_manifest_runs() {
     assert_dependency_script_runs(false).await;

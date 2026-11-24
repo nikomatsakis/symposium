@@ -78,6 +78,7 @@ fn remote(name: &str, script: &Path) -> RemotePm {
     )
 }
 
+/// anchorbook: A-pm-offers#synthesized-offer
 #[tokio::test]
 async fn a_subprocess_pm_offers_a_synthesized_manifest() {
     let tmp = tempfile::tempdir().unwrap();
@@ -238,6 +239,7 @@ async fn a_pm_that_returns_garbage_fails() {
     assert!(pm.active_plugins(&[]).await.is_err());
 }
 
+/// anchorbook: A-pm-protocol#name
 #[tokio::test]
 async fn a_name_mismatch_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
@@ -263,6 +265,7 @@ done
     );
 }
 
+/// anchorbook: A-pm-protocol#version
 #[tokio::test]
 async fn a_protocol_version_mismatch_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
@@ -347,6 +350,7 @@ fn cargo_pm(workspace: &Path, cache: &Path) -> RemotePm {
     )
 }
 
+/// anchorbook: A-cargo-workspace#member-and-offer
 #[tokio::test]
 async fn the_cargo_pm_answers_from_its_own_process() {
     let tmp = tempfile::tempdir().unwrap();
@@ -413,6 +417,7 @@ async fn the_cargo_pm_reports_no_deps_outside_a_workspace() {
 /// subprocess → the dependencies core reads. Naming the entry `cargo`
 /// replaces the built-in in-process instance, so this also exercises running
 /// the cargo PM out of process end to end.
+/// anchorbook: A-pm-bootstrap#replace-cargo
 #[tokio::test]
 async fn a_configured_package_manager_replaces_the_builtin_cargo_instance() {
     let tmp = tempfile::tempdir().unwrap();
@@ -620,6 +625,7 @@ async fn an_event_where_nothing_changed_spawns_no_package_manager() {
 
 /// Name rules belong to the PM even when they have nothing to do with Cargo.
 /// Both returned names and arbitrary configuration names pass through the RPC.
+/// anchorbook: A-pm-names#remote-rule
 #[tokio::test]
 async fn remote_name_rules_cover_lookup_and_configuration() {
     use symposium::config::{PluginsConfig, UseEntry};

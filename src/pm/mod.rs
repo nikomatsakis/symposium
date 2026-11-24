@@ -926,6 +926,7 @@ mod tests {
 
     /// Two package managers rooting the project in different places is an
     /// error naming both, not a choice between them.
+    /// anchorbook: A-pm-workspace#root-disagreement
     #[tokio::test]
     async fn package_managers_that_disagree_about_the_root_are_an_error() {
         let tmp = tempfile::tempdir().unwrap();
@@ -947,6 +948,7 @@ mod tests {
 
     /// Outside any project there is no workspace, and saying so is not an
     /// error from any package manager.
+    /// anchorbook: A-pm-workspace#no-project
     #[tokio::test]
     async fn no_project_means_no_workspace() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1084,6 +1086,7 @@ mod tests {
         assert!(reports.is_empty(), "{reports:?}");
     }
 
+    /// anchorbook: A-git-registry#unfetched
     #[tokio::test]
     async fn git_registry_without_its_copy_is_unreadable() {
         let tmp = tempfile::tempdir().unwrap();

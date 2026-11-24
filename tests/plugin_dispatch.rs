@@ -163,6 +163,7 @@ async fn shell_hook_receives_positional_args() {
 /// `install_commands` declared on an installation run after the kind-specific
 /// install step. Here, the install command writes a JSON file the hook's
 /// shell command then reads — proving the post-install step happened first.
+/// anchorbook: A-installation-setup#ordering
 #[tokio::test(flavor = "multi_thread")]
 async fn install_commands_run_before_command() {
     with_fixture(
@@ -194,6 +195,7 @@ async fn install_commands_run_before_command() {
 
 /// `install_commands` declared on an *inline* command (promoted to a
 /// synthetic installation) also run before the resolved command.
+/// anchorbook: A-installation-setup#ordering
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_install_commands_run_before_command() {
     with_fixture(

@@ -576,6 +576,7 @@ mod tests {
         assert!(parse("depends-on(*)").unwrap().evaluate(&mut ctx(&[])));
     }
 
+    /// anchorbook: A-predicate-expressions#composition
     #[test]
     fn evaluate_combinators() {
         let w = ws(&[("serde", "1.0.0")]);
@@ -602,6 +603,7 @@ mod tests {
         assert!(!Predicate::PathExists(String::new()).evaluate(&mut ctx(&[])));
     }
 
+    /// anchorbook: A-predicate-expressions#working-directory
     #[test]
     fn shell_and_path_exists_run_in_the_context_directory() {
         let dir = tempfile::tempdir().unwrap();
@@ -1068,6 +1070,7 @@ mod tests {
         map
     }
 
+    /// anchorbook: A-predicate-reuse#cache-hit
     #[test]
     fn disk_cache_hit_avoids_second_spawn() {
         use std::io::Write;
@@ -1118,6 +1121,7 @@ mod tests {
         assert_eq!(runs.lines().count(), 1, "predicate should spawn once");
     }
 
+    /// anchorbook: A-predicate-reuse#expired
     #[test]
     fn disk_cache_time_expired_entry_respawns() {
         use std::io::Write;

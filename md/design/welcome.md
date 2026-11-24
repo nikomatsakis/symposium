@@ -2,6 +2,8 @@
 
 Welcome! This section is for people who want to work on Symposium itself. If you're a crate author who wants to publish skills or hooks for your library, see [Supporting your crate](../crate-authors/supporting-your-crate.md) instead.
 
+This branch also has a draft Anchor Book in `anchor-book/`. It organizes the implemented design into seven review chapters with runnable examples. From the repository root, `mdbook serve anchor-book` previews it with the tools listed in `anchor-book/src/review.md`.
+
 ## Building and testing
 
 Symposium is a standard Cargo project with both a library and a binary:

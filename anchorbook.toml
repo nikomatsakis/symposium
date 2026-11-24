@@ -1,0 +1,19 @@
+schema-version = 1
+
+[project]
+phase = "prototyping"
+
+[book]
+source = "anchor-book/src"
+output = "target/anchorbook"
+mdbook = "anchor-book/book.toml"
+
+[book.sections]
+design = "design.md"
+authority = "authority.md"
+implementation-roadmaps = "review.md"
+
+[verification]
+sources = ["src", "tests"]
+output = "target/anchorbook-verify"
+runners = ["nextest"]

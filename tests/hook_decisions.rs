@@ -87,6 +87,7 @@ fn assert_denied(agent: HookAgent, response: &HookResponse, reason: &str) {
 
 /// `zz-late-rewrite` rewrites the same call after `decisions` denies it; the
 /// denial stays final, as agents rank it (Claude: deny over ask over allow).
+/// anchorbook: A-hook-results#deny
 #[tokio::test(flavor = "multi_thread")]
 async fn plugin_deny_reaches_every_agent() {
     with_fixture(
@@ -107,6 +108,7 @@ async fn plugin_deny_reaches_every_agent() {
 /// Exit 2 is the plugin contract's other way to block. On a tool call it
 /// becomes the same denial, so it reaches Antigravity (which ignores exit
 /// codes) and keeps its reason on Copilot (which drops it on a non-zero exit).
+/// anchorbook: A-agent-output#block
 #[tokio::test(flavor = "multi_thread")]
 async fn plugin_exit_2_denies_the_tool_call_on_every_agent() {
     with_fixture(
@@ -147,6 +149,7 @@ async fn plugin_deny_survives_a_non_zero_exit() {
 /// call on the user's behalf: Claude gets `ask`, so the user sees the
 /// rewritten call. Codex (allow-only) and Kiro (no rewrite) leave the call
 /// untouched rather than run something else.
+/// anchorbook: A-agent-output#rewrite
 #[tokio::test(flavor = "multi_thread")]
 async fn plugin_rewrite_reaches_agents_that_can_apply_it() {
     with_fixture(

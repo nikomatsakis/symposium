@@ -402,6 +402,7 @@ async fn chained_skill_installs(ctx: &mut TestContext) -> usize {
 
 /// A revoked crate is not loaded even through a chained reference: the
 /// registry vouches for it, but the list has the last word.
+/// anchorbook: A-plugin-revocation#chain
 #[tokio::test]
 async fn a_revoked_chained_crate_is_not_loaded() {
     with_fixture(
@@ -554,6 +555,7 @@ fn add_unreadable_registry(ctx: &mut TestContext) {
 /// skill predicates are never evaluated (a `shell` predicate would run its
 /// command), on sync and on the hook path, and its skill still comes off,
 /// with or without a full cleanup.
+/// anchorbook: A-plugin-revocation#predicate
 #[tokio::test]
 async fn retiring_a_revoked_crate_runs_none_of_its_predicates() {
     for break_registry in [false, true] {

@@ -43,6 +43,7 @@ async fn sync_progress_stays_off_hook_stdout() {
 
 /// A plugin's install commands run on every dispatch of the hook that needs
 /// them; what they print must not reach the agent's stdout.
+/// anchorbook: A-installation-setup#stdout
 #[tokio::test(flavor = "multi_thread")]
 async fn install_command_output_stays_off_hook_stdout() {
     with_fixture(TestMode::SimulationOnly, &["install-noise0"], async |ctx| {

@@ -845,6 +845,7 @@ async fn use_remove_unregisters_the_mcp_servers_of_a_nested_registry_entry() {
 
 /// `use` wakes a dormant registry plugin (one no dependency gates), and
 /// `--remove` puts it back to sleep, reaping its skills.
+/// anchorbook: A-plugin-enablement#dormant
 #[tokio::test]
 async fn use_wakes_and_remove_sleeps_a_dormant_plugin() {
     with_fixture(
@@ -1490,6 +1491,7 @@ async fn crate_d_status(ctx: &TestContext) -> anyhow::Result<StatusState> {
         .state)
 }
 
+/// anchorbook: A-plugin-enablement#decline
 #[tokio::test(flavor = "multi_thread")]
 async fn declined_dependency_plugin_stays_inactive() {
     with_fixture(
@@ -1515,6 +1517,7 @@ async fn declined_dependency_plugin_stays_inactive() {
     .unwrap();
 }
 
+/// anchorbook: A-plugin-enablement#approve
 #[tokio::test(flavor = "multi_thread")]
 async fn approved_dependency_plugin_activates() {
     with_fixture(

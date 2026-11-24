@@ -148,6 +148,7 @@ mod tests {
         std::fs::write(path, "").unwrap();
     }
 
+    /// anchorbook: A-path-entries#nested
     #[test]
     fn flat_layout_finds_nested_entries_with_pruning() {
         let tmp = tempfile::tempdir().unwrap();

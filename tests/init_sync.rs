@@ -8,6 +8,7 @@ use symposium_testlib::{TestMode, with_fixture};
 /// A desired skill remains installed when refreshing its source fails.
 /// In particular, stale cleanup must not mistake a failed update for removal.
 #[cfg(unix)]
+/// anchorbook: A-installation-sync#copy-failure
 #[tokio::test]
 async fn sync_preserves_installed_skill_after_failed_update() {
     use std::os::unix::fs::PermissionsExt;
@@ -536,6 +537,7 @@ async fn sync_continues_when_an_agents_hooks_cannot_be_registered() {
 }
 
 /// `sync` removes stale skills marked by a `.symposium` file.
+/// anchorbook: A-installation-sync#owned
 #[tokio::test]
 async fn sync_removes_stale_skills() {
     with_fixture(
@@ -569,6 +571,7 @@ async fn sync_removes_stale_skills() {
 
 /// `sync` does not touch skill directories without the `.symposium` marker
 /// (user-managed).
+/// anchorbook: A-installation-sync#user
 #[tokio::test]
 async fn sync_preserves_user_managed_skills() {
     with_fixture(
@@ -626,6 +629,7 @@ async fn sync_keeps_skills_seen_through_a_linked_skills_dir() {
 }
 
 #[cfg(unix)]
+/// anchorbook: A-installation-sync#user
 #[tokio::test]
 async fn sync_leaves_user_symlinks_in_a_skills_dir() {
     with_fixture(
@@ -656,6 +660,7 @@ async fn sync_leaves_user_symlinks_in_a_skills_dir() {
     .unwrap();
 }
 
+/// anchorbook: A-installation-sync#unreadable-registry
 #[tokio::test]
 async fn sync_keeps_skills_of_a_registry_it_cannot_read() {
     let breakages: [fn(&Path); 2] = [
@@ -831,6 +836,7 @@ async fn sync_without_agents_still_reaps_stale_skills() {
     .unwrap();
 }
 
+/// anchorbook: A-config-unreadable#sync
 #[tokio::test]
 async fn sync_keeps_skills_and_hooks_while_the_config_cannot_be_read() {
     with_fixture(
@@ -1075,6 +1081,7 @@ async fn sync_leaves_mcp_servers_symposium_did_not_write() {
 
 /// Removing an agent takes out the MCP servers Symposium registered for it
 /// and nothing else.
+/// anchorbook: A-config-ownership#mcp
 #[tokio::test]
 async fn removing_an_agent_removes_only_its_registered_mcp_servers() {
     with_fixture(
@@ -1199,6 +1206,7 @@ async fn sync_removes_an_mcp_server_the_workspace_no_longer_offers() {
 
 /// `sync` does not install skills targeting transitive dependencies.
 /// workspace0 has tokio as a direct dep; mio is a transitive dep of tokio.
+/// anchorbook: A-cargo-workspace#transitive
 #[tokio::test]
 async fn sync_excludes_transitive_deps() {
     with_fixture(
@@ -3145,6 +3153,7 @@ async fn sync_installs_skill_from_named_crate_source() {
 /// Cycle detection: `crate-a` redirects to `crate-b`, `crate-b` has a path
 /// entry (with skills) AND redirects back to `crate-a`. The cycle is detected
 /// and skipped, but skills from the path entry survive.
+/// anchorbook: A-plugin-chains#cycle
 #[tokio::test]
 async fn sync_crate_metadata_cycle_detection() {
     with_fixture(
@@ -3334,6 +3343,7 @@ async fn sync_crate_metadata_redirect_target_optout() {
 
 /// Diamond redirect: both crate-a and crate-b redirect to crate-c. The shared
 /// skill should be installed exactly once (dedup via the crate origin hash).
+/// anchorbook: A-plugin-chains#diamond
 #[tokio::test]
 async fn sync_crate_metadata_diamond_dedup() {
     with_fixture(

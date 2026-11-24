@@ -67,6 +67,7 @@ fn write(path: &Path, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
+/// anchorbook: A-agent-delivery#two-agents
 #[tokio::test]
 async fn every_delivering_agent_keeps_the_delivery_contracts() {
     for agent in AGENTS {

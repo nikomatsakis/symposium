@@ -4,6 +4,7 @@ use serde_json::json;
 use symposium::hook_schema::HookAgent;
 use symposium_testlib::{HookStep, TestMode, with_fixture};
 
+/// anchorbook: A-installation-runnable#plugin-script
 #[tokio::test(flavor = "multi_thread")]
 async fn scripts_named_relative_to_the_manifest_run() {
     with_fixture(

@@ -1138,6 +1138,7 @@ mod tests {
         assert!(!sym.config.defaults.symposium_recommendations);
     }
 
+    /// anchorbook: A-config-unreadable#bad-file
     #[test]
     fn unparseable_config_is_never_saved() {
         for contents in [
@@ -1167,6 +1168,7 @@ mod tests {
         }
     }
 
+    /// anchorbook: A-config-unreadable#bad-file
     #[test]
     fn unreadable_config_is_never_saved() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1178,6 +1180,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"\xff\xfe");
     }
 
+    /// anchorbook: A-config-unreadable#missing
     #[test]
     fn missing_config_is_saved() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1420,6 +1423,7 @@ mod tests {
         );
     }
 
+    /// anchorbook: A-config-location#state-home
     #[test]
     fn resolve_logs_dir_uses_xdg_state_home() {
         const CHILD_ROOT: &str = "SYMPOSIUM_LOG_PATH_TEST_ROOT";

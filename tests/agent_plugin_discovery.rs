@@ -4,6 +4,7 @@ use symposium::pm::{CARGO_PM, PackageId};
 use symposium_install::UpdateLevel;
 use symposium_testlib::{TestMode, with_fixture};
 
+/// anchorbook: A-pm-offers#specific-package
 #[tokio::test]
 async fn an_mcp_only_dependency_package_is_offered_for_consent() {
     with_fixture(

@@ -126,6 +126,7 @@ impl PackageManager for PathPm {
 mod tests {
     use super::*;
 
+    /// anchorbook: A-path-entries#enumerate-and-load
     #[tokio::test]
     async fn loads_one_plugin_per_entry() {
         let tmp = tempfile::tempdir().unwrap();

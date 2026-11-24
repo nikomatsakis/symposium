@@ -169,6 +169,7 @@ async fn sync_custom_predicate_wrong_argument_fails() {
 
 /// A predicate defined by one plugin can be used by a different plugin.
 /// The provider-plugin defines `my_check`; the consumer-plugin uses it.
+/// anchorbook: A-predicate-extension#pass
 #[tokio::test]
 async fn sync_custom_predicate_cross_plugin() {
     with_fixture(
@@ -205,6 +206,7 @@ async fn sync_custom_predicate_cross_plugin() {
 
 /// Cross-plugin predicate: when the provider's predicate fails, the consumer's
 /// skill is not installed.
+/// anchorbook: A-predicate-extension#fail
 #[tokio::test]
 async fn sync_custom_predicate_cross_plugin_fails() {
     with_fixture(
