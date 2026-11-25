@@ -3510,6 +3510,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-plugin-dormancy#origin
     fn workspace_manifest_may_omit_dependency_gate() {
         // A registry manifest without any depends-on loads dormant; the same
         // manifest is fully active as a workspace plugin (membership is the
@@ -3547,6 +3548,7 @@ mod tests {
     /// A gate anywhere in the manifest — including on a `[[plugins]]` chain
     /// edge — keeps a registry plugin out of dormancy.
     #[test]
+    /// anchorbook: A-plugin-dormancy#gates
     fn dormancy_honors_gates_at_every_level() {
         let dormant_if = |manifest: &str| {
             let raw: RawPluginManifest = toml::from_str(manifest).unwrap();
@@ -3556,6 +3558,27 @@ mod tests {
         };
 
         assert!(dormant_if(r#"name = "p""#));
+        assert!(!dormant_if(indoc! {r#"
+            name = "p"
+            predicates = ["provider_check()"]
+        "#}));
+        assert!(!dormant_if(indoc! {r#"
+            name = "p"
+            [[hooks]]
+            name = "check"
+            event = "PreToolUse"
+            predicates = ["depends-on(serde)"]
+            command = { script = "check.sh" }
+        "#}));
+        assert!(!dormant_if(indoc! {r#"
+            name = "p"
+            [[mcp_servers]]
+            name = "check"
+            command = "check"
+            args = []
+            env = []
+            depends-on = ["serde"]
+        "#}));
         assert!(!dormant_if(indoc! {r#"
             name = "p"
             depends-on = ["*"]
@@ -3578,6 +3601,7 @@ mod tests {
 
     /// A dormant plugin activates only when a `[plugins] use` entry names it.
     #[test]
+    /// anchorbook: A-plugin-dormancy#selection
     fn dormant_plugin_applies_only_when_used() {
         let manifest: RawPluginManifest = toml::from_str(r#"name = "gate-less""#).unwrap();
         let plugin = Plugin {
@@ -4247,6 +4271,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-hook-matcher#invalid
     fn hook_matcher_must_compile() {
         let with_matcher = |matcher: &str| {
             from_str(&indoc::formatdoc! {r#"
@@ -5396,6 +5421,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-predicate-name#providers
     fn custom_predicate_registry_no_collision() {
         let plugins = vec![
             make_plugin_with_predicate("alpha", "foo"),
@@ -5410,6 +5436,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-predicate-name#providers
     fn custom_predicate_registry_two_way_collision() {
         let plugins = vec![
             make_plugin_with_predicate("alpha", "shared"),
@@ -5428,6 +5455,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-predicate-name#providers
     fn custom_predicate_registry_three_way_collision() {
         let plugins = vec![
             make_plugin_with_predicate("alpha", "shared"),

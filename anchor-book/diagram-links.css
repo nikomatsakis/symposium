@@ -1,0 +1,36 @@
+.chapter-diagram {
+    position: relative;
+    isolation: isolate;
+    margin: 1.5em 0;
+}
+
+.chapter-diagram figcaption a::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    cursor: pointer;
+}
+
+.chapter-diagram figcaption a:focus-visible::before {
+    outline: 2px solid currentColor;
+}
+
+/* The caption link covers the figure. Mermaid's participant menus sit above it. */
+.chapter-diagram .mermaid {
+    position: relative;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.chapter-diagram .actor,
+.chapter-diagram .actorPopupMenu,
+.chapter-diagram .message-link {
+    pointer-events: auto;
+}
+
+.chapter-diagram .message-link .messageText {
+    fill: var(--links) !important;
+    text-decoration: underline;
+    cursor: pointer;
+    pointer-events: bounding-box;
+}

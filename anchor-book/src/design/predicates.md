@@ -2,6 +2,37 @@
 
 A predicate answers whether a contribution applies in an evaluation context. `depends-on` reads the dependency set. `workspace-member()` refers to the plugin’s provenance. File, environment and shell checks let a workspace supply other facts.
 
+> **`A-predicate-grammar`** (draft): **Authors write predicates as calls and dependency shorthand as atoms**
+> Property: Each `predicates` entry is a function call in the grammar below. Every entry must hold. Where a `depends-on` field is accepted, its entries are dependency atoms. At least one atom in a nonempty list must match, in addition to the `predicates` entries.
+> Authority: `R-conditions`
+> - Criterion `calls` [test]: Parse `any(depends-on(a), path_exists(rg))` as two calls inside `any`. Reject `all()` because it has no operands.
+> - Criterion `atoms` [test]: Read `serde, tokio` in dependency shorthand as alternatives. Reject `depends-on(serde)` in that field.
+> - Criterion `bare-name` [test]: Reject `serde`, `tokio>=1.0`, and `*` as standalone entries in `predicates`.
+> - Criterion `custom-argument` [test]: Parse `foo(bar(baz))` as a call to `foo` with the text `bar(baz)` as its argument.
+
+```text
+predicate   ::= "depends-on(" atom ")" | "workspace-member()"
+              | "env(" variable [ "=" value ] ")"
+              | "path_exists(" text ")" | "shell(" text ")"
+              | "not(" predicate ")"
+              | "any(" operands ")" | "all(" operands ")"
+              | custom-name "(" text ")"
+operands    ::= predicate { "," predicate }
+atom        ::= "*" | package-name [ requirement ]
+requirement ::= ( "==" | "=" | ">=" | "<=" | ">" | "<" | "^" | "~" ) version-spec
+```
+
+`package-name` uses one or more ASCII letters, digits, hyphens, or underscores. A version requirement uses Cargo-style semver syntax and attaches directly to the name without spaces. For example, `widget=1.2.3` means compatible with `1.2.3`, and `widget==1.2.3` requires that exact release. A range can combine comparisons, as in `depends-on(widget>=1.2,<2)`. `*` matches even a workspace with no dependencies.
+
+`custom-name` starts with an ASCII letter and continues with ASCII letters, digits, or underscores. Built-in names and the retired name `crate` are reserved. `text` is the argument between parentheses with surrounding whitespace trimmed. It may be empty or contain commas and nested parentheses. In `env`, the first `=` separates the nonempty variable name from its value, so `env(KEY=a=b)` tests for the value `a=b`.
+
+For example, this plugin applies when the workspace directly depends on either a qualifying `widget` release or `serde`, and `CI` is unset:
+
+```toml
+depends-on = ["widget>=1.2", "serde"]
+predicates = ["not(env(CI))"]
+```
+
 > **`A-predicate-expressions`** (draft): **Applicability is a boolean expression**
 > Property: Authors can compose predicates with `all`, `any` and `not`. In a context with a supplied working directory, relative file checks and shell checks use that directory.
 > Authority: `R-conditions`
@@ -19,3 +50,8 @@ A predicate answers whether a contribution applies in an evaluation context. `de
 > Authority: `R-conditions`
 > - Criterion `cache-hit` [test]: Run a counting predicate with no watches and load the persisted cache in a fresh context. Observe one execution in total.
 > - Criterion `expired` [test]: Have the predicate emit a short time watch. Load its cached result in a fresh context after expiration and observe a second execution.
+
+> **`A-predicate-name`** (draft): **A custom predicate name must have exactly one provider**
+> Property: A uniquely defined custom predicate is available by name. If two or more providers declare the same name, Symposium reports the collision and withholds that name from lookup.
+> Authority: `R-conditions`
+> - Criterion `providers` [test]: Register distinct names, then the same name from two and three plugins. Only the distinct names are available.

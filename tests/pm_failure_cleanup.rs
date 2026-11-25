@@ -62,6 +62,7 @@ fn workspace(root: PathBuf, fail_dependencies: bool) -> Arc<Workspace> {
 }
 
 #[tokio::test]
+/// anchorbook: A-sync-manager-failure#unavailable
 async fn failed_dependency_listing_keeps_the_installed_mcp_server() {
     with_fixture(
         TestMode::SimulationOnly,

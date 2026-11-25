@@ -49,6 +49,7 @@ fn finish(child: Child) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-hook-budget#setup
 async fn hook_setup_respects_the_total_budget() {
     with_fixture(TestMode::SimulationOnly, &["hook-timeout0"], async |ctx| {
         let plugin = ctx.sym.config_dir().join("plugins/a-hang");
@@ -81,6 +82,7 @@ async fn hook_setup_respects_the_total_budget() {
 /// The calls run at once, so the test waits for the time limit only once.
 /// anchorbook: A-hook-results#timeout
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-hook-budget#timeout
 async fn timed_out_hook_fails_open() {
     with_fixture(TestMode::SimulationOnly, &["hook-timeout0"], async |ctx| {
         let claude_deny = spawn_pre_tool_use(&ctx, HookAgent::Claude, "DenyProbe");

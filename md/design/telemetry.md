@@ -1,11 +1,10 @@
 # Telemetry
 
-Telemetry is **opt-in**, **per-user** (not per-project), and **local-first**:
-events are gathered into `~/.symposium/`, and uploading is a separate step the
-user takes deliberately. The goal is to learn whether Symposium is actually
-helping, while keeping the user in control of their data.
+The CLI stores a per-user telemetry preference and can inspect existing local event files. No shipped Symposium command or hook currently calls the event writer. Enabling telemetry, starting a session, syncing a workspace, and executing a plugin hook all leave the event log untouched.
 
-## Design principles
+The [telemetry recording RFD](../rfds/telemetry-recording/README.md#event-producers) defines where the replacement recorder will obtain observations. Its implementation plan keeps collection inactive until the producers, local controls and consent flow are ready.
+
+## Design principles for recording
 
 - **Opt-in, per-user.** Nothing is recorded unless the user enables it; the
   preference lives in the user-wide `config.toml`.
@@ -20,7 +19,7 @@ helping, while keeping the user in control of their data.
 
 ## Event log format
 
-When enabled, events are appended as **JSON lines** to per-day files under
+The experimental writer appends **JSON lines** to per-day files under
 `~/.symposium/telemetry/`:
 
 ```
@@ -36,8 +35,7 @@ plus a kind-tagged payload (`EventKind`), e.g.
 {"at":"2026-06-23T17:58:15Z","kind":"tool_use","session_id":"P1","tool":"Bash"}
 ```
 
-Files older than `RETENTION_DAYS` (30) are rolled off — deleted on the next
-`SessionStart`.
+The experimental retention routine deletes files older than 30 days when called. The current `SessionStart` path leaves these files in place.
 
 ## Configuration
 

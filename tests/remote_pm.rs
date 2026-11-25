@@ -350,6 +350,8 @@ fn cargo_pm(workspace: &Path, cache: &Path) -> RemotePm {
     )
 }
 
+/// anchorbook: A-cargo-embedded#skill-only
+/// anchorbook: A-flow-workspace#embedded-skill
 /// anchorbook: A-cargo-workspace#member-and-offer
 #[tokio::test]
 async fn the_cargo_pm_answers_from_its_own_process() {
@@ -359,7 +361,7 @@ async fn the_cargo_pm_answers_from_its_own_process() {
     std::fs::create_dir_all(&root).unwrap();
     cargo_workspace(&root, &widget);
 
-    let pm = cargo_pm(&root, &tmp.path().join("cache"));
+    let pm = cargo_pm(&root.join("app/src"), &tmp.path().join("cache"));
 
     // What the workspace depends on: resolved by the PM, in its own process,
     // from nothing but the path handed over at `initialize`.
@@ -396,7 +398,20 @@ async fn the_cargo_pm_answers_from_its_own_process() {
         .iter()
         .find(|o| o.id.name == "widget")
         .expect("widget offered");
-    assert!(widget.root.join("skills/usage/SKILL.md").is_file());
+    let skill = widget.root.join("skills/usage/SKILL.md");
+    assert!(skill.is_file());
+
+    // Removing the only plugin content changes the offer, not the Cargo dependency.
+    std::fs::remove_file(skill).unwrap();
+    assert_eq!(pm.list_deps().await.unwrap(), deps);
+    assert!(
+        pm.active_plugins(&deps)
+            .await
+            .unwrap()
+            .plugins
+            .iter()
+            .all(|offer| offer.id.name != "widget")
+    );
 }
 
 #[tokio::test]
@@ -417,6 +432,7 @@ async fn the_cargo_pm_reports_no_deps_outside_a_workspace() {
 /// subprocess → the dependencies core reads. Naming the entry `cargo`
 /// replaces the built-in in-process instance, so this also exercises running
 /// the cargo PM out of process end to end.
+/// anchorbook: A-flow-managers#configured-cargo
 /// anchorbook: A-pm-bootstrap#replace-cargo
 #[tokio::test]
 async fn a_configured_package_manager_replaces_the_builtin_cargo_instance() {
@@ -572,6 +588,7 @@ done
 /// sync, so an event where nothing changed starts no package manager. Once an
 /// input changes, the next event syncs, and asks it again.
 #[tokio::test]
+/// anchorbook: A-workspace-freshness#hook
 async fn an_event_where_nothing_changed_spawns_no_package_manager() {
     let tmp = tempfile::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
@@ -680,6 +697,7 @@ done
 }
 
 #[tokio::test]
+/// anchorbook: A-offer-precedence#identity
 async fn failed_normalization_cannot_bypass_disable_or_allow_cleanup() {
     use symposium::config::{PluginsConfig, UseEntry};
     let tmp = tempfile::tempdir().unwrap();

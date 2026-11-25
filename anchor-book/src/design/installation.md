@@ -21,3 +21,9 @@ Installation has two audiences. A plugin author declares how to acquire and run 
 > Authority: `R-installation`
 > - Criterion `ordering` [test]: Have setup create the marker the hook reads. Observe the hook find the marker for both named and inline declarations.
 > - Criterion `stdout` [test]: Make an install command print during a hook. Observe valid agent output without the installer’s message.
+
+> **`A-sync-manager-failure`** (draft): **Manager failure suspends cleanup of installed contributions**
+> Property: If a manager fails to list dependencies or stops responding during load, sync preserves previously installed contributions that now appear absent. If the manager responds with an ordinary package error, stale skills and MCP registrations remain eligible for removal.
+> Authority: `R-installation`
+> - Criterion `unavailable` [test]: After installing a skill and MCP server, crash the manager or time out its load request. Both survive. A failed dependency listing also preserves the existing MCP registration.
+> - Criterion `package-error` [test]: Repeat with a manager that answers the load request with a package error. Observe the stale skill and registration removed.

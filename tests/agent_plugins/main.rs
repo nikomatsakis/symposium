@@ -173,6 +173,7 @@ async fn every_delivering_agent_keeps_the_delivery_contracts() {
 }
 
 #[tokio::test]
+/// anchorbook: A-agent-global-skills#bundle
 async fn a_global_plugin_carries_all_its_skills_whatever_the_workspace() {
     with_fixture(TestMode::SimulationOnly, SCOPES, async |mut ctx| {
         let plugin = ctx.sym.config_dir().join("plugins/gated-guide");

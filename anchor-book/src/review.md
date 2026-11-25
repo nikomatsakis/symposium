@@ -35,10 +35,15 @@ The draft uses the Anchor Book engine and mdBook versions pinned by Kari’s con
 ```sh
 cargo install --git https://github.com/anchor-book/anchor-book --rev 7966c9fddb3e9b9a710444c365cd698550de9b5f --locked anchor-book
 cargo install mdbook --version 0.5.4 --locked
+cargo install mdbook-mermaid --version 0.17.1 --locked
 cargo install cargo-nextest --version 0.9.151 --locked
 anchorbook check --config anchorbook.toml
 mdbook serve anchor-book --hostname 127.0.0.1 --port 3002
 ```
+
+## Test coverage
+
+The [unlinked test review](review/unlinked-tests.md) lists the existing anchors each test could support and the behavior its assertions leave to specify. The [original audit](review/test-audit.md) records coverage before the 15 additional anchors.
 
 ## Open design questions
 

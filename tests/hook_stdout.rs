@@ -9,6 +9,7 @@ use symposium_testlib::{HookStep, TestContext, TestMode, with_fixture};
 
 /// A `SessionStart` that syncs (so sync reports progress) still answers every
 /// agent with nothing but its own output: here, the consent hint for `crate-a`.
+/// anchorbook: A-dispatch-stdout#response
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_progress_stays_off_hook_stdout() {
     with_fixture(TestMode::SimulationOnly, &["auto-enable0"], async |ctx| {

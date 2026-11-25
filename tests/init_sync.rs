@@ -3077,6 +3077,7 @@ async fn auto_sync_reruns_when_cargo_lock_changes() {
 /// satisfied is reinstalled on the next `SessionStart`, where a `PreToolUse`
 /// would have skipped (see `auto_sync_skips_when_cargo_lock_unchanged`).
 #[tokio::test]
+/// anchorbook: A-flow-session#fresh-inputs
 async fn auto_sync_always_runs_on_session_start() {
     with_fixture(
         TestMode::SimulationOnly,

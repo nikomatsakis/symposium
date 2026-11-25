@@ -1022,6 +1022,7 @@ mod tests {
         );
     }
 
+    /// anchorbook: A-package-owner#lookup
     #[tokio::test]
     async fn load_plugin_asks_only_the_pm_its_id_names() {
         let pms = PmRegistry::new(vec![echo("cargo", "cargo"), echo("npm", "npm")]);
@@ -1035,6 +1036,7 @@ mod tests {
     /// Consent and `disable` are keyed on the id, so a PM must not be able to
     /// answer as another: not with a plugin, and not with a dependency, which
     /// would satisfy another ecosystem's `depends-on` and enablement.
+    /// anchorbook: A-package-owner#ownership
     #[tokio::test]
     async fn an_answer_under_another_pms_id_is_dropped() {
         let pms = PmRegistry::new(vec![echo("npm", "cargo")]);
@@ -1160,6 +1162,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// anchorbook: A-plugin-use-name#lookup
     async fn identify_asks_each_package_manager_and_the_registry_wins() {
         let tmp = tempfile::tempdir().unwrap();
         let deps = WorkspaceDeps::fixture(
@@ -1211,6 +1214,7 @@ mod tests {
     /// to exist, including a registry plugin's name spelled the way only
     /// cargo would accept it.
     #[tokio::test]
+    /// anchorbook: A-plugin-use-name#lookup
     async fn identify_rejects_a_name_nobody_has() {
         let tmp = tempfile::tempdir().unwrap();
         let (cargo, _) = crate::test_utils::FakeCargo::instance(&[], &[]);

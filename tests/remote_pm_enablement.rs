@@ -136,16 +136,19 @@ async fn check_load_error_cleanup(mode: &str, preserve: bool) {
 }
 
 #[tokio::test]
+/// anchorbook: A-sync-manager-failure#unavailable
 async fn a_crash_during_load_preserves_installed_skills_and_mcp() {
     check_load_error_cleanup("exit", true).await;
 }
 
 #[tokio::test]
+/// anchorbook: A-sync-manager-failure#unavailable
 async fn a_timeout_during_load_preserves_installed_skills_and_mcp() {
     check_load_error_cleanup("timeout", true).await;
 }
 
 #[tokio::test]
+/// anchorbook: A-sync-manager-failure#package-error
 async fn a_package_error_does_not_disable_cleanup() {
     check_load_error_cleanup("error", false).await;
 }

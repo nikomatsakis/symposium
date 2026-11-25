@@ -42,6 +42,7 @@ async fn scripts_named_relative_to_the_manifest_run() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-hook-directory#directory
 async fn scripts_run_under_a_relative_symposium_home_from_another_workspace() {
     with_fixture(
         TestMode::SimulationOnly,

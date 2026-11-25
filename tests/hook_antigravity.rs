@@ -110,6 +110,7 @@ async fn hook_predicates_hold_in_the_payload_workspace() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-hook-directory#directory
 async fn plugin_hooks_run_in_the_payload_workspace() {
     with_fixture(
         TestMode::SimulationOnly,

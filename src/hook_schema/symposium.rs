@@ -40,6 +40,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// anchorbook: A-hook-matcher#event
     fn tool_matchers_use_regex_against_tool_name() {
         let input = InputEvent::PreToolUse(PreToolUseInput::new(
             "mcp__filesystem__read".to_string(),
@@ -48,6 +49,8 @@ mod tests {
             None,
         ));
 
+        assert!(input.matches_matcher("*"));
+        assert!(input.matches_matcher("filesystem"));
         assert!(input.matches_matcher("mcp__.*"));
         assert!(input.matches_matcher("^mcp__filesystem__read$"));
         assert!(!input.matches_matcher("^Bash$"));
@@ -68,9 +71,11 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_matches_everything() {
+    /// anchorbook: A-hook-matcher#event
+    fn non_tool_events_accept_any_valid_matcher() {
         let input = InputEvent::SessionStart(SessionStartInput::new(None, None));
 
         assert!(input.matches_matcher("*"));
+        assert!(input.matches_matcher("^Bash$"));
     }
 }

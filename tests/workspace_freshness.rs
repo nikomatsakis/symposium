@@ -3,6 +3,7 @@ use symposium::hook_schema::{HookAgent, HookEvent};
 use symposium_testlib::{TestMode, with_fixture};
 
 #[tokio::test]
+/// anchorbook: A-workspace-freshness#hook
 async fn creating_a_nested_workspace_invalidates_the_hook_workspace_cache() {
     with_fixture(TestMode::SimulationOnly, &["plugins0", "workspace0"], async |mut ctx| {
         ctx.symposium(&["init", "--add-agent", "claude"]).await?;

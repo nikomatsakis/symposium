@@ -597,6 +597,7 @@ mod tests {
     /// outranked only by `disable`. A revoked offer is never a candidate, and
     /// has no verdict to show in place of the revocation.
     #[tokio::test]
+    /// anchorbook: A-offer-precedence#revoked
     async fn revocation_outranks_grants_and_only_disable_outranks_it() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = workspace(tmp.path());
@@ -638,6 +639,7 @@ mod tests {
     /// An audit changes nothing about consent in this release: an audited
     /// offer is still a candidate, and the consent prompt still asks.
     #[tokio::test]
+    /// anchorbook: A-offer-precedence#pending
     async fn an_audited_offer_is_still_a_candidate() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = workspace(tmp.path());
@@ -719,6 +721,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// anchorbook: A-offer-precedence#grants
     async fn use_entry_and_disable_outrank_the_standing_decisions() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = workspace(tmp.path());
@@ -728,6 +731,7 @@ mod tests {
             indoc! {r#"
                 [plugins]
                 use = ["widget-lib"]
+                auto-enable = ["*"]
             "#},
         );
         let found = discover(&sym, &ws, &[]).await;
@@ -748,6 +752,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// anchorbook: A-plugin-use-name#collision
     async fn use_naming_a_registry_plugin_leaves_the_dependency_undecided() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = workspace(tmp.path());
@@ -775,6 +780,7 @@ mod tests {
     /// A `use` entry recorded for another workspace does not enable anything
     /// here.
     #[tokio::test]
+    /// anchorbook: A-plugin-use-scope#workspace
     async fn workspace_scoped_use_entries_only_count_in_their_workspace() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = workspace(tmp.path());
@@ -846,6 +852,7 @@ mod tests {
         assert_eq!(network.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
+    /// anchorbook: A-plugin-sources#selection
     #[tokio::test]
     async fn enabled_dependencies_reads_config_not_offers() {
         let tmp = tempfile::tempdir().unwrap();

@@ -11,3 +11,11 @@ create-missing = false
 command = "anchorbook md"
 config = "../anchorbook.toml"
 after = ["links"]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+after = ["anchorbook"]
+
+[output.html]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["diagram-links.css"]

@@ -13,15 +13,13 @@ automatically** — you share it yourself. The preference is also offered during
 
 ```bash
 symposium telemetry [status]      # whether enabled, where data lives, how much is stored (default)
-symposium telemetry enable        # turn on collection (writes [telemetry] enabled = true)
+symposium telemetry enable        # save [telemetry] enabled = true
 symposium telemetry disable       # turn it off
 symposium telemetry show [--count N]   # print recent events (JSON lines) for inspection
 ```
 
 ## Where the data lives
 
-When recording is wired in, anonymous events will be appended as JSON lines to
-per-day files under `~/.symposium/telemetry/` (e.g. `events-2026-06-23.jsonl`),
-with files older than 30 days rolled off automatically. Events record counts
-and coarse metadata only (session starts, prompts, tool names) — no prompt
-text, command lines, or file paths.
+`show` reads existing daily files under `~/.symposium/telemetry/`, such as
+`events-2026-06-23.jsonl`. `enable` saves the preference. Current CLI commands
+and hooks leave the event files untouched, including during session start and sync.

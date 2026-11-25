@@ -1555,6 +1555,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    /// anchorbook: A-hook-timeout-children#child
     fn timed_out_hook_stops_its_child_commands() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("child-ran");
@@ -1697,6 +1698,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-hook-selection#all
     fn dispatch_runs_every_matching_hook_of_the_selected_format() {
         let mut plugin = plugin_with_hook(vec![], vec![]);
         let portable = plugin.manifest.hooks[0].clone();
@@ -1718,6 +1720,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-hook-selection#none
     fn dispatch_skips_hook_restricted_to_another_agent() {
         let mut plugin = plugin_with_hook(vec![], vec![]);
         plugin.manifest.hooks[0].agent = Some(HookAgent::Claude);
@@ -1735,6 +1738,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-hook-selection#all
     fn dispatch_falls_back_to_portable_hook_when_native_predicates_fail() {
         use crate::plugins::HookFormat;
 

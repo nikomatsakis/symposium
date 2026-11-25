@@ -1,6 +1,14 @@
 # Summary
 
 - [Design anchors](design.md)
+  - [Packages, plugins, and their names](design/names.md)
+  - [Execution flow](design/flows.md)
+    - [Session start](design/session-start.md)
+    - [Choosing the plugin managers](design/manager-selection.md)
+    - [Discovering a Rust workspace](design/workspace-discovery.md)
+    - [Dependency discovery and consent](design/discovery-consent.md)
+    - [Activating a plugin](design/plugin-activation.md)
+    - [Hook dispatch](design/hook-dispatch.md)
   - [Plugin managers](design/plugin-managers.md)
     - [Cargo](design/cargo.md)
     - [Path registries](design/path.md)
@@ -13,3 +21,8 @@
   - [Installation](design/installation.md)
 - [Design basis](authority.md)
 - [Reviewing this draft](review.md)
+  - [Unlinked tests](review/unlinked-tests.md)
+  - [Test coverage audit](review/test-audit.md)
+    - [Integration findings](review/integration-audit.md)
+    - [Core findings](review/core-audit.md)
+    - [Evaluation findings](review/evaluation-audit.md)

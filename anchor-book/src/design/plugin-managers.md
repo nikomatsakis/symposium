@@ -1,6 +1,13 @@
 # Plugin managers
 
-A package manager (PM) answers questions about a project and the plugins it can supply. For example, Cargo can offer a skill embedded in a dependency, while a registry can offer a skill about the same dependency from a different author. Symposium decides which offers to activate.
+A package manager (PM) answers questions about a project and the plugins it can supply.
+
+> **`A-pm-offer`** (draft): **Each PM offers plugins under its own package IDs**
+> Property: To offer a plugin, a PM supplies its manifest and content directory under a package ID naming that PM. Symposium rejects offers bearing another manager’s ID. Symposium validates the manifest and decides whether the plugin’s contributions become active.
+> Authority: `R-ecosystems`
+> - Criterion `awaiting-consent` [test]: With automatic enablement off, observe `crate-a` listed as awaiting consent. Run `symposium use crate-a` and observe that the same plugin is now active.
+
+For example, the Cargo PM can offer a plugin shipped in the `widget` crate. A Git registry can offer a guide to `widget` written by someone else. The guide comes from the registry’s checkout and carries the registry’s package ID. Both plugins can apply to the same dependency.
 
 > **`A-pm-bootstrap`** (draft): **Symposium selects the initial managers**
 > Property: Symposium builds the manager set from its defaults, executable commands declared in `[[package-manager]]`, and named `[[registry]]` entries. A configured `cargo` command replaces the built-in Cargo instance. Plugin discovery uses that set.
@@ -13,18 +20,26 @@ A package manager (PM) answers questions about a project and the plugins it can 
 > - Criterion `root-disagreement` [test]: Have two managers report different roots. Request the workspace and observe an error naming both managers.
 > - Criterion `no-project` [test]: Have the manager report no project and observe that the workspace has no root.
 
-> **`A-pm-offers`** (draft): **Listing and loading answer different questions**
-> Property: `active_plugins(deps)` asks which plugins a manager offers for a dependency set. `load_plugin(id, update)` asks the manager named in the ID for the plugins supplied by one package. Each result carries a package ID, content root and raw manifest. A manager may synthesize the manifest. Symposium validates it.
+> **`A-pm-offers`** (draft): **Each PM supports `offers(deps)`, which returns the plugins it offers given a set of dependencies**
+> Property: The PM protocol calls this operation `active_plugins(deps)`. For ecosystem managers, Symposium passes the combined list of direct workspace dependencies reported by `list_deps`. Cargo returns plugins embedded in the listed crates. Symposium calls the same operation on a registry with an empty list, and the registry returns its own plugin entries.
 > Authority: `R-ecosystems`
 > - Criterion `synthesized-offer` [test]: List offers from an external manager that synthesizes a manifest. Observe its named plugin and dependency gate after validation.
+
+For example, suppose a workspace member declares `widget = "1"` in `Cargo.toml` and Cargo resolves it to version `1.2.3`. The Cargo manager reads that resolution from `cargo metadata` and reports `cargo:widget:1.2.3` (manager, package name, resolved version). When Symposium asks for plugin offers, the Cargo manager checks whether that crate ships a plugin. The crate counts as a dependency whether or not it ships one.
+
+> **`A-pm-load`** (draft): **Which plugins does this particular package supply?**
+> Property: Symposium sends `load_plugin(id, update)` to the manager named in the package ID. One package can supply zero, one or several plugins. With updates disabled, the manager uses only content already on disk.
+> Authority: `R-ecosystems`
 > - Criterion `specific-package` [test]: Request an MCP-only dependency by ID. Observe its server in the loaded plugin even though the package ships no skills.
+
+Both queries identify each plugin by its package ID, content root and raw manifest. A manager may synthesize the manifest. Symposium validates it.
 
 ### Other questions a manager can answer
 
 | Query | Meaning |
 | --- | --- |
 | `canonical_names(names)` | Give the comparison spelling for each name, in order. Configuration and identity checks use the owning manager’s rules. |
-| `search(text)` | Offer name matches for a human lookup. Dependency discovery calls `active_plugins`. |
+| `search(text)` | Return matching package names for a human lookup. Dependency discovery calls `active_plugins`. |
 | `fetch(id, update)` | Locate or acquire content and return its resolved ID and directory. |
 | `refresh(update)` | Refresh the backing source and report whether it was refreshed. |
 

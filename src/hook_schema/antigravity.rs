@@ -764,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-agent-antigravity-prompt#counter
     fn only_the_first_invocation_of_a_turn_is_a_prompt() {
         let parse = |s: &str| AntigravityInvocationInput::parse_input(s).unwrap();
         assert!(parse(r#"{"invocationNum":0}"#).should_dispatch());

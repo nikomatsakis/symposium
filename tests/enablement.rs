@@ -121,6 +121,7 @@ where
 /// dependency's embedded skills right away; running it again changes
 /// nothing.
 #[tokio::test]
+/// anchorbook: A-plugin-use-scope#workspace
 async fn use_records_workspace_entry_and_installs() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -189,6 +190,7 @@ async fn use_global_records_unscoped_entry() {
 /// A name that is neither a workspace dependency nor a registry hit is
 /// rejected instead of recorded.
 #[tokio::test]
+/// anchorbook: A-plugin-use-name#lookup
 async fn use_unknown_name_errors() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -845,6 +847,7 @@ async fn use_remove_unregisters_the_mcp_servers_of_a_nested_registry_entry() {
 
 /// `use` wakes a dormant registry plugin (one no dependency gates), and
 /// `--remove` puts it back to sleep, reaping its skills.
+/// anchorbook: A-flow-activation#explicit-use
 /// anchorbook: A-plugin-enablement#dormant
 #[tokio::test]
 async fn use_wakes_and_remove_sleeps_a_dormant_plugin() {
@@ -1174,6 +1177,7 @@ async fn use_on_a_disabled_plugin_errors() {
 
 /// `status` reports an undecided dependency plugin as a candidate, then as
 /// active with its `use` root once enabled — and names declined entries.
+/// anchorbook: A-pm-offer#awaiting-consent
 #[tokio::test]
 async fn status_reports_candidate_then_used() {
     with_fixture(
@@ -1355,6 +1359,7 @@ async fn consent_prompt_never_fires_non_interactively() {
 
 /// Recorded consent is durable in both directions: approval enables and the
 /// candidate stops being offered; a decline is remembered too.
+/// anchorbook: A-consent-record#remember
 #[tokio::test]
 async fn apply_consent_records_both_answers() {
     with_fixture(
@@ -1517,6 +1522,7 @@ async fn declined_dependency_plugin_stays_inactive() {
     .unwrap();
 }
 
+/// anchorbook: A-flow-activation#contributions
 /// anchorbook: A-plugin-enablement#approve
 #[tokio::test(flavor = "multi_thread")]
 async fn approved_dependency_plugin_activates() {
@@ -1547,6 +1553,7 @@ async fn approved_dependency_plugin_activates() {
 /// Non-interactively, pending candidates surface as `SessionStart` context
 /// rather than a prompt — and the agent is told not to act on them itself.
 #[tokio::test]
+/// anchorbook: A-flow-consent#pending
 async fn session_start_hints_pending_candidates() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -1728,6 +1735,7 @@ async fn status_reports_a_pluginless_dependency_only_when_used() {
 // Choosing it must not also grant consent to the dependency's embedded plugin.
 
 #[tokio::test]
+/// anchorbook: A-plugin-use-name#collision
 async fn choosing_registry_plugin_does_not_enable_same_named_dependency() {
     with_fixture(TestMode::SimulationOnly, &["auto-enable0"], async |mut ctx| {
         ctx.symposium(&["init", "--add-agent", "claude"]).await?;

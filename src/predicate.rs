@@ -485,6 +485,7 @@ mod tests {
         assert_eq!(parse_dep_atom("*").unwrap(), Predicate::DependsOnWildcard);
     }
 
+    /// anchorbook: A-predicate-grammar#atoms
     #[test]
     fn crate_list_lowers_to_any() {
         assert_eq!(DependsOnList::parse("").unwrap().into_predicate(), None);
@@ -512,6 +513,7 @@ mod tests {
 
     // --- function-call parsing ---
 
+    /// anchorbook: A-predicate-grammar#bare-name
     #[test]
     fn predicates_field_rejects_bare_names() {
         // The `predicates` field requires function-call syntax.
@@ -529,6 +531,7 @@ mod tests {
         );
     }
 
+    /// anchorbook: A-predicate-grammar#calls
     #[test]
     fn parse_function_calls() {
         assert_eq!(
@@ -745,6 +748,7 @@ mod tests {
         );
     }
 
+    /// anchorbook: A-predicate-grammar#custom-argument
     #[test]
     fn parse_custom_predicate_arg_with_parens() {
         let p = parse("foo(bar(baz))").unwrap();

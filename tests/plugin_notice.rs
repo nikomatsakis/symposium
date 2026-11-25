@@ -195,6 +195,7 @@ async fn a_workspace_seen_for_the_first_time_gets_no_notice() {
     .unwrap();
 }
 
+/// anchorbook: A-session-reload#changed-plugin
 #[tokio::test(flavor = "multi_thread")]
 async fn session_start_tells_the_agent_how_to_load_the_plugins_its_sync_installed() {
     for (agent, load_now) in [
@@ -287,6 +288,7 @@ async fn a_dependency_without_plugins_gets_no_notice() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-release#release
 async fn a_noticed_dependency_is_not_named_again_after_an_unrelated_change() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -311,6 +313,7 @@ async fn a_noticed_dependency_is_not_named_again_after_an_unrelated_change() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-release#release
 async fn a_later_dependency_is_named_alone() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -337,6 +340,7 @@ async fn a_later_dependency_is_named_alone() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-release#release
 async fn a_new_version_of_a_noticed_dependency_is_named_again() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -364,6 +368,7 @@ async fn a_new_version_of_a_noticed_dependency_is_named_again() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-delivery#final-reply
 async fn a_notice_lost_to_a_blocked_prompt_is_given_on_the_next_change() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -391,6 +396,7 @@ async fn a_notice_lost_to_a_blocked_prompt_is_given_on_the_next_change() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-delivery#final-reply
 async fn a_notice_on_a_prompt_blocked_by_a_decision_is_given_on_the_next_change() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -418,6 +424,7 @@ async fn a_notice_on_a_prompt_blocked_by_a_decision_is_given_on_the_next_change(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-delivery#final-reply
 async fn a_block_a_later_hook_lifts_still_delivers_the_notice() {
     with_fixture(
         TestMode::SimulationOnly,
@@ -446,6 +453,7 @@ async fn a_block_a_later_hook_lifts_still_delivers_the_notice() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-notice-delivery#final-reply
 async fn a_notice_the_agent_cannot_read_is_given_on_the_next_change() {
     with_fixture(
         TestMode::SimulationOnly,

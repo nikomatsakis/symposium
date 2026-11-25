@@ -167,6 +167,7 @@ mod tests {
 
     /// With no inputs, nothing would show that the dependencies changed.
     #[test]
+    /// anchorbook: A-workspace-freshness#inputs
     fn a_workspace_without_inputs_is_never_fresh() {
         let tmp = tempfile::tempdir().unwrap();
         let mut state = WorkspaceState::default();
@@ -179,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-workspace-freshness#inputs
     fn fresh_until_an_input_changes() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("lock"), "").unwrap();
@@ -193,6 +195,7 @@ mod tests {
     }
 
     #[test]
+    /// anchorbook: A-workspace-freshness#inputs
     fn an_input_that_appears_or_disappears_is_a_change() {
         let tmp = tempfile::tempdir().unwrap();
         let lock = tmp.path().join("lock");

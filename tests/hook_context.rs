@@ -37,6 +37,7 @@ fn assert_in_order(agent: HookAgent, stdout: &str, parts: &[&str]) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// anchorbook: A-flow-dispatch#joined-context
 async fn session_start_keeps_symposium_and_plugin_context() {
     with_fixture(TestMode::SimulationOnly, &["context-merge0"], async |ctx| {
         for agent in [

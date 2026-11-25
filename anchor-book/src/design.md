@@ -4,6 +4,8 @@ When you add a dependency, its package manager can offer a plugin. Symposium dec
 
 | Chapter | Design question |
 | --- | --- |
+| [Packages, plugins, and their names](design/names.md) | What does a package ID identify? How does it relate to a plugin name or a skill name? |
+| [Execution flow](design/flows.md) | How does an event reach a workspace, surface plugin offers, and produce one reply? |
 | [Plugin managers](design/plugin-managers.md) | Who selects the managers? What can Symposium ask each of them? |
 | [Plugins](design/plugins.md) | What enables a plugin and what else can it bring into the active set? |
 | [Predicates](design/predicates.md) | Which facts decide whether a contribution applies? |
