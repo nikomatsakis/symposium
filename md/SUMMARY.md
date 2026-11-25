@@ -61,6 +61,10 @@
   - [Skill definition](./reference/skill-definition.md)
   - [Dependency predicates (`depends-on`)](./reference/depends-on.md)
   - [Predicates](./reference/predicates.md)
+
+# Design
+
+- [Design anchors](./anchorbook/index.md)
 - [Contribution guide](./design/welcome.md)
   - [Tenets](./design/tenets.md)
   - [Key repositories](./design/repositories.md)

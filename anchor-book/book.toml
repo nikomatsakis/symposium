@@ -17,5 +17,6 @@ command = "mdbook-mermaid"
 after = ["anchorbook"]
 
 [output.html]
+site-url = "/anchorbook/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 additional-css = ["diagram-links.css"]
