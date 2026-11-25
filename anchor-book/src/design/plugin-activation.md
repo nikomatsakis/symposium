@@ -2,7 +2,7 @@
 
 A plugin is **active** when Symposium has selected it for the current workspace and its plugin-level conditions hold. Its skills, hooks, MCP servers, and subcommands can then be considered. Each contribution still has its own conditions. For example, `widget` can be active while none of its hooks match `SessionStart`.
 
-> **`A-flow-activation`** (draft): **Sync and hook dispatch resolve which plugins apply to their workspace**
+> **`A-flow-activation`** (draft): **Sync and hook dispatch check each plugin’s activation conditions before using its contributions or following its references**
 > Property: Symposium starts with plugins from configured registries and the workspace root and members. It also loads enabled packages through their owning managers and follows applicable package references from active plugins. A reached package can be withheld by revocation. Each plugin must pass its own predicates and any explicit-use requirement before its contributions or references are considered.
 > Authority: `R-plugins`
 > - Criterion `contributions` [test]: Approve the fixture dependency and sync. Observe its installed skill and MCP server, dispatched hook, and available subcommand.

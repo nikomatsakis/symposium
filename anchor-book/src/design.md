@@ -1,6 +1,8 @@
 # Symposium design anchors
 
-When you add a dependency, its package manager can offer a plugin. Symposium decides whether to enable it. A predicate can narrow when its skill applies, and sync can deliver that skill to one agent as a package and to another as a directory. The chapters below pin who makes each of those decisions.
+Symposium gives coding agents skills, hook handlers, and tools that apply to the project they are working in. A Rust dependency can ship a plugin that teaches an agent how to use the crate. Cargo can offer that plugin to Symposium. The user’s choices determine whether Symposium may enable it, and the plugin’s conditions determine where it applies.
+
+Start with [packages, plugins, and their names](design/names.md), then follow [what happens when Claude opens a session in a Rust workspace](design/session-start.md#A-flow-session).
 
 | Chapter | Design question |
 | --- | --- |

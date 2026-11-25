@@ -2,7 +2,7 @@
 
 An agent starts a session in `ws/app/src`. Before any manager can answer “what project is here?”, Symposium constructs the manager set for that directory. The same choices apply when the directory contains no Rust project. Whether Cargo recognizes a workspace is a later question.
 
-> **`A-flow-managers`** (draft): **Symposium chooses the managers for a workspace before querying them about the project**
+> **`A-flow-managers`** (draft): **Symposium chooses managers before workspace discovery and starts external managers on first use**
 > Property: Symposium selects an in-process Cargo manager unless configuration names a `cargo` command. It includes the other configured manager commands and named registry instances. A configured command starts on its first request and must identify itself before answering. The resulting manager set serves the workspace queries for this invocation.
 > Authority: `R-ecosystems`
 > - Criterion `configured-cargo` [test]: Configure `symposium-pm-cargo` under the name `cargo`. Observe exactly one manager of that name and obtain the workspace root and its `widget` dependency through it.

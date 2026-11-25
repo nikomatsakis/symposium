@@ -12,7 +12,9 @@ Suppose `my-app` declares a direct dependency on `widget` in its `Cargo.toml`. C
 | Plugin | A manifest and the content it describes. A package can supply zero, one, or several plugins. The `widget` author could ship a plugin in the crate, and a registry author could separately publish a plugin about `widget`. |
 | Offer | A plugin a manager reports to Symposium during discovery. If `widget` ships a plugin, Cargo can report its package ID, manifest, and directory. Symposium can show that plugin as awaiting approval while its skills are still inactive. |
 | Active plugin | A plugin whose contributions Symposium can consider in this workspace. An active `widget` plugin can supply a skill even if it has no handler for the current event. See [activation](plugin-activation.md#A-flow-activation). |
-| Contribution | Something a plugin supplies, such as a skill, a hook handler, an MCP server, or a CLI subcommand. A **predicate** is a condition on when a plugin or contribution applies. An **agent**, such as Claude Code, is the host that receives applicable contributions. |
+| Contribution | Something a plugin supplies, such as a skill, a hook handler, an MCP server, or a CLI subcommand. |
+| Predicate | A condition that decides when a plugin or one of its contributions applies. |
+| Agent | The coding assistant that receives applicable contributions, such as Claude Code. |
 
 ## Which name do I use?
 
@@ -26,7 +28,7 @@ Suppose `my-app` declares a direct dependency on `widget` in its `Cargo.toml`. C
 
 `symposium use widget` takes a name. Symposium resolves it before recording the choice. If a configured registry and a Cargo dependency both match `widget`, the registry wins. A lookup by package ID already specifies the manager to ask.
 
-> **`A-package-owner`** (draft): **The manager named in a package ID owns that ID**
+> **`A-package-owner`** (draft): **A package ID names the manager that answers for that package**
 > Property: Symposium sends a package lookup to the manager named in its ID. When a manager reports dependencies or supplies plugins, Symposium accepts only IDs belonging to that manager.
 > Authority: `R-ecosystems`
 > - Criterion `lookup` [test]: Give two managers a package called `foo`. Load `cargo:foo:*` and observe only Cargo’s result.

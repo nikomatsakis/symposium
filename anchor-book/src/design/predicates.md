@@ -1,8 +1,8 @@
 # Predicates
 
-A predicate answers whether a contribution applies in an evaluation context. `depends-on` reads the dependency set. `workspace-member()` refers to the plugin’s provenance. File, environment and shell checks let a workspace supply other facts.
+A predicate tests whether a plugin or contribution applies here. For example, `depends-on(widget)` asks whether a workspace member directly depends on `widget`. File, environment, and shell checks can supply other conditions.
 
-> **`A-predicate-grammar`** (draft): **Authors write predicates as calls and dependency shorthand as atoms**
+> **`A-predicate-grammar`** (draft): **Every listed predicate call must pass, and a nonempty depends-on list must match at least one entry**
 > Property: Each `predicates` entry is a function call in the grammar below. Every entry must hold. Where a `depends-on` field is accepted, its entries are dependency atoms. At least one atom in a nonempty list must match, in addition to the `predicates` entries.
 > Authority: `R-conditions`
 > - Criterion `calls` [test]: Parse `any(depends-on(a), path_exists(rg))` as two calls inside `any`. Reject `all()` because it has no operands.
@@ -33,19 +33,19 @@ depends-on = ["widget>=1.2", "serde"]
 predicates = ["not(env(CI))"]
 ```
 
-> **`A-predicate-expressions`** (draft): **Applicability is a boolean expression**
+> **`A-predicate-expressions`** (draft): **Plugin authors combine conditions with all, any and not**
 > Property: Authors can compose predicates with `all`, `any` and `not`. In a context with a supplied working directory, relative file checks and shell checks use that directory.
 > Authority: `R-conditions`
 > - Criterion `composition` [test]: With serde present and tokio absent, evaluate negation, conjunction and disjunction over those dependencies.
 > - Criterion `working-directory` [test]: Put a marker in a temporary workspace and evaluate file and shell checks with that directory as context.
 
-> **`A-predicate-extension`** (draft): **Registry plugins can supply predicates for sync**
+> **`A-predicate-extension`** (draft): **A registry plugin can supply a command whose successful exit lets another plugin’s skill apply**
 > Property: A registry plugin can declare a named command that another plugin uses as a skill gate. During sync, a successful exit admits the contribution and a failing exit withholds it.
 > Authority: `R-conditions`
 > - Criterion `pass` [test]: Make the provider command exit successfully and observe the consumer skill installed.
 > - Criterion `fail` [test]: Make the provider command fail in a fresh workspace and observe the consumer skill absent.
 
-> **`A-predicate-reuse`** (draft): **Sync can reuse custom predicate results across invocations**
+> **`A-predicate-reuse`** (draft): **Later syncs can reuse a custom predicate result in the same workspace**
 > Property: Sync persists custom predicate results in a workspace-specific cache. The same command can answer a later evaluation from disk. A time watch can bound reuse when a fresh context reads that cache.
 > Authority: `R-conditions`
 > - Criterion `cache-hit` [test]: Run a counting predicate with no watches and load the persisted cache in a fresh context. Observe one execution in total.

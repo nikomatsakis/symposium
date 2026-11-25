@@ -2,9 +2,9 @@
 
 Claude Code opens a session in `context-merge-host`, a Rust project that directly depends on `crate-a`. The crate ships a skill, and the user has yet to enable its plugin. Separately, the user’s configured registry contains plugins with session-start handlers. What runs, and what reaches Claude before the first prompt?
 
-This is the `context-merge0` test fixture. It has `auto-sync = false`. That makes it possible to see which work belongs to the event itself. Step 3 describes the branch a workspace takes with auto-sync enabled.
+The `context-merge0` example has auto-sync off. The diagram also shows where sync runs when enabled.
 
-> **`A-flow-session`** (draft): **Session start attempts the configured workspace sync before dispatching plugin hooks**
+> **`A-flow-session`** (draft): **Session start runs enabled auto-sync before plugin hooks and continues if sync fails**
 > Property: Symposium finds the workspace from the event’s working directory. With auto-sync enabled, it attempts sync even when recorded workspace inputs are fresh. With auto-sync disabled or a sync error, it continues to built-in notices and plugin dispatch.
 > Authority: `R-events`
 > - Criterion `fresh-inputs` [test]: After a successful sync, remove an installed skill and leave the lockfile unchanged. Open a session and observe the skill restored.
@@ -42,12 +42,10 @@ sequenceDiagram
 <figcaption><a href="#A-session-reload">When the agent receives reload instructions</a></figcaption>
 </figure>
 
-> **`A-session-reload`** (draft): **Session start tells the calling agent how to load plugins its sync just changed**
+> **`A-session-reload`** (draft): **Session start gives the agent reload instructions for plugins its sync installed or updated**
 > Property: When session-start sync installs or updates a plugin for the calling agent, the reload notice names the plugin and gives that agent’s reload action. An unchanged installation produces no reload notice.
 > Authority: `R-adapters`
 > - Criterion `changed-plugin` [test]: Start sessions before and after editing an installed plugin. Observe reload instructions on install and update, and none on an unchanged session.
-
-The [workspace anchor](plugin-managers.md#A-pm-workspace) defines which project the managers report. The [sync anchor](installation.md#A-installation-sync) defines which installed copies Symposium may reconcile.
 
 1. **Claude calls Symposium.** Claude’s hook configuration points `SessionStart` at `symposium hook claude session-start`. It starts that command and writes its event JSON, including `cwd`, to stdin. Plugin authors register handlers in their manifests. Claude calls Symposium once and receives one reply.
 
@@ -57,9 +55,9 @@ The [workspace anchor](plugin-managers.md#A-pm-workspace) defines which project 
 
 4. **Symposium prepares its own session context.** See [Dependency discovery and consent](discovery-consent.md). It asks ecosystem managers what plugins they offer for the workspace dependencies. Cargo finds the plugin embedded in `crate-a`. The user’s settings leave it awaiting consent, so Symposium names it in a notice and points the user to `symposium sync` or `symposium use`. If an audit answer is available, the notice includes it. The hook never prompts on stdin or grants consent. Other independent notices appear when applicable: `symposium --help` for available plugin subcommands, `symposium self-update` when a warning-mode check finds an update, and agent-specific reload instructions when this sync installed or updated a plugin for the calling agent.
 
-5. **Symposium selects handlers from plugins active in this workspace.** See [Hook dispatch](hook-dispatch.md). Registry and workspace plugins can participate when their gates hold. Enabled dependency plugins and packages reached through applicable plugin references can participate too. Dispatch resolves packages from available content. The pending `crate-a` plugin contributes the subject of a notice but supplies no running handler. For each active plugin, Symposium checks the event, matcher, agent, and predicates. It runs all eligible handlers in the host’s native format if that plugin has any, otherwise its eligible portable handlers. The choice is per plugin, so Claude can receive contributions from both formats in one invocation.
+5. **Symposium selects the handlers for this session.** The pending `crate-a` plugin supplies the subject of Claude’s notice. The handlers come from other [active plugins](plugin-activation.md#A-flow-activation). Each plugin makes its own [native-or-portable choice](hooks.md#A-hook-selection), so Claude can receive both formats in one invocation.
 
-6. **Each selected handler receives the event.** Symposium prepares the handler’s requirements and command, then runs it with the native or portable JSON on stdin. The process runs in the [event directory](hooks.md#A-hook-directory) when it exists. The `first` and `second` fixture plugins return portable context. A third plugin’s Claude handler returns plain text. The last handler returns no context. Handlers run sequentially, with five seconds per running handler and eight seconds shared across plugin dispatch, including command preparation. A timed-out handler contributes nothing. An explicit exit 2 stops dispatch and returns a blocking response using the handler’s stderr as the reason.
+6. **The handlers run in order.** The `first` and `second` plugins return portable context, the third returns plain text from a Claude handler, and the last stays silent. Each receives the event on stdin and runs in the [event directory](hooks.md#A-hook-directory) when it exists. [Hook dispatch](hook-dispatch.md#A-flow-dispatch) covers setup, the shared deadline, and what happens if a handler blocks the event.
 
 7. **Claude gets one response.** On the successful example path, `hookSpecificOutput.additionalContext` contains the `crate-a` notice, then `first plugin context`, `second plugin context`, and `third plugin plain text`. The silent handler leaves that accumulated text intact. The Claude adapter also requests a skill rescan with `reloadSkills`. Sync progress stays off stdout so Claude can parse the reply. Symposium records which pending packages it reported only when the outgoing response carries the notice and does not block the event. The [delivery rule](discovery-consent.md#A-notice-delivery) and the [package release recorded](discovery-consent.md#A-notice-release) determine which notices recur. A new `SessionStart` can report still-pending packages again.
 

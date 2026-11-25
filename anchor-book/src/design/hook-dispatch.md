@@ -2,7 +2,7 @@
 
 The calling agent sends one event. Symposium resolves the [active plugins and their references](plugin-activation.md#A-flow-activation), then matches handlers by event, agent, matcher, and predicates. Within each plugin, eligible native handlers take precedence over portable handlers. The [selection anchor](hooks.md#A-hook-selection) shows how the same plugin can run different handlers for Claude and Copilot.
 
-> **`A-flow-dispatch`** (draft): **Session-start handlers contribute to one agent reply**
+> **`A-flow-dispatch`** (draft): **Session-start handlers run in order. Exit 2 blocks the event, otherwise the agent receives their combined context**
 > Property: Symposium starts with its built-in context, selects eligible handlers per active plugin, and runs them in sequence. On ordinary completion it returns their context in dispatch order. A handler that exits 2 ends dispatch with the host’s blocking response.
 > Authority: `R-events`
 > - Criterion `joined-context` [test]: With a pending dependency and two handlers that add text, observe the consent notice followed by both messages. A final silent handler preserves them.
