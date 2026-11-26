@@ -75,6 +75,7 @@ process-wrap = { version = "10.0.1", default-features = false, features = ["toki
 libc = "0.2"
 
 [dev-dependencies]
+anchor-book = "=0.1.0"
 assert_matches = "1.5"
 expect-test = "1.5.1"
 indoc = "2.0.7"

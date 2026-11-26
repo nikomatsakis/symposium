@@ -1,5 +1,9 @@
 # Project
 
+## Anchor Book startup
+
+At session start, use the CLI installed by the [Book setup instructions](anchor-book/src/review.md#build-and-preview) to run `anchorbook contract --config anchorbook.toml` from the repository root and read its output. Then read the [design Book's index](anchor-book/src/SUMMARY.md) and every chapter it lists. This file and the [review guide](anchor-book/src/review.md) provide project instructions alongside the contract.
+
 ## Introduction
 
 @md/introduction.md
