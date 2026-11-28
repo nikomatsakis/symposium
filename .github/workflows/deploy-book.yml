@@ -26,7 +26,7 @@ jobs:
         run: |
           curl -sSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall --no-confirm mdbook@0.5.4 mdbook-mermaid@0.17.1
-          cargo install --locked --git https://github.com/anchor-book/anchor-book --rev 7966c9fddb3e9b9a710444c365cd698550de9b5f anchor-book
+          cargo install --locked --git https://github.com/anchor-book/anchor-book --rev 9f1790f5804cec2088976a0e5041198615c023a1 anchor-book
 
       - name: Build both books into the Pages site
         run: |
