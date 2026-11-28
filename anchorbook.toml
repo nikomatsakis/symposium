@@ -11,6 +11,7 @@ mdbook = "anchor-book/book.toml"
 [book.sections]
 design = "design.md"
 authority = "authority.md"
+project-guidance = "contributing.md"
 implementation-roadmaps = "review.md"
 
 [verification]

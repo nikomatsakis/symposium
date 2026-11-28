@@ -16,4 +16,4 @@ Start with [packages, plugins, and their names](design/names.md), then follow [w
 | [Configuration storage](design/configuration.md) | Where do choices and ownership records live across runs? |
 | [Installation](design/installation.md) | How does a plugin run its tools, and which installed files can sync replace or remove? |
 
-These anchors are a first reading of `origin/main` at `ab351035`. Each names a design choice and gives an observation you can challenge without reading its implementation. The [review guide](review.md) explains how to run an observation or try a different case.
+The [bootstrap document](design-documents/bootstrap.md) explains how the first anchors were reconstructed from Symposium at `ab351035`. The [review guide](review.md) explains how to run an observation or try a different case.

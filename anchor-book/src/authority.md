@@ -29,3 +29,15 @@ These draft requirements name the responsibilities behind the anchors. The sourc
 > **`R-installation`** (draft): **Install and withdraw owned content**
 > Statement: Plugins can bring executable tools and skills. Synchronizing or withdrawing them must respect the ownership of files and user choices.
 > Source: `src/installation.rs`, `src/sync.rs` and `md/design/sync-agent-flow.md`.
+
+## Contributor decisions
+
+> **`D-design-documents`** (accepted): **Changing an anchor or a decision requires a design document**
+> Choice: A PR that adds, revises, or removes an anchor or a decision includes a new design document explaining why. Treat other changes as bug fixes.
+> Requirements: none
+> Rationale: A reader can trace a change to the reason for it and the alternatives considered.
+> Alternatives:
+> - Recording the rationale only in the PR makes the reader reconstruct the decision from the review conversation.
+> Reconsider when: Contributors find a change to a design rule that the anchor-or-decision boundary fails to capture.
+
+Design document: [When a change needs a design document](design-documents/process.md).

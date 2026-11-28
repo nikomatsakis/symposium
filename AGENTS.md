@@ -10,6 +10,10 @@ Design documentation is tracked in the mdbook:
 
 @md/SUMMARY.md
 
+For work on Symposium, follow the anchorbook's project guidance:
+
+@anchor-book/src/contributing.md
+
 The module structure and important flows chapters are particularly useful for understanding the codebase:
 
 @md/design/module-structure.md
