@@ -33,7 +33,7 @@ cat "$trial_dir/config.toml"
 The preview uses the same Anchor Book and mdBook versions as the Pages build. From the repository root:
 
 ```sh
-cargo install --git https://github.com/anchor-book/anchor-book --rev 9f1790f5804cec2088976a0e5041198615c023a1 --locked anchor-book
+cargo install --locked --version 0.1.0 anchor-book
 cargo install mdbook --version 0.5.4 --locked
 cargo install mdbook-mermaid --version 0.17.1 --locked
 cargo install cargo-nextest --version 0.9.151 --locked
